@@ -633,12 +633,21 @@ private fun providerToMap(p: Provider) = mapOf(
             }
             messages.add(0, sysMsg)
         }
+        // 注入技能池提示（让大脑能用技能）
+        val skillPrompt = SkillRegistry.buildSkillPrompt()
+        if (persona != null && persona.memoryEnabled) {
+            messages.add(buildJsonObject {
+                put("role", JsonPrimitive("system"))
+                put("content", JsonPrimitive(skillPrompt))
+            })
+        }
         val requestBody = buildJsonObject {
             put("model", JsonPrimitive(effectiveModel))
             put("messages", JsonArray(messages))
             put("stream", JsonPrimitive(stream))
             put("max_tokens", JsonPrimitive(4096))
         }
+        val skillResults = mutableListOf<Map<String, String>>()
 
         // 调用上游（可见模型 = 公用 + 自己的；大脑绑定优先）
         val proxy = GatewayProxy(database)
@@ -700,9 +709,26 @@ private fun providerToMap(p: Provider) = mapOf(
             }
         }
 
+        // 技能指令执行：从回复中提取【指令:编码】并执行
+        if (lastResult != null) {
+            val instructions = SkillRegistry.extractInstructions(lastResult!!)
+            for ((code, param) in instructions) {
+                val skill = SkillRegistry.getSkillByCode(code)
+                if (skill != null) {
+                    try {
+                        val result = SkillExecutor.execute(database, code, param, userId)
+                        skillResults.add(mapOf("code" to code, "name" to skill.name, "result" to result))
+                    } catch (_: Exception) {
+                        skillResults.add(mapOf("code" to code, "name" to skill.name, "result" to "技能执行失败"))
+                    }
+                }
+            }
+        }
+
         return mapOf(
             "conversationId" to conversationId,
-            "reply" to (lastResult ?: "所有上游模型均不可用，请检查服务商配置")
+            "reply" to (lastResult ?: "所有上游模型均不可用，请检查服务商配置"),
+            "skills" to skillResults
         )
     }
 

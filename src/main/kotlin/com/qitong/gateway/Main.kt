@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-8
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-9
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-8    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-9    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-8"))
+                put("version", JsonPrimitive("3.18.22-9"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -666,7 +666,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-8"))
+                    put("version", JsonPrimitive("3.18.22-9"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
