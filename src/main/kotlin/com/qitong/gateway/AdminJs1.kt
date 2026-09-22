@@ -207,12 +207,12 @@ loaders.providers = function(){
     var rows = state.providers.map(function(p){
       var keyTxt = p.apiKey ? (p.apiKey.indexOf('****')>=0 ? p.apiKey : esc(p.apiKey)) : '<span style="color:var(--muted)">无</span>';
       var pubTxt = p.isPublic ? '<span class="badge green">公用</span>' : (p.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
-      return '<tr><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px;font-family:monospace">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
+      return '<tr><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px;font-family:monospace">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
     }).join('');
     box.innerHTML = [
       '<div class="action-bar"><button class="btn" onclick="editProvider(0)">＋ 添加服务商</button><span style="color:var(--muted);font-size:12px">OpenAI Compatible / Ollama / Custom · 公用=所有人可见</span></div>',
-      '<div class="card"><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>地址</th><th>API Key</th><th>归属</th><th>状态</th><th>操作</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + (state.providers.length ? '' : '暂无服务商') + '</td></tr>' +
+      '<div class="card"><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>地址</th><th>API Key</th><th>归属</th><th>属主</th><th>状态</th><th>操作</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (state.providers.length ? '' : '暂无服务商') + '</td></tr>' +
       '</tbody></table></div></div>'
     ].join('');
   });

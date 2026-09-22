@@ -14,7 +14,7 @@ loaders.models = function(){
       var enBtn = '<button class="btn-ghost ' + (m.isEnabled ? '' : 'danger') + '" style="padding:2px 8px;font-size:12px" onclick="toggleModel(' + m.id + ')">' + (m.isEnabled ? '停用' : '启用') + '</button>';
       var pubTxt = m.isPublic ? '<span class="badge green">公用</span>' : (m.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
       var priceTxt = m.price > 0 ? ('¥'+m.price+'/M') : '<span style="color:var(--muted)">默认价</span>';
-      return '<tr><td>'+(m.isEnabled?'<span class="badge green">✓</span>':'<span class="badge gray">✗</span>')+'</td><td>'+esc(m.modelId)+'</td><td>'+esc(m.displayName)+(m.customAlias?' <span class="badge purple">'+esc(m.customAlias)+'</span>':'')+'</td><td><span class="badge blue">'+esc(pmap[m.providerId]||('P'+m.providerId))+'</span></td><td>'+pubTxt+'</td><td>'+priceTxt+'</td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td><td>'+enBtn+'</td><td><button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
+      return '<tr><td>'+(m.isEnabled?'<span class="badge green">✓</span>':'<span class="badge gray">✗</span>')+'</td><td>'+esc(m.modelId)+'</td><td>'+esc(m.displayName)+(m.customAlias?' <span class="badge purple">'+esc(m.customAlias)+'</span>':'')+'</td><td><span class="badge blue">'+esc(pmap[m.providerId]||('P'+m.providerId))+'</span></td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(m.ownerName||'')+'</span></td><td>'+priceTxt+'</td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td><td>'+enBtn+'</td><td><button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
     }).join('');
     box.innerHTML = [
       '<div class="action-bar">',
@@ -23,8 +23,8 @@ loaders.models = function(){
         '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked> 自动关闭失败模型</label>',
         '<span style="color:var(--muted);font-size:12px">测速通过自动启用 / 失败自动关闭（可手动启用）</span>',
       '</div><div class="card" id="batchSpeedCard" style="display:none"></div>',
-      '<div class="card"><div class="table-wrap"><table><thead><tr><th></th><th>模型ID</th><th>显示名</th><th>服务商</th><th>归属</th><th>价格</th><th>默认</th><th>上下文</th><th>启停</th><th>操作</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="10" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
+      '<div class="card"><div class="table-wrap"><table><thead><tr><th></th><th>模型ID</th><th>显示名</th><th>服务商</th><th>归属</th><th>属主</th><th>价格</th><th>默认</th><th>上下文</th><th>启停</th><th>操作</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="11" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
       '</tbody></table></div></div>'
     ].join('');
   });

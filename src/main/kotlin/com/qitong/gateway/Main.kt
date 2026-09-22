@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-9
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-10
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-9    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-10    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-9"))
+                put("version", JsonPrimitive("3.18.22-10"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -584,7 +584,7 @@ fun Application.moduleWeb(database: Database) {
             database.clearMemories(user.id)
             AdminApi.ok(call, null, "记忆已清空")
         }
-        // ===== qtai-sj 大脑绑定（按用户） =====
+                // ===== qtai-sj 大脑绑定（按用户） =====
         get("/api/qtai/brain") {
             val user = call.requireAuth(database) ?: return@get
             val brain = database.getUserConfig(user.id, "qtai_brain", "")
@@ -596,6 +596,61 @@ fun Application.moduleWeb(database: Database) {
             val brain = body["brain"]?.jsonPrimitive?.content ?: ""
             database.setUserConfig(user.id, "qtai_brain", brain)
             AdminApi.ok(call, null, if (brain.isBlank()) "已解除大脑绑定" else "大脑已绑定: $brain")
+        }
+        // ===== qtai-sj MCP 控制接口（对齐APP远程控制） =====
+        // action: status(状态) / setbrain(设大脑) / setactive(设活跃模型) / speedtest(测速) / toggle(启停) / forced(强制池)
+        post("/api/qtai/mcp") {
+            val user = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val action = body["action"]?.jsonPrimitive?.content ?: "status"
+            when (action) {
+                "status" -> {
+                    val brain = database.getUserConfig(user.id, "qtai_brain", "")
+                    val active = database.getConfig("active_model_key", "").substringAfter("::", "")
+                    AdminApi.ok(call, mapOf(
+                        "running" to GatewayProxy.running,
+                        "brain" to brain,
+                        "activeModel" to active,
+                        "autoFailover" to database.getConfig("auto_failover", "true"),
+                        "balance" to user.balance
+                    ), "ok")
+                }
+                "setbrain" -> {
+                    val brain = body["brain"]?.jsonPrimitive?.content ?: ""
+                    database.setUserConfig(user.id, "qtai_brain", brain)
+                    AdminApi.ok(call, mapOf("brain" to brain), "大脑已绑定")
+                }
+                "setactive" -> {
+                    val modelKey = body["modelKey"]?.jsonPrimitive?.content ?: ""
+                    if (modelKey.isNotBlank()) {
+                        database.setConfig("active_model_key", modelKey)
+                        AdminApi.ok(call, mapOf("activeModel" to modelKey.substringAfter("::", modelKey)), "活跃模型已设置")
+                    } else AdminApi.fail(call, "modelKey不能为空", 400)
+                }
+                "speedtest" -> {
+                    val results = GatewayScheduler.refreshHealthCache(database, force = true)
+                    GatewayScheduler.buildPipelineSortedModels(database)
+                    val ok = results.count { it.isHealthy }
+                    AdminApi.ok(call, mapOf("total" to results.size, "ok" to ok), "测速完成")
+                }
+                "toggle" -> {
+                    GatewayProxy.running = !GatewayProxy.running
+                    AdminApi.ok(call, mapOf("running" to GatewayProxy.running), if (GatewayProxy.running) "网关已启动" else "网关已停止")
+                }
+                "forced" -> {
+                    val modelKey = body["modelKey"]?.jsonPrimitive?.content ?: ""
+                    val current = database.getUserConfig(user.id, "forced_pool_keys", "").split(",").filter { it.isNotBlank() }.toMutableList()
+                    if (modelKey.isNotBlank()) {
+                        if (modelKey in current) current.remove(modelKey) else current.add(modelKey)
+                        database.setUserConfig(user.id, "forced_pool_keys", current.joinToString(","))
+                        AdminApi.ok(call, mapOf("forcedPool" to current), "强制池已更新")
+                    } else {
+                        database.setUserConfig(user.id, "forced_pool_keys", "")
+                        AdminApi.ok(call, mapOf("forcedPool" to emptyList<String>()), "强制池已清空")
+                    }
+                }
+                else -> AdminApi.fail(call, "未知操作", 400)
+            }
         }
         // ===== 语言设置（按用户） =====
         get("/api/me/language") {
@@ -666,7 +721,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-9"))
+                    put("version", JsonPrimitive("3.18.22-10"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))

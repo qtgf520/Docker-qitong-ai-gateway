@@ -186,7 +186,15 @@ private fun providerToMap(p: Provider) = mapOf(
 
     /** 获取可见服务商：admin=全部；普通用户=系统+公用+自己私有（key 一律脱敏，除非是自己的） */
     fun getVisibleProviders(database: Database, user: User): List<Map<String, Any?>> {
-        if (user.role == "admin") return database.getProviders().map { providerToMap(it) }
+        if (user.role == "admin") {
+            return database.getProviders().map { p ->
+                providerToMap(p).toMutableMap().apply {
+                    // 显示属主用户名
+                    val owner = if (p.ownerId > 0) database.getUserById(p.ownerId) else null
+                    this["ownerName"] = owner?.username ?: (if (p.ownerId == 0L) "系统" else "未知")
+                }
+            }
+        }
         // 普通用户：自己私有 + 公用 + 有权限的系统服务商
         return database.getVisibleProviders(user.id)
             .filter { it.isPublic || it.ownerId == user.id || it.ownerId == 0L && hasPerm(user, Perm.P_MANAGE) }
@@ -194,6 +202,8 @@ private fun providerToMap(p: Provider) = mapOf(
                 providerToMap(p).toMutableMap().apply {
                     // 安全脱敏：只有 owner 自己能看到完整 key，其余一律 ****
                     if (p.ownerId != user.id) this["apiKey"] = "****"
+                    val owner = if (p.ownerId > 0) database.getUserById(p.ownerId) else null
+                    this["ownerName"] = owner?.username ?: (if (p.ownerId == 0L) "系统" else "未知")
                 }
             }
     }
@@ -252,15 +262,27 @@ private fun providerToMap(p: Provider) = mapOf(
 
     // ============ 模型 CRUD（多租户） ============
 
-    /** 获取可见模型：admin=全部；普通用户=系统公用+公用+自己私有 */
+    /** 获取可见模型：admin=全部；普通用户=系统公用+公用+自己私有（含属主用户名） */
     fun getVisibleModels(database: Database, user: User): List<Map<String, Any?>> {
-        if (user.role == "admin") return database.getModels().map { modelToMap(it) }
+        if (user.role == "admin") {
+            return database.getModels().map { m ->
+                modelToMap(m).toMutableMap().apply {
+                    val owner = if (m.ownerId > 0) database.getUserById(m.ownerId) else null
+                    this["ownerName"] = owner?.username ?: (if (m.ownerId == 0L) "系统" else "未知")
+                }
+            }
+        }
         val providerIds = database.getVisibleProviders(user.id)
             .filter { it.isPublic || it.ownerId == user.id || it.ownerId == 0L && hasPerm(user, Perm.P_MANAGE) }
             .map { it.id }
         return database.getVisibleModels(user.id)
             .filter { m -> m.ownerId == user.id || m.isPublic || m.ownerId == 0L && m.isPublic || m.providerId in providerIds }
-            .map { modelToMap(it) }
+            .map { m ->
+                modelToMap(m).toMutableMap().apply {
+                    val owner = if (m.ownerId > 0) database.getUserById(m.ownerId) else null
+                    this["ownerName"] = owner?.username ?: (if (m.ownerId == 0L) "系统" else "未知")
+                }
+            }
     }
 
     fun saveModel(database: Database, body: JsonObject, user: User): Long {
