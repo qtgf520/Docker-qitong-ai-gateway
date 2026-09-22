@@ -604,6 +604,15 @@ private fun providerToMap(p: Provider) = mapOf(
         // 保存用户消息
         database.addMessage(ChatMessage(conversationId = conversationId, role = "user", content = userContent, modelId = modelId))
 
+        // 人格注入 + 远程控制（喊人格名直接触发）
+        val persona = if (userId > 0) database.getPersona(userId) else null
+        val personaName = persona?.name?.trim() ?: ""
+        // 远程控制：消息以人格名开头（如 "綦小桐，你好"）→ 强制使用大脑绑定模型
+        var effectiveModel = modelId.ifBlank { "qtai-sj" }
+        if (personaName.isNotBlank() && userContent.startsWith(personaName)) {
+            effectiveModel = "qtai-sj"  // 强制走大脑
+        }
+
         // 构造 OpenAI 请求体（注入用户人格）
         val messages = database.getMessagesByConversation(conversationId).map {
             buildJsonObject {
@@ -611,8 +620,6 @@ private fun providerToMap(p: Provider) = mapOf(
                 put("content", JsonPrimitive(it.content))
             }
         }.toMutableList()
-        // 人格注入：用户设置了人格则首条加入 system 提示
-        val persona = if (userId > 0) database.getPersona(userId) else null
         if (persona != null && (persona.name.isNotBlank() || persona.background.isNotBlank())) {
             val sb = StringBuilder()
             if (persona.name.isNotBlank()) sb.append("你的名字是${persona.name}。")
@@ -627,19 +634,27 @@ private fun providerToMap(p: Provider) = mapOf(
             messages.add(0, sysMsg)
         }
         val requestBody = buildJsonObject {
-            put("model", JsonPrimitive(modelId.ifBlank { "qtai-sj" }))
+            put("model", JsonPrimitive(effectiveModel))
             put("messages", JsonArray(messages))
             put("stream", JsonPrimitive(stream))
             put("max_tokens", JsonPrimitive(4096))
         }
 
-        // 调用上游（可见模型 = 公用 + 自己的）
+        // 调用上游（可见模型 = 公用 + 自己的；大脑绑定优先）
         val proxy = GatewayProxy(database)
         val allModels = database.getEnabledModels()
         val visibleModels = if (user?.role == "admin") allModels
             else if (userId > 0) allModels.filter { it.isPublic || it.ownerId == userId }
             else allModels.filter { it.isPublic }
-        val attemptModels = proxy.buildAttemptModels(visibleModels, proxy.resolveModelId(modelId.ifBlank { "qtai-sj" }, visibleModels), null, userId)
+        // 大脑绑定：若用户绑定了大脑模型，且消息喊了人格名 → 优先该模型
+        val brainKey = if (userId > 0) database.getUserConfig(userId, "qtai_brain", "") else ""
+        val attemptModels = if (personaName.isNotBlank() && userContent.startsWith(personaName) && brainKey.isNotBlank()) {
+            // 直接解析大脑绑定模型
+            val brainModels = visibleModels.filter { "${it.providerId}::${it.modelId}" == brainKey || it.modelId == brainKey }
+            if (brainModels.isNotEmpty()) brainModels else proxy.buildAttemptModels(visibleModels, effectiveModel, null, userId)
+        } else {
+            proxy.buildAttemptModels(visibleModels, proxy.resolveModelId(effectiveModel, visibleModels), null, userId)
+        }
         if (attemptModels.isEmpty()) return mapOf("conversationId" to conversationId, "error" to "No available model", "reply" to "没有可用模型，请先测速或添加服务商")
 
         var lastResult: String? = null

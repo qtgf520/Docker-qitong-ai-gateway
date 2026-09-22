@@ -167,7 +167,8 @@ loaders.settings = function(){
       '</div>',
       '<div class="card" id="distCard"><h3>💎 分销中心</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
       '<div class="card" id="memCard"><h3>🧠 大脑记忆</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-      '<div class="card" id="brainCard"><h3>🧩 qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>'
+      '<div class="card" id="brainCard"><h3>🧩 qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+      '<div class="card" id="langCard"><h3>🌐 界面语言</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>'
     ].join('');
     // 分销信息
     api('/api/me/distribution').then(function(dr){
@@ -208,6 +209,24 @@ loaders.settings = function(){
             '<div class="form-row"><label>绑定模型Key（如 2::deepseek-flash，留空=自动）</label><input id="qtBrain" class="input" value="'+esc(brain)+'" placeholder="如 2::deepseek-flash"></div>' +
             '<button class="btn" onclick="saveBrain()">保存绑定</button>' +
             '<div style="margin-top:8px;font-size:12px;color:var(--muted)">绑定后 qtai-sj 优先使用该模型作为大脑回复</div>';
+        }
+      }
+    });
+    // 界面语言
+    api('/api/me/language').then(function(lr){
+      if(lr && lr.code === 0){
+        var lc = $('langCard');
+        if(lc){
+          var cur = (lr.data && lr.data.language) || 'zh';
+          var LANGS = [
+            ['zh','简体中文'],['zh-tw','繁體中文'],['en','English'],['ja','日本語'],['ko','한국어'],
+            ['es','Español'],['fr','Français'],['de','Deutsch'],['ru','Русский'],['pt','Português'],
+            ['vi','Tiếng Việt'],['th','ภาษาไทย'],['ar','العربية'],['hi','हिन्दी'],['id','Bahasa Indonesia']
+          ];
+          var opts = LANGS.map(function(l){ return '<option value="'+l[0]+'"'+(cur===l[0]?' selected':'')+'>'+l[1]+'</option>'; }).join('');
+          lc.innerHTML = '<h3>🌐 界面语言</h3>' +
+            '<div class="form-row"><label>选择语言</label><select id="langSel" class="input" onchange="saveLang()">'+opts+'</select></div>' +
+            '<small style="color:var(--muted)">按用户独立存储，下次登录保留</small>';
         }
       }
     });
@@ -270,6 +289,12 @@ window.clearMemories = function(){
 window.saveBrain = function(){
   var brain = $('qtBrain').value.trim();
   api('/api/qtai/brain', { method:'POST', body: { brain: brain } }).then(function(r){
+    if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
+  });
+};
+window.saveLang = function(){
+  var lang = $('langSel').value;
+  api('/api/me/language', { method:'POST', body: { language: lang } }).then(function(r){
     if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
   });
 };

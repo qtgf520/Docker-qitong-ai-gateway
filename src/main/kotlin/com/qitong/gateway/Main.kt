@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-7
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-8
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-7    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-8    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-7"))
+                put("version", JsonPrimitive("3.18.22-8"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -597,6 +597,19 @@ fun Application.moduleWeb(database: Database) {
             database.setUserConfig(user.id, "qtai_brain", brain)
             AdminApi.ok(call, null, if (brain.isBlank()) "已解除大脑绑定" else "大脑已绑定: $brain")
         }
+        // ===== 语言设置（按用户） =====
+        get("/api/me/language") {
+            val user = call.requireAuth(database) ?: return@get
+            val lang = database.getUserConfig(user.id, "language", "zh")
+            AdminApi.ok(call, mapOf("language" to lang), "ok")
+        }
+        post("/api/me/language") {
+            val user = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val lang = body["language"]?.jsonPrimitive?.content ?: "zh"
+            database.setUserConfig(user.id, "language", lang)
+            AdminApi.ok(call, null, "语言已切换")
+        }
         // 密钥编辑（启用/停用/放模型）
         post("/api/keys/update") {
             val u = call.requireAuth(database) ?: return@post
@@ -653,7 +666,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-7"))
+                    put("version", JsonPrimitive("3.18.22-8"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
