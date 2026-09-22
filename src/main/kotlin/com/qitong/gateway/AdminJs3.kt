@@ -165,7 +165,9 @@ loaders.settings = function(){
       '<div class="form-row"><label>新密码</label><input id="chgNew" class="input" type="password" placeholder="至少6个字符"></div>',
       '<button class="btn" onclick="changePassword()">修改密码</button>',
       '</div>',
-      '<div class="card" id="distCard"><h3>💎 分销中心</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>'
+      '<div class="card" id="distCard"><h3>💎 分销中心</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+      '<div class="card" id="memCard"><h3>🧠 大脑记忆</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+      '<div class="card" id="brainCard"><h3>🧩 qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>'
     ].join('');
     // 分销信息
     api('/api/me/distribution').then(function(dr){
@@ -179,6 +181,34 @@ loaders.settings = function(){
           '<div class="form-row"><label>我的余额</label><div><b style="color:var(--green)">¥'+d.balance.toFixed(2)+'</b></div></div>' +
           '<div class="form-row"><label>注册链接</label><div class="addr-line" onclick="copyText(location.origin+\'/login\')">' + location.origin + '/login <span class="copy-tag">📋 复制</span></div></div>' +
           '<small style="color:var(--muted)">分享邀请码给朋友，朋友注册时填写你的邀请码，Ta 充值后你将获得 '+d.commissionRate+'% 佣金</small>';
+      }
+    });
+    // 大脑记忆
+    api('/api/memory').then(function(mr){
+      if(mr && mr.code === 0){
+        var mems = mr.data || [];
+        var mc = $('memCard');
+        if(mc){
+          var rows = mems.map(function(m){
+            return '<tr><td>'+esc(m.title||'(无标题)')+'</td><td style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.content)+'</td><td><span class="badge '+(m.emotion==='happy'?'green':m.emotion==='sad'?'red':'purple')+'">'+esc(m.emotion)+'</span></td><td>'+m.importance+'</td><td>'+new Date(m.timestamp).toLocaleString('zh-CN')+'</td><td><button class="btn-ghost" style="color:var(--red)" onclick="delMemory('+m.id+')">删</button></td></tr>';
+          }).join('');
+          mc.innerHTML = '<h3>🧠 大脑记忆 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="addMemory()">＋ 添加</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="clearMemories()">清空</button></h3>' +
+            '<div class="table-wrap"><table><thead><tr><th>标题</th><th>内容</th><th>情感</th><th>重要</th><th>时间</th><th>操作</th></tr></thead><tbody>' +
+            rows + '<tr><td colspan="6" style="text-align:center;color:var(--muted)">' + (mems.length ? '' : '暂无记忆') + '</td></tr></tbody></table></div>';
+        }
+      }
+    });
+    // qtai-sj 大脑绑定
+    api('/api/qtai/brain').then(function(br){
+      if(br && br.code === 0){
+        var bc = $('brainCard');
+        if(bc){
+          var brain = (br.data && br.data.brain) || '';
+          bc.innerHTML = '<h3>🧩 qtai-sj 大脑绑定</h3>' +
+            '<div class="form-row"><label>绑定模型Key（如 2::deepseek-flash，留空=自动）</label><input id="qtBrain" class="input" value="'+esc(brain)+'" placeholder="如 2::deepseek-flash"></div>' +
+            '<button class="btn" onclick="saveBrain()">保存绑定</button>' +
+            '<div style="margin-top:8px;font-size:12px;color:var(--muted)">绑定后 qtai-sj 优先使用该模型作为大脑回复</div>';
+        }
       }
     });
     // 回填人格配置
@@ -211,6 +241,35 @@ window.savePersona = function(){
     neuroticism: parseFloat($('psN').value)||0.5, memoryEnabled: $('psMem').checked
   };
   api('/api/persona', { method:'POST', body: body }).then(function(r){
+    if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
+  });
+};
+// ===== 大脑记忆操作 =====
+window.addMemory = function(){
+  openModal('添加记忆', '<div class="form-row"><label>标题</label><input id="mmTitle" class="input"></div><div class="form-row"><label>内容</label><textarea id="mmContent" class="input" rows="4"></textarea></div><div class="form-row"><label>情感</label><select id="mmEmotion" class="input"><option value="neutral">中性</option><option value="happy">开心</option><option value="sad">难过</option><option value="surprised">惊讶</option><option value="angry">生气</option></select></div><div class="form-row"><label>重要性(0-10)</label><input id="mmImp" class="input" type="number" min="0" max="10" value="5"></div>', function(){
+    var title = $('mmTitle').value.trim();
+    var content = $('mmContent').value.trim();
+    if(!content){ toast('请输入内容', false); return; }
+    api('/api/memory', { method:'POST', body: { title: title, content: content, emotion: $('mmEmotion').value, importance: parseInt($('mmImp').value)||5 } }).then(function(r){
+      if(r.code === 0){ toast('✅ 记忆已保存', true); closeModal(); loaders.settings(); } else toast(r.msg, false);
+    });
+  });
+};
+window.delMemory = function(id){
+  if(!confirm('删除这条记忆？')) return;
+  api('/api/memory/' + id, { method:'DELETE' }).then(function(r){
+    if(r.code === 0){ toast('✅ 已删除', true); loaders.settings(); } else toast(r.msg, false);
+  });
+};
+window.clearMemories = function(){
+  if(!confirm('清空全部记忆？')) return;
+  api('/api/memory/clear', { method:'POST' }).then(function(r){
+    if(r.code === 0){ toast('✅ 已清空', true); loaders.settings(); } else toast(r.msg, false);
+  });
+};
+window.saveBrain = function(){
+  var brain = $('qtBrain').value.trim();
+  api('/api/qtai/brain', { method:'POST', body: { brain: brain } }).then(function(r){
     if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
   });
 };

@@ -222,6 +222,23 @@ class Database(private val dbPath: String) {
                     expires_at INTEGER NOT NULL
                 )"""
             )
+            // 大脑记忆（按用户隔离，对齐原APP BrainMemoryManager）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS brain_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL DEFAULT 0,
+                    title TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT 'short',
+                    emotion TEXT NOT NULL DEFAULT 'neutral',
+                    importance INTEGER NOT NULL DEFAULT 5,
+                    timestamp INTEGER NOT NULL,
+                    access_count INTEGER NOT NULL DEFAULT 0,
+                    source TEXT NOT NULL DEFAULT 'chat',
+                    tags TEXT NOT NULL DEFAULT '',
+                    model_id TEXT NOT NULL DEFAULT ''
+                )"""
+            )
         }
     }
 
@@ -710,6 +727,42 @@ class Database(private val dbPath: String) {
                 if (p.memoryEnabled) 1 else 0, now
             )
         }
+    }
+
+    // ============ 大脑记忆（按用户隔离） ============
+
+    fun getMemories(userId: Long, limit: Int = 100): List<Map<String, Any?>> =
+        query("SELECT * FROM brain_memory WHERE user_id=? ORDER BY importance DESC, timestamp DESC LIMIT $limit", userId).map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "title" to (it["title"] as? String ?: ""),
+                "content" to (it["content"] as? String ?: ""),
+                "type" to (it["type"] as? String ?: "short"),
+                "emotion" to (it["emotion"] as? String ?: "neutral"),
+                "importance" to ((it["importance"] as? Number)?.toInt() ?: 5),
+                "timestamp" to ((it["timestamp"] as? Number)?.toLong() ?: 0),
+                "accessCount" to ((it["access_count"] as? Number)?.toInt() ?: 0),
+                "source" to (it["source"] as? String ?: "chat"),
+                "tags" to (it["tags"] as? String ?: ""),
+                "modelId" to (it["model_id"] as? String ?: "")
+            )
+        }
+
+    fun addMemory(userId: Long, title: String, content: String, type: String, emotion: String, importance: Int, source: String, tags: String, modelId: String): Long {
+        val now = System.currentTimeMillis()
+        stmt(
+            "INSERT INTO brain_memory (user_id,title,content,type,emotion,importance,timestamp,source,tags,model_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            userId, title, content, type, emotion, importance, now, source, tags, modelId
+        )
+        return lastInsertId()
+    }
+
+    fun deleteMemory(id: Long, userId: Long) {
+        stmt("DELETE FROM brain_memory WHERE id=? AND user_id=?", id, userId)
+    }
+
+    fun clearMemories(userId: Long) {
+        stmt("DELETE FROM brain_memory WHERE user_id=?", userId)
     }
 
     // ============ 配置（替代 SharedPreferences） ============

@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-6
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-7
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-6    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-7    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-6"))
+                put("version", JsonPrimitive("3.18.22-7"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -555,6 +555,48 @@ fun Application.moduleWeb(database: Database) {
             database.savePersona(p)
             AdminApi.ok(call, null, "人格配置已保存")
         }
+        // ===== 大脑记忆（按用户隔离） =====
+        get("/api/memory") {
+            val user = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, database.getMemories(user.id), "ok")
+        }
+        post("/api/memory") {
+            val user = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val title = body["title"]?.jsonPrimitive?.content ?: ""
+            val content = body["content"]?.jsonPrimitive?.content ?: ""
+            val type = body["type"]?.jsonPrimitive?.content ?: "short"
+            val emotion = body["emotion"]?.jsonPrimitive?.content ?: "neutral"
+            val importance = body["importance"]?.jsonPrimitive?.content?.toIntOrNull() ?: 5
+            val tags = body["tags"]?.jsonPrimitive?.content ?: ""
+            val modelId = body["modelId"]?.jsonPrimitive?.content ?: ""
+            val id = database.addMemory(user.id, title, content, type, emotion, importance, "manual", tags, modelId)
+            AdminApi.ok(call, mapOf("id" to id), "记忆已保存")
+        }
+        delete("/api/memory/{id}") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            val user = call.requireAuth(database) ?: return@delete
+            database.deleteMemory(id, user.id)
+            AdminApi.ok(call, null, "已删除")
+        }
+        post("/api/memory/clear") {
+            val user = call.requireAuth(database) ?: return@post
+            database.clearMemories(user.id)
+            AdminApi.ok(call, null, "记忆已清空")
+        }
+        // ===== qtai-sj 大脑绑定（按用户） =====
+        get("/api/qtai/brain") {
+            val user = call.requireAuth(database) ?: return@get
+            val brain = database.getUserConfig(user.id, "qtai_brain", "")
+            AdminApi.ok(call, mapOf("brain" to brain), "ok")
+        }
+        post("/api/qtai/brain") {
+            val user = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val brain = body["brain"]?.jsonPrimitive?.content ?: ""
+            database.setUserConfig(user.id, "qtai_brain", brain)
+            AdminApi.ok(call, null, if (brain.isBlank()) "已解除大脑绑定" else "大脑已绑定: $brain")
+        }
         // 密钥编辑（启用/停用/放模型）
         post("/api/keys/update") {
             val u = call.requireAuth(database) ?: return@post
@@ -611,7 +653,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-6"))
+                    put("version", JsonPrimitive("3.18.22-7"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
