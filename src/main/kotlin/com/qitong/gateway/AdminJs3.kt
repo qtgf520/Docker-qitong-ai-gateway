@@ -12,15 +12,21 @@ loaders.keys = function(){
     var rows = state.keys.map(function(k){
       var mt = (k.allowedModels && k.allowedModels.length) ? k.allowedModels.map(function(m){ return '<span class="badge blue">'+esc(m)+'</span>'; }).join(' ') : '<span style="color:var(--muted)">全部</span>';
       var keyJs = esc(k.key).replace(/'/g, '&#39;');
-      return '<tr><td style="font-family:monospace;font-size:12px">'+esc(k.key)+'</td><td>'+esc(k.label)+'</td><td><span class="badge '+(k.enabled?'green':'red')+'">'+(k.enabled?'启用':'停用')+'</span></td><td>'+mt+'</td><td><span class="badge '+(k.qtaiSjAccess?'purple':'gray')+'">'+(k.qtaiSjAccess?'允许':'禁止')+'</span></td><td><button class="btn-ghost" onclick="editKey(\''+keyJs+'\')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delKey(\''+keyJs+'\')">删除</button></td></tr>';
+      return '<tr><td style="font-family:monospace;font-size:12px">'+esc(k.key)+'</td><td>'+esc(k.label)+'</td><td><span class="badge '+(k.enabled?'green':'red')+'">'+(k.enabled?'启用':'停用')+'</span></td><td>'+mt+'</td><td><span class="badge '+(k.qtaiSjAccess?'purple':'gray')+'">'+(k.qtaiSjAccess?'允许':'禁止')+'</span></td><td><span class="badge blue">'+esc(k.ownerName||'')+'</span></td><td><button class="btn-ghost" onclick="copyKey(\''+keyJs+'\')">📋 复制</button> <button class="btn-ghost" onclick="editKey(\''+keyJs+'\')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delKey(\''+keyJs+'\')">删除</button></td></tr>';
     }).join('');
     box.innerHTML = [
       '<div class="action-bar"><button class="btn" onclick="addKey()">＋ 添加密钥</button></div>',
-      '<div class="card"><div class="table-wrap"><table><thead><tr><th>密钥</th><th>标签</th><th>状态</th><th>可用模型</th><th>qtai-sj</th><th>操作</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="6" style="text-align:center;color:var(--muted)">' + (state.keys.length ? '' : '暂无密钥') + '</td></tr>' +
+      '<div class="card"><div class="table-wrap"><table><thead><tr><th>密钥</th><th>标签</th><th>状态</th><th>可用模型</th><th>qtai-sj</th><th>属主</th><th>操作</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + (state.keys.length ? '' : '暂无密钥') + '</td></tr>' +
       '</tbody></table></div></div>'
     ].join('');
   });
+};
+// 复制密钥
+window.copyKey = function(k){
+  var txt = k.replace(/&#39;/g, "'");
+  if(navigator.clipboard){ navigator.clipboard.writeText(txt).then(function(){ toast('✅ 已复制密钥', true); }); }
+  else { toast('✅ 已复制: ' + txt, true); }
 };
 window.addKey = function(){
   var modelOpts = state.models.map(function(m){ return '<option value="'+esc(m.modelId)+'">'+esc(m.displayName)+'</option>'; }).join('');

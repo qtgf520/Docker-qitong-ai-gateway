@@ -72,22 +72,30 @@ class GatewayProxy(private val database: Database) {
         return sorted.firstOrNull()?.modelId ?: "qtai-sj"
     }
 
-    /** 构建故障转移尝试列表（强制池优先 + 健康排序） */
+    /** 构建故障转移尝试列表（强制池优先 + 健康排序）——用户级池优先，回退全局池 */
     fun buildAttemptModels(
         models: List<AiModel>,
         modelId: String,
-        providerId: Long? = null
+        providerId: Long? = null,
+        userId: Long = 0L
     ): List<AiModel> {
-        // 强制故障池（逗号分隔的 routeKey 列表）
-        val forcedPool = database.getConfig("forced_pool_keys", "")
+        // 强制故障池：用户自己的池优先；无则用全局池
+        val forcedPool = if (userId > 0) {
+            database.getUserConfig(userId, "forced_pool_keys", "").ifBlank {
+                database.getConfig("forced_pool_keys", "")
+            }
+        } else {
+            database.getConfig("forced_pool_keys", "")
+        }
+        val forcedList = forcedPool
             .split(",")
             .map { it.trim() }
             .filter { it.isNotBlank() }
 
         val available = models.filter { it.isEnabled }
 
-        if (forcedPool.isNotEmpty()) {
-            val forced = forcedPool.mapNotNull { rk ->
+        if (forcedList.isNotEmpty()) {
+            val forced = forcedList.mapNotNull { rk ->
                 val parts = rk.split("::")
                 if (parts.size == 2) {
                     available.find { it.providerId.toString() == parts[0] && it.modelId == parts[1] }
@@ -154,6 +162,14 @@ class GatewayProxy(private val database: Database) {
         // 当前调用者用户ID（来自API密钥属主；本地/免密钥=0）
         val ownerId = try { call.attributes[ApiKeyOwnerKey] } catch (_: Exception) { 0L }
         val ownerUser = if (ownerId > 0) database.getUserById(ownerId) else null
+        // 用户级 API 开关检查（非管理员用户暂停则拒绝）
+        if (ownerId > 0 && ownerUser?.role != "admin") {
+            val apiEnabled = database.getUserConfig(ownerId, "api_enabled", "true").toBoolean()
+            if (!apiEnabled) {
+                respondJson(call, openAIError(403, "API has been paused by user", "api_paused"), 403)
+                return
+            }
+        }
 
         // 路由规则匹配（route/block）
         val rule = RoutingRuleManager.matchRule(database, path, call.request.headers["Authorization"] ?: "", call.request.queryParameters["model"] ?: "")
@@ -186,8 +202,8 @@ class GatewayProxy(private val database: Database) {
         val resolvedModelId = targetModelOverride ?: resolveModelId(modelId, models)
         modelId = resolvedModelId
 
-        // 构建尝试列表
-        val attemptModels = buildAttemptModels(models, modelId, targetProviderOverride)
+        // 构建尝试列表（用户级池优先）
+        val attemptModels = buildAttemptModels(models, modelId, targetProviderOverride, ownerId)
 
         if (attemptModels.isEmpty()) {
             respondJson(call, openAIError(404, "No available model", "not_found"), 404)

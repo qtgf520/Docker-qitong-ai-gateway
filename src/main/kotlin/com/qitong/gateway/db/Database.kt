@@ -676,6 +676,14 @@ class Database(private val dbPath: String) {
         }
     }
 
+    /** 用户级配置：key = "user:{userId}:{confKey}" */
+    fun getUserConfig(userId: Long, key: String, default: String = ""): String =
+        getConfig("user:$userId:$key", default)
+
+    fun setUserConfig(userId: Long, key: String, value: String) {
+        setConfig("user:$userId:$key", value)
+    }
+
     fun getAllConfig(): Map<String, String> =
         query("SELECT * FROM gateway_config").associate { (it["key"] as? String ?: "") to (it["value"] as? String ?: "") }
 

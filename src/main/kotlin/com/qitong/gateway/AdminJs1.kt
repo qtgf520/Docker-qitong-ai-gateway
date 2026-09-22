@@ -108,12 +108,12 @@ loaders.dashboard = function(){
     box.innerHTML = [
       '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥0.00</div><div class="lbl">我的余额</div></div></div></div>',
       '<div class="grid grid-2">',
-        '<div class="card"><h3>⚡ 网关控制</h3><div style="display:flex;gap:10px;align-items:center">' +
+        '<div class="card" id="gwCtrlCard"><h3>⚡ 网关控制</h3><div style="display:flex;gap:10px;align-items:center">' +
           '<span id="gwDot" class="dot ' + (st.running ? '' : 'off') + '"></span>' +
           '<span id="gwState" style="font-weight:700;color:' + (st.running ? 'var(--green)' : 'var(--red)') + '">' + (st.running ? '运行中' : '已停止') + '</span>' +
           '<button class="btn" id="gwToggleBtn" onclick="toggleGateway()">' + (st.running ? '⏸ 暂停' : '▶️ 启动') + '</button>' +
         '</div><div style="margin-top:8px;font-size:12px;color:var(--muted)">活跃模型：' + esc(st.activeModel || 'qtai-sj') + '</div></div>',
-        '<div class="card"><h3>⏱ 自动测速</h3><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+        '<div class="card" id="autoSpeedCard"><h3>⏱ 自动测速</h3><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
           '<button class="btn" id="autoSpeedBtn" onclick="toggleAutoSpeed()">' + (st.autoSpeedTest ? '⏹ 停止自动测速' : '▶️ 启动自动测速') + '</button>' +
           '<select id="speedInterval" class="input" style="width:130px" onchange="saveSpeedInterval()">' +
             '<option value="5"' + (st.speedIntervalMin==5?' selected':'') + '>5分钟</option>' +
@@ -122,7 +122,7 @@ loaders.dashboard = function(){
             '<option value="60"' + (st.speedIntervalMin==60?' selected':'') + '>1小时</option>' +
             '<option value="120"' + (st.speedIntervalMin==120?' selected':'') + '>2小时</option>' +
             '<option value="240"' + (st.speedIntervalMin==240?' selected':'') + '>4小时</option>' +
-          '</select></div></div>',
+          '</select><span style="font-size:11px;color:var(--muted)" id="speedScopeTag"></span></div></div>',
       '</div>',
       addrHtml,
       poolHtml,
@@ -130,6 +130,21 @@ loaders.dashboard = function(){
         (rankRows || '<tr><td colspan="9" style="text-align:center;color:var(--muted)">暂无启用模型，请先在服务商页添加并同步</td></tr>') +
       '</tbody></table></div></div>'
     ].join('');
+    // 根据角色更新控制卡标题与范围提示
+    api('/api/auth/me').then(function(me){
+      if(me && me.code === 0 && me.data){
+        var isAdmin = me.data.role === 'admin';
+        if(!isAdmin){
+          var gtitle = $('gwCtrlCard').querySelector('h3');
+          if(gtitle) gtitle.textContent = '⚡ 我的API控制';
+          var spTag = $('speedScopeTag');
+          if(spTag) spTag.textContent = '（仅我的模型）';
+        } else {
+          var spTag2 = $('speedScopeTag');
+          if(spTag2) spTag2.textContent = '（全局）';
+        }
+      }
+    });
   });
 };
 // ===== 首页操作 =====

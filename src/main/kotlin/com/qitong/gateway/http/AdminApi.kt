@@ -448,8 +448,20 @@ private fun providerToMap(p: Provider) = mapOf(
     // ============ 密钥（多租户） ============
 
     fun getVisibleApiKeys(database: Database, user: User): List<Map<String, Any?>> {
-        if (user.role == "admin") return database.getApiKeys().map { apiKeyToMap(it) }
-        return database.getApiKeysByOwner(user.id).map { apiKeyToMap(it) }
+        if (user.role == "admin") {
+            return database.getApiKeys().map { k ->
+                apiKeyToMap(k).toMutableMap().apply {
+                    // 显示属主用户名
+                    val owner = if (k.ownerId > 0) database.getUserById(k.ownerId) else null
+                    this["ownerName"] = owner?.username ?: (if (k.ownerId == 0L) "系统" else "未知")
+                }
+            }
+        }
+        return database.getApiKeysByOwner(user.id).map { k ->
+            apiKeyToMap(k).toMutableMap().apply {
+                this["ownerName"] = user.username
+            }
+        }
     }
 
     fun addApiKey(database: Database, body: JsonObject, user: User): Boolean {

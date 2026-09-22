@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-3
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-4
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-3    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-4    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-3"))
+                put("version", JsonPrimitive("3.18.22-4"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -578,11 +578,14 @@ fun Application.moduleWeb(database: Database) {
 
         // 状态
         get("/api/status") {
+            val viewer = call.authUser(database)   // 当前登录用户（可能为null=本地/未登录）
+            val viewerId = viewer?.id ?: 0L
+            val isAdmin = viewer?.role == "admin"
             AdminApi.respondJson(call, buildJsonObject {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-3"))
+                    put("version", JsonPrimitive("3.18.22-4"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
@@ -593,22 +596,44 @@ fun Application.moduleWeb(database: Database) {
                     put("localAddr", JsonPrimitive("http://" + serverIp() + ":" + database.getConfig("gateway_port", "18889") + "/v1"))
                     // 活跃模型
                     put("activeModel", JsonPrimitive(database.getConfig("active_model_key", "").substringAfter("::", "")))
-                    // 强制故障池
-                    put("forcedPool", JsonArray(database.getConfig("forced_pool_keys", "").split(",").filter { it.isNotBlank() }.map { JsonPrimitive(it) }))
-                    // 自动测速
-                    put("autoSpeedTest", JsonPrimitive(database.getConfig("auto_speedtest", "false").toBoolean()))
-                    put("speedIntervalMin", JsonPrimitive(database.getConfig("speed_interval_min", "240")))
-                    // ③ 排行榜数据源：全部已启用模型 + 健康缓存三指标
-                    // 对齐原APP：所有已启用模型全显示（含待测速/失败），按健康+延迟排序
+                    // 强制故障池：管理员=全局池；用户=自己的池
+                    val forcedPoolStr = if (isAdmin) {
+                        database.getConfig("forced_pool_keys", "")
+                    } else if (viewerId > 0) {
+                        database.getUserConfig(viewerId, "forced_pool_keys", "")
+                    } else {
+                        database.getConfig("forced_pool_keys", "")
+                    }
+                    put("forcedPool", JsonArray(forcedPoolStr.split(",").filter { it.isNotBlank() }.map { JsonPrimitive(it) }))
+                    // 自动测速：管理员=全局；用户=自己的
+                    val autoSpeedStr = if (isAdmin) {
+                        database.getConfig("auto_speedtest", "false")
+                    } else if (viewerId > 0) {
+                        database.getUserConfig(viewerId, "auto_speedtest", "false")
+                    } else {
+                        "false"
+                    }
+                    put("autoSpeedTest", JsonPrimitive(autoSpeedStr.toBoolean()))
+                    put("speedIntervalMin", JsonPrimitive(
+                        if (isAdmin) database.getConfig("speed_interval_min", "240")
+                        else if (viewerId > 0) database.getUserConfig(viewerId, "speed_interval_min", "240")
+                        else "240"
+                    ))
+                    // 排行榜数据源：用户只看 公用+自己的模型；管理员看全部
                     val allModels = database.getModels()
-                    val enabledModels = allModels.filter { it.isEnabled }
-                    val pipSorted = GatewayScheduler.buildPipelineSortedModels(database)
+                    val visibleModels = if (isAdmin) allModels
+                    else if (viewerId > 0) allModels.filter { m -> m.isPublic || m.ownerId == viewerId }
+                    else allModels.filter { it.isPublic }
+                    val enabledModels = visibleModels.filter { it.isEnabled }
+                    // 可见模型 key 集合（过滤全局健康缓存）
+                    val visibleKeys = visibleModels.map { GatewayScheduler.routeKey(it.providerId, it.modelId) }.toSet()
+                    val pipSorted = GatewayScheduler.buildPipelineSortedModels(database).filter { it in visibleKeys }
                     val sortedAll = pipSorted + enabledModels
                         .filter { GatewayScheduler.routeKey(it.providerId, it.modelId) !in pipSorted }
                         .map { GatewayScheduler.routeKey(it.providerId, it.modelId) }
                     put("pipelineSorted", JsonArray(sortedAll.map { JsonPrimitive(it) }))
                     put("healthCache", JsonArray(synchronized(GatewayScheduler.healthCache) {
-                        GatewayScheduler.healthCache.entries.map { (k, v) ->
+                        GatewayScheduler.healthCache.entries.filter { (k, _) -> k in sortedAll }.map { (k, v) ->
                             buildJsonObject {
                                 put("key", JsonPrimitive(k))
                                 put("modelId", JsonPrimitive(v.modelId))
@@ -626,13 +651,20 @@ fun Application.moduleWeb(database: Database) {
             }, 200)
         }
 
-        // 网关启停控制
+        // 网关启停控制：管理员=总开关；用户=自己key的可用开关（记录到用户配置）
         post("/api/gateway/toggle") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
             val action = body["action"]?.jsonPrimitive?.content ?: "toggle"
-            val newState = GatewayProxy.toggleGateway(action, database)
-            AdminApi.ok(call, mapOf("running" to newState), if (newState) "网关已启动" else "网关已停止")
+            if (u.role == "admin") {
+                val newState = GatewayProxy.toggleGateway(action, database)
+                AdminApi.ok(call, mapOf("running" to newState), if (newState) "网关已启动" else "网关已停止")
+            } else {
+                // 用户级开关：允许/禁止自己的key转发
+                val newState = database.getUserConfig(u.id, "api_enabled", "true") == "false"
+                database.setUserConfig(u.id, "api_enabled", newState.toString())
+                AdminApi.ok(call, mapOf("running" to newState), if (newState) "API 已启用" else "API 已暂停")
+            }
         }
 
         // 设置活跃模型（qtai-sj 解析目标）
@@ -644,33 +676,41 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, "已设置活跃模型")
         }
 
-        // 强制故障池：添加/移除/清空
+        // 强制故障池：管理员=全局池；用户=自己的池
         post("/api/gateway/forced-pool") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
             val action = body["action"]?.jsonPrimitive?.content ?: "add"
             val modelKey = body["modelKey"]?.jsonPrimitive?.content ?: ""
-            val current = database.getConfig("forced_pool_keys", "").split(",").filter { it.isNotBlank() }.toMutableList()
+            val isAdmin = u.role == "admin"
+            val key = if (isAdmin) "forced_pool_keys" else "user:${u.id}:forced_pool_keys"
+            val current = database.getConfig(key, "").split(",").filter { it.isNotBlank() }.toMutableList()
             when (action) {
                 "add" -> if (modelKey.isNotBlank() && modelKey !in current) current.add(modelKey)
                 "remove" -> current.remove(modelKey)
                 "clear" -> current.clear()
             }
-            database.setConfig("forced_pool_keys", current.joinToString(","))
+            database.setConfig(key, current.joinToString(","))
             AdminApi.ok(call, mapOf("forcedPool" to current), "已更新强制故障池")
         }
 
-        // 自动测速开关 + 间隔
+        // 自动测速开关 + 间隔：管理员=全局；用户=自己的
         post("/api/gateway/auto-speedtest") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
             val enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
             val interval = body["intervalMin"]?.jsonPrimitive?.content?.toIntOrNull() ?: 240
-            database.setConfig("auto_speedtest", enabled.toString())
-            database.setConfig("speed_interval_min", interval.toString())
-            // 启动/停止自动测速协程
-            GatewayProxy.setAutoSpeedTest(enabled, interval, database)
-            AdminApi.ok(call, null, if (enabled) "自动测速已开启（每 ${interval} 分钟）" else "自动测速已停止")
+            val isAdmin = u.role == "admin"
+            if (isAdmin) {
+                database.setConfig("auto_speedtest", enabled.toString())
+                database.setConfig("speed_interval_min", interval.toString())
+                GatewayProxy.setAutoSpeedTest(enabled, interval, database)
+                AdminApi.ok(call, null, if (enabled) "全局自动测速已开启（每 ${interval} 分钟）" else "全局自动测速已停止")
+            } else {
+                database.setUserConfig(u.id, "auto_speedtest", enabled.toString())
+                database.setUserConfig(u.id, "speed_interval_min", interval.toString())
+                AdminApi.ok(call, null, if (enabled) "我的自动测速已开启（每 ${interval} 分钟）" else "我的自动测速已停止")
+            }
         }
     }
 }
