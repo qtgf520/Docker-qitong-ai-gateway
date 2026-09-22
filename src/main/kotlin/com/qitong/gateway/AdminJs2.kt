@@ -1,0 +1,135 @@
+package com.qitong.gateway
+
+/** 后台 JS 第二部分：模型 + 测速 + 聊天 */
+object AdminJs2 {
+    fun js(): String = """
+// ===== 模型 =====
+loaders.models = function(){
+  var box = $('view-models');
+  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
+  Promise.all([api('/api/models'), api('/api/providers')]).then(function(res){
+    state.models = res[0].data || []; state.providers = res[1].data || [];
+    var pmap = {}; state.providers.forEach(function(p){ pmap[p.id] = p.name; });
+    var rows = state.models.map(function(m){
+      return '<tr><td>'+(m.isEnabled?'<span class="badge green">✓</span>':'<span class="badge gray">✗</span>')+'</td><td>'+esc(m.modelId)+'</td><td>'+esc(m.displayName)+(m.customAlias?' <span class="badge purple">'+esc(m.customAlias)+'</span>':'')+'</td><td><span class="badge blue">'+esc(pmap[m.providerId]||('P'+m.providerId))+'</span></td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td><td><button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
+    }).join('');
+    box.innerHTML = [
+      '<div class="action-bar"><button class="btn" onclick="editModel(0)">＋ 手动添加模型</button><span style="color:var(--muted);font-size:12px">提示：服务商页点「同步」可自动拉取</span></div>',
+      '<div class="card"><div class="table-wrap"><table><thead><tr><th></th><th>模型ID</th><th>显示名</th><th>服务商</th><th>默认</th><th>上下文</th><th>操作</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
+      '</tbody></table></div></div>'
+    ].join('');
+  });
+};
+window.editModel = function(id){
+  var m = state.models.find(function(x){ return x.id===id; }) || {};
+  var opts = state.providers.map(function(p){ return '<option value="'+p.id+'"'+(p.id===m.providerId?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('');
+  var html = [
+    '<div class="form-row"><label>服务商 *</label><select id="mdProv" class="input">'+(opts||'<option value="0">请先添加服务商</option>')+'</select></div>',
+    '<div class="form-row"><label>模型ID *</label><input id="mdId" class="input" value="'+esc(m.modelId||'')+'" placeholder="如 gpt-4o"></div>',
+    '<div class="form-row"><label>显示名</label><input id="mdName" class="input" value="'+esc(m.displayName||'')+'"></div>',
+    '<div class="form-row"><label>自定义别名</label><input id="mdAlias" class="input" value="'+esc(m.customAlias||'')+'"></div>',
+    '<div class="form-row"><label>上下文窗口</label><input id="mdCtx" class="input" type="number" value="'+(m.contextWindow||4096)+'"></div>',
+    '<div class="form-row"><label><input type="checkbox" id="mdEnabled"'+(m.isEnabled!==false?' checked':'')+'> 启用</label> <label style="margin-left:12px"><input type="checkbox" id="mdDefault"'+(m.isDefault?' checked':'')+'> 默认</label></div>'
+  ].join('');
+  openModal(id ? '编辑模型' : '添加模型', html, function(){
+    var body = { id:id||0, providerId:parseInt($('mdProv').value)||0, modelId:$('mdId').value.trim(), displayName:$('mdName').value.trim()||$('mdId').value.trim(), customAlias:$('mdAlias').value.trim(), contextWindow:parseInt($('mdCtx').value)||4096, isEnabled:$('mdEnabled').checked, isDefault:$('mdDefault').checked };
+    if(!body.modelId){ toast('请填写模型ID', false); return; }
+    api('/api/models', { method:'POST', body: body }).then(function(r){
+      if(r.code === 0){ toast('✅ 保存成功', true); closeModal(); loaders.models(); } else toast(r.msg, false);
+    });
+  });
+};
+window.delModel = function(id){
+  if(!confirm('确定删除该模型？')) return;
+  api('/api/models/' + id, { method:'DELETE' }).then(function(r){
+    if(r.code === 0){ toast('✅ 已删除', true); loaders.models(); } else toast(r.msg, false);
+  });
+};
+// ===== 测速 =====
+loaders.speedtest = function(){
+  $('view-speedtest').innerHTML = '<div class="action-bar"><button class="btn" onclick="runSpeedTest()">⚡ 开始批量测速</button><span id="stStatus" style="color:var(--muted);font-size:13px"></span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">点击上方按钮开始测速</div></div>';
+};
+window.runSpeedTest = function(){
+  var st = $('stStatus'); st.innerHTML = '测速中，请稍候...';
+  $('stCard').innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px">正在测速全部模型...</div>';
+  api('/api/speedtest', { method:'POST' }).then(function(r){
+    st.innerHTML = '';
+    if(r.code === 0){
+      var list = r.data || [];
+      var rows = list.map(function(h,i){
+        return '<tr><td>'+(i+1)+'</td><td>'+esc(h.modelId)+'</td><td>P'+h.providerId+'</td><td>'+(h.isHealthy?h.latencyMs+' ms':'—')+'</td><td><span class="badge '+(h.isHealthy?'green':'red')+'">'+(h.isHealthy?'正常':'失败')+'</span></td></tr>';
+      }).join('');
+      $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>排名</th><th>模型ID</th><th>服务商</th><th>延迟</th><th>状态</th></tr></thead><tbody>' +
+        rows + '<tr><td colspan="5" style="text-align:center;color:var(--muted)">' + (list.length ? '' : '没有可测速的模型') + '</td></tr>' +
+      '</tbody></table></div>';
+      toast('✅ 测速完成', true);
+    } else toast(r.msg, false);
+  });
+};
+// ===== 聊天 =====
+loaders.chat = function(){
+  var box = $('view-chat');
+  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
+  Promise.all([api('/api/conversations'), api('/api/models')]).then(function(res){
+    state.conversations = res[0].data || []; state.models = res[1].data || [];
+    var convOpts = '<option value="0">＋ 新对话</option>' + state.conversations.map(function(c){ return '<option value="'+c.id+'">'+esc(c.title)+'</option>'; }).join('');
+    var modelOpts = state.models.map(function(m){ return '<option value="'+esc(m.modelId)+'">'+esc(m.displayName)+'</option>'; }).join('') || '<option value="qtai-sj">🔄 自动化切换</option>';
+    box.innerHTML = [
+      '<div class="card" style="padding:12px 16px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">',
+        '<select id="chatConv" class="input" style="width:160px" onchange="loadConvMsgs()">'+convOpts+'</select>',
+        '<select id="chatModel" class="input" style="width:180px">'+modelOpts+'</select>',
+        '<button class="btn-ghost" onclick="deleteConv()">删除会话</button>',
+      '</div></div>',
+      '<div class="card chat-box"><div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">选择或新建会话开始聊天</div></div></div>',
+        '<div class="chat-input"><input id="chatInput" class="input" placeholder="输入消息... (Enter发送)" onkeydown="if(event.key===EnterKey)sendChat()"><button class="btn" onclick="sendChat()">发送</button></div>',
+      '</div>'
+    ].join('');
+  });
+};
+var EnterKey = 'Enter';
+window.loadConvMsgs = function(){
+  var sel = $('chatConv'); if(!sel) return;
+  var id = sel.value;
+  state.currentChatConv = parseInt(id) || 0;
+  if(!id || id === '0'){ $('chatMsgs').innerHTML = '<div class="msg-row system"><div class="bubble">新对话</div></div>'; return; }
+  api('/api/conversations/' + id).then(function(r){
+    if(r.code === 0){
+      var msgs = r.data.messages || [];
+      $('chatMsgs').innerHTML = msgs.map(function(m){
+        return '<div class="msg-row '+m.role+'"><div class="bubble">'+esc(m.content)+'</div></div>';
+      }).join('') || '<div class="msg-row system"><div class="bubble">空对话</div></div>';
+      var el = $('chatMsgs'); el.scrollTop = el.scrollHeight;
+    }
+  });
+};
+window.sendChat = function(){
+  var input = $('chatInput'); if(!input) return;
+  var content = input.value.trim(); if(!content) return;
+  var convId = state.currentChatConv || 0;
+  var model = $('chatModel').value || 'qtai-sj';
+  var msgs = $('chatMsgs');
+  msgs.innerHTML += '<div class="msg-row user"><div class="bubble">'+esc(content)+'</div></div><div class="msg-row assistant"><div class="bubble" id="waitBubble">思考中...</div></div>';
+  msgs.scrollTop = msgs.scrollHeight;
+  input.value = '';
+  api('/api/chat', { method:'POST', body: { conversationId: convId, content: content, model: model } }).then(function(r){
+    var wb = $('waitBubble');
+    if(r.code === 0){
+      if(wb) wb.textContent = r.data.reply || '(无响应)';
+      msgs.scrollTop = msgs.scrollHeight;
+      if(convId === 0){ state.currentChatConv = r.data.conversationId; loaders.chat(); }
+    } else {
+      if(wb) wb.textContent = '❌ ' + (r.msg || '失败');
+    }
+  });
+};
+window.deleteConv = function(){
+  var id = state.currentChatConv;
+  if(!id){ toast('请先选择会话', false); return; }
+  if(!confirm('删除该会话？')) return;
+  api('/api/conversations/' + id, { method:'DELETE' }).then(function(r){
+    if(r.code === 0){ toast('✅ 已删除', true); state.currentChatConv = 0; loaders.chat(); } else toast(r.msg, false);
+  });
+};
+"""
+}

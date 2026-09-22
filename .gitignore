@@ -1,0 +1,38 @@
+# Gradle
+.gradle/
+build/
+.kotlin/
+
+# 备份
+backup_*/
+*.bak
+*.bak_*
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 敏感文件
+*.jks
+*.keystore
+*.key
+*.pem
+*.env
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 数据
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# 对话/工作区杂项
+.backup/
+.operit/
+ui-template/
+ui-assets/
+*.tgz

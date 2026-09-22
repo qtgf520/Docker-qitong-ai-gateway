@@ -1,0 +1,21 @@
+services:
+  qitong-gateway:
+    build: .
+    container_name: qitong-ai-gateway
+    restart: always
+    ports:
+      - "18080:18080"   # Web 后台
+      - "18889:18889"   # 网关 API
+    environment:
+      WEB_PORT: "18080"
+      GATEWAY_PORT: "18889"
+      DB_PATH: "/data/qitong/gateway.db"
+      SERVER_IP: "103.23.149.10"
+    volumes:
+      - ./data:/data/qitong
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18889/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
