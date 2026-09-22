@@ -168,7 +168,9 @@ loaders.settings = function(){
       '<div class="card" id="distCard"><h3>💎 分销中心</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
       '<div class="card" id="memCard"><h3>🧠 大脑记忆</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
       '<div class="card" id="brainCard"><h3>🧩 qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-      '<div class="card" id="langCard"><h3>🌐 界面语言</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>'
+      '<div class="card" id="langCard"><h3>🌐 界面语言</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+      '<div class="card" id="bakCard"><h3>💾 数据备份/恢复</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+      '<div class="card" id="skillCard"><h3>🧰 自定义技能</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>'
     ].join('');
     // 分销信息
     api('/api/me/distribution').then(function(dr){
@@ -227,6 +229,35 @@ loaders.settings = function(){
           lc.innerHTML = '<h3>🌐 界面语言</h3>' +
             '<div class="form-row"><label>选择语言</label><select id="langSel" class="input" onchange="saveLang()">'+opts+'</select></div>' +
             '<small style="color:var(--muted)">按用户独立存储，下次登录保留</small>';
+        }
+      }
+    });
+    // 数据备份/恢复
+    api('/api/auth/me').then(function(me){
+      var isAdmin = me && me.code===0 && me.data && me.data.role === 'admin';
+      var bc = $('bakCard');
+      if(bc){
+        bc.innerHTML = '<h3>💾 数据备份/恢复</h3>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button class="btn" onclick="exportData()">📤 导出备份</button>' +
+          '<button class="btn-ghost" onclick="importData()">📥 导入恢复</button>' +
+          '</div>' +
+          '<small style="color:var(--muted);display:block;margin-top:6px">导出：服务商/模型/人格/记忆/自定义技能；导入：JSON 文件互传（APP↔线上）</small>';
+      }
+    });
+    // 自定义技能（按用户隔离）
+    api('/api/skills').then(function(sr){
+      if(sr && sr.code === 0){
+        var skills = sr.data || [];
+        var sc = $('skillCard');
+        if(sc){
+          var rows = (skills || []).map(function(s,i){
+            return '<tr><td>'+(i+1)+'</td><td>'+esc(s.name||'')+'</td><td>'+esc(s.description||'')+'</td><td>' + ((s.triggers||[]).length ? '<span class="badge purple">'+esc((s.triggers||[]).join('、'))+'</span>' : '') + '</td><td><button class="btn-ghost" style="color:var(--red)" onclick="delSkill('+i+')">删</button></td></tr>';
+          }).join('');
+          sc.innerHTML = '<h3>🧰 自定义技能 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="addSkill()">＋ 添加</button></h3>' +
+            '<div class="table-wrap"><table><thead><tr><th>#</th><th>名称</th><th>描述</th><th>触发词</th><th>操作</th></tr></thead><tbody>' +
+            rows + '<tr><td colspan="5" style="text-align:center;color:var(--muted)">' + ((skills||[]).length ? '' : '暂无自定义技能，点击＋添加') + '</td></tr></tbody></table></div>' +
+            '<small style="color:var(--muted)">自定义技能会注入大脑，命中触发词时 AI 按你的描述自动执行（按用户独立存储）</small>';
         }
       }
     });
@@ -296,6 +327,60 @@ window.saveLang = function(){
   var lang = $('langSel').value;
   api('/api/me/language', { method:'POST', body: { language: lang } }).then(function(r){
     if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
+  });
+};
+// ===== 数据备份/恢复 =====
+window.exportData = function(){
+  api('/api/backup/export').then(function(r){
+    if(r.code === 0){
+      var data = JSON.stringify(r.data, null, 2);
+      var blob = new Blob([data], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'qitong-backup-' + new Date().toISOString().slice(0,10) + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('✅ 备份已导出', true);
+    } else toast(r.msg, false);
+  });
+};
+window.importData = function(){
+  var inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.json';
+  inp.onchange = function(){
+    var f = inp.files[0];
+    if(!f) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      try {
+        var data = JSON.parse(reader.result);
+        api('/api/backup/import', { method:'POST', body: data }).then(function(r){
+          if(r.code === 0){ toast('✅ ' + r.msg, true); loaders.settings(); } else toast(r.msg, false);
+        });
+      } catch(e){ toast('❌ 文件格式错误', false); }
+    };
+    reader.readAsText(f);
+  };
+  inp.click();
+};
+// ===== 自定义技能（按用户隔离） =====
+window.addSkill = function(){
+  openModal('添加自定义技能', '<div class="form-row"><label>技能名称</label><input id="skName" class="input" placeholder="如：查天气"></div><div class="form-row"><label>触发词（逗号分隔）</label><input id="skTrig" class="input" placeholder="如：天气,今天天气"></div><div class="form-row"><label>执行描述</label><textarea id="skDesc" class="input" rows="3" placeholder="告诉大脑这个技能做什么"></textarea></div>', function(){
+    var name = $('skName').value.trim();
+    var trig = $('skTrig').value.trim();
+    var desc = $('skDesc').value.trim();
+    if(!name || !desc){ toast('请填写名称和描述', false); return; }
+    api('/api/skills', { method:'POST', body: { name: name, description: desc, triggers: trig.split(',').map(function(s){return s.trim();}).filter(Boolean) } }).then(function(r){
+      if(r.code === 0){ toast('✅ 技能已添加', true); closeModal(); loaders.settings(); } else toast(r.msg, false);
+    });
+  });
+};
+window.delSkill = function(idx){
+  if(!confirm('删除该技能？')) return;
+  api('/api/skills/' + idx, { method:'DELETE' }).then(function(r){
+    if(r.code === 0){ toast('✅ 已删除', true); loaders.settings(); } else toast(r.msg, false);
   });
 };
 window.changePassword = function(){

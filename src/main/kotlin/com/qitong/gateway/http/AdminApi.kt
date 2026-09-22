@@ -49,6 +49,7 @@ object AdminApi {
 
     private fun encodeElement(data: Any?): JsonElement = when (data) {
         null -> JsonNull
+        is JsonElement -> data
         is String -> JsonPrimitive(data)
         is Int -> JsonPrimitive(data)
         is Long -> JsonPrimitive(data)
@@ -662,6 +663,29 @@ private fun providerToMap(p: Provider) = mapOf(
                 put("role", JsonPrimitive("system"))
                 put("content", JsonPrimitive(skillPrompt))
             })
+        }
+        // 注入用户自定义技能（按用户隔离，用户自己添加的技能，直接按描述执行）
+        if (userId > 0) {
+            val customRaw = database.getUserConfig(userId, "custom_skills", "[]")
+            val customArr = try {
+                kotlinx.serialization.json.Json.decodeFromString<JsonArray>(customRaw)
+            } catch (_: Exception) { JsonArray(emptyList()) }
+            if (customArr.isNotEmpty()) {
+                val csb = StringBuilder("\n\n## 🧰 用户自定义技能（共${customArr.size}个）\n")
+                csb.append("以下是用户自己定义的技能，当用户的消息命中触发词或描述意图时，请直接按执行描述完成操作：\n")
+                customArr.forEach { item ->
+                    val obj = item.jsonObject
+                    val name = obj["name"]?.jsonPrimitive?.content ?: ""
+                    val desc = obj["description"]?.jsonPrimitive?.content ?: ""
+                    val trigs = obj["triggers"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty().joinToString("、")
+                    if (name.isNotBlank()) csb.append("  • 技能【$name】" + (if (trigs.isNotBlank()) " （触发词：$trigs）" else "") + "\n")
+                    if (desc.isNotBlank()) csb.append("    执行：$desc\n")
+                }
+                messages.add(buildJsonObject {
+                    put("role", JsonPrimitive("system"))
+                    put("content", JsonPrimitive(csb.toString()))
+                })
+            }
         }
         val requestBody = buildJsonObject {
             put("model", JsonPrimitive(effectiveModel))

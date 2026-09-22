@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-10
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-11
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-10    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-11    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-10"))
+                put("version", JsonPrimitive("3.18.22-11"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -555,6 +555,197 @@ fun Application.moduleWeb(database: Database) {
             database.savePersona(p)
             AdminApi.ok(call, null, "人格配置已保存")
         }
+        // ===== 数据备份/恢复（APP↔线上互传） =====
+        // 导出：服务商/模型/配置/密钥/规则/人格/记忆/自定义技能
+        get("/api/backup/export") {
+            val user = call.requireAuth(database) ?: return@get
+            val isAdmin = user.role == "admin"
+            val data = buildJsonObject {
+                put("version", JsonPrimitive("3.18.22-11"))
+                put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
+                put("username", JsonPrimitive(user.username))
+                // 服务商（admin全量，用户自己的+公用）
+                put("providers", JsonArray(
+                    (if (isAdmin) database.getProviders() else database.getVisibleProviders(user.id).filter { it.isPublic || it.ownerId == user.id })
+                        .map { p ->
+                            buildJsonObject {
+                                put("name", JsonPrimitive(p.name)); put("type", JsonPrimitive(p.type))
+                                put("baseUrl", JsonPrimitive(p.baseUrl)); put("port", JsonPrimitive(p.port))
+                                put("apiKey", JsonPrimitive(p.apiKey ?: "")); put("isEnabled", JsonPrimitive(p.isEnabled))
+                                put("chatPath", JsonPrimitive(p.chatPath ?: "")); put("customId", JsonPrimitive(p.customId))
+                                put("isPublic", JsonPrimitive(p.isPublic)); put("ownerId", JsonPrimitive(p.ownerId))
+                            }
+                        }
+                ))
+                // 模型（admin全量，用户自己的）
+                put("models", JsonArray(
+                    (if (isAdmin) database.getModels() else database.getModels().filter { it.isPublic || it.ownerId == user.id })
+                        .map { m ->
+                            buildJsonObject {
+                                put("providerId", JsonPrimitive(m.providerId)); put("modelId", JsonPrimitive(m.modelId))
+                                put("displayName", JsonPrimitive(m.displayName)); put("isEnabled", JsonPrimitive(m.isEnabled))
+                                put("customAlias", JsonPrimitive(m.customAlias)); put("isPublic", JsonPrimitive(m.isPublic))
+                                put("price", JsonPrimitive(m.price)); put("ownerId", JsonPrimitive(m.ownerId))
+                            }
+                        }
+                ))
+                // 人格 + 记忆
+                if (!isAdmin) {
+                    database.getPersona(user.id)?.let { p ->
+                        put("persona", buildJsonObject {
+                            put("name", JsonPrimitive(p.name)); put("age", JsonPrimitive(p.age))
+                            put("personality", JsonPrimitive(p.personality)); put("tone", JsonPrimitive(p.tone))
+                            put("background", JsonPrimitive(p.background))
+                            put("openness", JsonPrimitive(p.openness)); put("conscientiousness", JsonPrimitive(p.conscientiousness))
+                            put("extraversion", JsonPrimitive(p.extraversion)); put("agreeableness", JsonPrimitive(p.agreeableness))
+                            put("neuroticism", JsonPrimitive(p.neuroticism)); put("memoryEnabled", JsonPrimitive(p.memoryEnabled))
+                        })
+                    }
+                    put("memories", JsonArray(database.getMemories(user.id, 500).map { m ->
+                        buildJsonObject {
+                            put("title", JsonPrimitive(m["title"] as? String ?: ""))
+                            put("content", JsonPrimitive(m["content"] as? String ?: ""))
+                            put("type", JsonPrimitive(m["type"] as? String ?: "short"))
+                            put("emotion", JsonPrimitive(m["emotion"] as? String ?: "neutral"))
+                            put("importance", JsonPrimitive(m["importance"] as? Int ?: 5))
+                        }
+                    }))
+                }
+                // 自定义技能（按用户隔离）
+                put("customSkills", JsonArray(database.getUserConfig(user.id, "custom_skills", "[]").let { s ->
+                    try { kotlinx.serialization.json.Json.decodeFromString<JsonArray>(s) } catch (_: Exception) { JsonArray(emptyList()) }
+                }))
+            }
+            AdminApi.respondJson(call, buildJsonObject {
+                put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
+                put("data", data)
+            }, 200)
+        }
+        // 导入
+        post("/api/backup/import") {
+            val user = call.requireAuth(database) ?: return@post
+            val isAdmin = user.role == "admin"
+            val rawBody = call.receive<JsonObject>()
+            // 兼容导出文件整体结构 {code,msg,data:{...}} 与直接 {providers,...}
+            val body = rawBody["data"]?.let { if (it is JsonObject) it else rawBody } ?: rawBody
+            var imported = 0
+            // 导入服务商（已存在同名则跳过）
+            body["providers"]?.jsonArray?.forEach { item ->
+                val obj = item.jsonObject
+                val pName = obj["name"]?.jsonPrimitive?.content ?: return@forEach
+                if (database.getProviders().any { it.name == pName }) return@forEach
+                val p = com.qitong.gateway.model.Provider(
+                    name = pName,
+                    type = obj["type"]?.jsonPrimitive?.content ?: "OpenAI Compatible",
+                    baseUrl = obj["baseUrl"]?.jsonPrimitive?.content ?: "",
+                    port = obj["port"]?.jsonPrimitive?.content ?: "",
+                    apiKey = obj["apiKey"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
+                    chatPath = obj["chatPath"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
+                    customId = obj["customId"]?.jsonPrimitive?.content ?: "",
+                    isPublic = if (isAdmin) (obj["isPublic"]?.jsonPrimitive?.content == "true") else false,
+                    ownerId = if (isAdmin) (obj["ownerId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L) else user.id
+                )
+                database.addProvider(p); imported++
+            }
+            // 导入模型（admin全量，用户自己的）
+            body["models"]?.jsonArray?.forEach { item ->
+                val obj = item.jsonObject
+                val providerId = obj["providerId"]?.jsonPrimitive?.content?.toLongOrNull() ?: return@forEach
+                val modelId = obj["modelId"]?.jsonPrimitive?.content ?: return@forEach
+                val display = obj["displayName"]?.jsonPrimitive?.content ?: modelId
+                if (database.getModelByKey(providerId, modelId) == null) {
+                    database.addModel(com.qitong.gateway.model.AiModel(
+                        providerId = providerId, modelId = modelId, displayName = display,
+                        isEnabled = obj["isEnabled"]?.jsonPrimitive?.content != "false",
+                        customAlias = obj["customAlias"]?.jsonPrimitive?.content ?: "",
+                        isPublic = if (isAdmin) (obj["isPublic"]?.jsonPrimitive?.content == "true") else false,
+                        price = obj["price"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.0,
+                        ownerId = if (isAdmin) (obj["ownerId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L) else user.id
+                    )); imported++
+                }
+            }
+            // 导入人格
+            if (!isAdmin) {
+                body["persona"]?.jsonObject?.let { p ->
+                    database.savePersona(com.qitong.gateway.model.Persona(
+                        userId = user.id,
+                        name = p["name"]?.jsonPrimitive?.content ?: "",
+                        age = p["age"]?.jsonPrimitive?.content ?: "",
+                        personality = p["personality"]?.jsonPrimitive?.content ?: "",
+                        tone = p["tone"]?.jsonPrimitive?.content ?: "",
+                        background = p["background"]?.jsonPrimitive?.content ?: "",
+                        openness = p["openness"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.5,
+                        conscientiousness = p["conscientiousness"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.5,
+                        extraversion = p["extraversion"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.5,
+                        agreeableness = p["agreeableness"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.5,
+                        neuroticism = p["neuroticism"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.5,
+                        memoryEnabled = p["memoryEnabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+                    )); imported++
+                }
+                // 导入记忆
+                body["memories"]?.jsonArray?.forEach { item ->
+                    val obj = item.jsonObject
+                    database.addMemory(
+                        user.id,
+                        obj["title"]?.jsonPrimitive?.content ?: "",
+                        obj["content"]?.jsonPrimitive?.content ?: "",
+                        obj["type"]?.jsonPrimitive?.content ?: "short",
+                        obj["emotion"]?.jsonPrimitive?.content ?: "neutral",
+                        obj["importance"]?.jsonPrimitive?.content?.toIntOrNull() ?: 5,
+                        "import", "", ""
+                    ); imported++
+                }
+            }
+            // 导入自定义技能（按用户隔离）
+            body["customSkills"]?.let { cs ->
+                if (cs is JsonArray || cs is JsonObject) {
+                    database.setUserConfig(user.id, "custom_skills", cs.toString())
+                    imported++
+                }
+            }
+            AdminApi.ok(call, mapOf("imported" to imported), "导入成功 $imported 项")
+        }
+        // ===== 自定义技能（按用户隔离，无需系统配置权限） =====
+        get("/api/skills") {
+            val user = call.requireAuth(database) ?: return@get
+            val s = database.getUserConfig(user.id, "custom_skills", "[]")
+            val arr = try {
+                kotlinx.serialization.json.Json.decodeFromString<JsonArray>(s)
+            } catch (_: Exception) { JsonArray(emptyList()) }
+            AdminApi.ok(call, arr.toList(), "ok")
+        }
+        post("/api/skills") {
+            val user = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val name = body["name"]?.jsonPrimitive?.content?.trim() ?: ""
+            val desc = body["description"]?.jsonPrimitive?.content?.trim() ?: ""
+            if (name.isBlank() || desc.isBlank()) { AdminApi.fail(call, "请填写技能名称和描述", 400); return@post }
+            val triggers = body["triggers"]?.jsonArray?.map { it.jsonPrimitive.content.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+            val s = database.getUserConfig(user.id, "custom_skills", "[]")
+            val arr = try {
+                kotlinx.serialization.json.Json.decodeFromString<JsonArray>(s)
+            } catch (_: Exception) { JsonArray(emptyList()) }
+            val list = arr.toMutableList()
+            list.add(buildJsonObject {
+                put("name", JsonPrimitive(name)); put("description", JsonPrimitive(desc))
+                put("triggers", JsonArray(triggers.map { JsonPrimitive(it) }))
+            })
+            database.setUserConfig(user.id, "custom_skills", JsonArray(list).toString())
+            AdminApi.ok(call, mapOf("count" to list.size), "技能已添加")
+        }
+        delete("/api/skills/{idx}") {
+            val user = call.requireAuth(database) ?: return@delete
+            val idx = call.parameters["idx"]?.toIntOrNull() ?: -1
+            val s = database.getUserConfig(user.id, "custom_skills", "[]")
+            val arr = try {
+                kotlinx.serialization.json.Json.decodeFromString<JsonArray>(s)
+            } catch (_: Exception) { JsonArray(emptyList()) }
+            if (idx >= 0 && idx < arr.size) {
+                val newList = arr.toMutableList().apply { removeAt(idx) }
+                database.setUserConfig(user.id, "custom_skills", JsonArray(newList).toString())
+                AdminApi.ok(call, mapOf("count" to newList.size), "技能已删除")
+            } else AdminApi.fail(call, "技能索引无效", 400)
+        }
         // ===== 大脑记忆（按用户隔离） =====
         get("/api/memory") {
             val user = call.requireAuth(database) ?: return@get
@@ -721,7 +912,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-10"))
+                    put("version", JsonPrimitive("3.18.22-11"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))

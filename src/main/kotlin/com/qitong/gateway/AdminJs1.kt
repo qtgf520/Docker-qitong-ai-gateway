@@ -122,7 +122,7 @@ loaders.dashboard = function(){
             '<option value="60"' + (st.speedIntervalMin==60?' selected':'') + '>1小时</option>' +
             '<option value="120"' + (st.speedIntervalMin==120?' selected':'') + '>2小时</option>' +
             '<option value="240"' + (st.speedIntervalMin==240?' selected':'') + '>4小时</option>' +
-          '</select><span style="font-size:11px;color:var(--muted)" id="speedScopeTag"></span></div></div>',
+          '</select><span style="font-size:11px;color:var(--muted)" id="speedScopeTag"></span></div><div style="margin-top:6px;font-size:12px;color:var(--cyan)" id="dashCountdown"></div></div>',
       '</div>',
       addrHtml,
       poolHtml,
@@ -145,6 +145,12 @@ loaders.dashboard = function(){
         }
       }
     });
+    // 若自动测速开启，显示倒计时
+    if(st.autoSpeedTest){
+      var interval = parseInt(st.speedIntervalMin) || 60;
+      var dc = $('dashCountdown');
+      if(dc){ dc.textContent = '⏳ 下次自动测速：' + interval + '分00秒'; startDashCountdown(interval * 60); }
+    }
   });
 };
 // ===== 首页操作 =====
@@ -154,12 +160,34 @@ window.toggleGateway = function(){
     loaders.dashboard();
   });
 };
+// 首页自动测速倒计时
+var dashCountdownTimer = null;
+function startDashCountdown(seconds){
+  if(dashCountdownTimer) clearInterval(dashCountdownTimer);
+  var left = seconds;
+  var el = $('dashCountdown');
+  if(!el) return;
+  dashCountdownTimer = setInterval(function(){
+    left--;
+    if(left <= 0){ clearInterval(dashCountdownTimer); el.textContent = '⏳ 即将自动测速...'; return; }
+    var m = Math.floor(left/60), s = left%60;
+    el.textContent = '⏳ 下次自动测速：' + m + '分' + (s<10?'0':'') + s + '秒';
+  }, 1000);
+}
 window.toggleAutoSpeed = function(){
   var st = $('autoSpeedBtn');
   var turningOn = st ? st.textContent.indexOf('启动') >= 0 : true;
   var interval = parseInt($('speedInterval') ? $('speedInterval').value : 60) || 60;
   api('/api/gateway/auto-speedtest', { method:'POST', body: { enabled: turningOn, intervalMin: interval } }).then(function(r){
     toast(r.msg, r.code === 0);
+    if(turningOn){
+      var el = $('dashCountdown');
+      if(el){ el.textContent = '⏳ 下次自动测速：' + interval + '分00秒'; startDashCountdown(interval * 60); }
+    } else {
+      if(dashCountdownTimer) clearInterval(dashCountdownTimer);
+      var el2 = $('dashCountdown');
+      if(el2) el2.textContent = '';
+    }
     loaders.dashboard();
   });
 };
