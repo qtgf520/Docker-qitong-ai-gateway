@@ -570,7 +570,12 @@ private fun providerToMap(p: Provider) = mapOf(
         mapOf("id" to it.id, "title" to it.title, "createdAt" to it.createdAt, "updatedAt" to it.updatedAt)
     }
 
-    fun createConversation(database: Database, title: String = "新对话"): Long = database.addConversation(title)
+    /** 按用户获取会话（多租户隔离） */
+    fun getConversationsForUser(database: Database, userId: Long): List<Map<String, Any?>> = database.getConversationsByUser(userId).map {
+        mapOf("id" to it.id, "title" to it.title, "createdAt" to it.createdAt, "updatedAt" to it.updatedAt)
+    }
+
+    fun createConversation(database: Database, title: String = "新对话", userId: Long? = null): Long = database.addConversation(title, userId)
 
     fun getConversation(database: Database, id: Long): Map<String, Any?> = mapOf(
         "conversation" to (database.getConversationById(id)?.let {
@@ -587,10 +592,11 @@ private fun providerToMap(p: Provider) = mapOf(
         database.updateConversationTitle(id, title)
     }
 
-    /** 内置聊天：调用网关转发并保存消息 */
-    suspend fun chat(database: Database, body: JsonObject): Map<String, Any?> {
+    /** 内置聊天：调用网关转发并保存消息（按用户隔离 + 人格注入） */
+    suspend fun chat(database: Database, body: JsonObject, user: User?): Map<String, Any?> {
+        val userId = user?.id ?: 0
         val conversationId = body["conversationId"]?.jsonPrimitive?.content?.toLongOrNull()
-            ?: database.addConversation("新对话")
+            ?: database.addConversation("新对话", userId)
         val userContent = body["content"]?.jsonPrimitive?.content ?: ""
         val modelId = body["model"]?.jsonPrimitive?.content ?: ""
         val stream = body["stream"]?.let { parseBool(it) } ?: false
@@ -598,12 +604,27 @@ private fun providerToMap(p: Provider) = mapOf(
         // 保存用户消息
         database.addMessage(ChatMessage(conversationId = conversationId, role = "user", content = userContent, modelId = modelId))
 
-        // 构造 OpenAI 请求体
+        // 构造 OpenAI 请求体（注入用户人格）
         val messages = database.getMessagesByConversation(conversationId).map {
             buildJsonObject {
                 put("role", JsonPrimitive(it.role))
                 put("content", JsonPrimitive(it.content))
             }
+        }.toMutableList()
+        // 人格注入：用户设置了人格则首条加入 system 提示
+        val persona = if (userId > 0) database.getPersona(userId) else null
+        if (persona != null && (persona.name.isNotBlank() || persona.background.isNotBlank())) {
+            val sb = StringBuilder()
+            if (persona.name.isNotBlank()) sb.append("你的名字是${persona.name}。")
+            if (persona.age.isNotBlank()) sb.append("年龄${persona.age}。")
+            if (persona.personality.isNotBlank()) sb.append("性格：${persona.personality}。")
+            if (persona.tone.isNotBlank()) sb.append("语气风格：${persona.tone}。")
+            if (persona.background.isNotBlank()) sb.append("背景：${persona.background}")
+            val sysMsg = buildJsonObject {
+                put("role", JsonPrimitive("system"))
+                put("content", JsonPrimitive(sb.toString()))
+            }
+            messages.add(0, sysMsg)
         }
         val requestBody = buildJsonObject {
             put("model", JsonPrimitive(modelId.ifBlank { "qtai-sj" }))
@@ -612,10 +633,14 @@ private fun providerToMap(p: Provider) = mapOf(
             put("max_tokens", JsonPrimitive(4096))
         }
 
-        // 调用上游
+        // 调用上游（可见模型 = 公用 + 自己的）
         val proxy = GatewayProxy(database)
-        val attemptModels = proxy.buildAttemptModels(database.getEnabledModels(), proxy.resolveModelId(modelId.ifBlank { "qtai-sj" }, database.getEnabledModels()))
-        if (attemptModels.isEmpty()) return mapOf("conversationId" to conversationId, "error" to "No available model")
+        val allModels = database.getEnabledModels()
+        val visibleModels = if (user?.role == "admin") allModels
+            else if (userId > 0) allModels.filter { it.isPublic || it.ownerId == userId }
+            else allModels.filter { it.isPublic }
+        val attemptModels = proxy.buildAttemptModels(visibleModels, proxy.resolveModelId(modelId.ifBlank { "qtai-sj" }, visibleModels), null, userId)
+        if (attemptModels.isEmpty()) return mapOf("conversationId" to conversationId, "error" to "No available model", "reply" to "没有可用模型，请先测速或添加服务商")
 
         var lastResult: String? = null
         for (targetModel in attemptModels) {

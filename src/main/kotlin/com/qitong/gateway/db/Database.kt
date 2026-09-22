@@ -398,9 +398,20 @@ class Database(private val dbPath: String) {
     }
 
     // ============ 会话 ============
-
     fun getConversations(): List<Conversation> =
         query("SELECT * FROM conversations ORDER BY updated_at DESC").map {
+            Conversation(
+                id = (it["id"] as Number).toLong(),
+                title = it["title"] as? String ?: "新对话",
+                createdAt = (it["created_at"] as? Number)?.toLong() ?: 0,
+                updatedAt = (it["updated_at"] as? Number)?.toLong() ?: 0,
+                userId = (it["user_id"] as? Number)?.toLong()
+            )
+        }
+
+    /** 按用户获取会话（多租户：用户只看自己的） */
+    fun getConversationsByUser(userId: Long): List<Conversation> =
+        query("SELECT * FROM conversations WHERE user_id=? OR user_id IS NULL ORDER BY updated_at DESC", userId).map {
             Conversation(
                 id = (it["id"] as Number).toLong(),
                 title = it["title"] as? String ?: "新对话",

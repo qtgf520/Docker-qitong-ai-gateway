@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-5
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-6
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-5    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-6    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-5"))
+                put("version", JsonPrimitive("3.18.22-6"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -578,12 +578,12 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, "密钥已更新")
         }
 
-        // 聊天
-        get("/api/conversations") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getConversations(database)) }
+        // 聊天（按用户隔离）
+        get("/api/conversations") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, if (u.role == "admin") AdminApi.getConversations(database) else AdminApi.getConversationsForUser(database, u.id)) }
         post("/api/conversations") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
-            AdminApi.ok(call, mapOf("id" to AdminApi.createConversation(database, body["title"]?.jsonPrimitive?.content ?: "新对话")), "创建成功")
+            AdminApi.ok(call, mapOf("id" to AdminApi.createConversation(database, body["title"]?.jsonPrimitive?.content ?: "新对话", u.id)), "创建成功")
         }
         get("/api/conversations/{id}") {
             val id = call.parameters["id"]?.toLongOrNull() ?: return@get
@@ -597,9 +597,9 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, "已删除")
         }
         post("/api/chat") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
-            AdminApi.ok(call, AdminApi.chat(database, body), "完成")
+            AdminApi.ok(call, AdminApi.chat(database, body, u), "完成")
         }
 
         // 状态
@@ -611,7 +611,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-5"))
+                    put("version", JsonPrimitive("3.18.22-6"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
