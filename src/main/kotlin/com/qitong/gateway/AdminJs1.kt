@@ -56,32 +56,37 @@ document.addEventListener('click', function(e){
   if(a){ e.preventDefault(); switchView(a.getAttribute('data-page')); }
 });
 function doLogout(){ localStorage.removeItem('qt_token'); location.href='/login'; }
-// ===== 首页（完整功能：启停/地址/自动测速/强制池/排行榜） =====
+// ===== 首页（完整功能：启停/地址/自动测速/强制选择模型/三指标排行榜/池灯） =====
 loaders.dashboard = function(){
   var box = $('view-dashboard');
   box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
   api('/api/status').then(function(r){
     var st = r.data;
     if(!st) return;
-    // 模型排行榜（含测速状态）
+    // 模型排行榜（三指标 + 全部已启用模型 + 点击加入/移出强制池）
     var rankRows = '';
+    var pool = st.forcedPool || [];
     (st.pipelineSorted || []).forEach(function(key, i){
       var parts = key.split('::');
       var mid = parts.length > 1 ? parts[1] : key;
       var pid = parts.length > 1 ? parts[0] : '';
       var h = (st.healthCache || []).find(function(x){ return x.key === key; });
       var ok = h ? h.isHealthy : false;
-      var lat = h && h.isHealthy ? h.latencyMs + 'ms' : '—';
-      rankRows += '<tr><td>' + (i+1) + '</td><td>' + esc(mid) + '</td><td>P' + esc(pid) + '</td><td>' + lat + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td></tr>';
+      var inPool = pool.indexOf(key) >= 0;
+      var lat = (h && h.isHealthy && h.totalMs > 0) ? h.totalMs + 'ms' : '—';
+      var ttft = (h && h.isHealthy && h.ttftMs > 0) ? h.ttftMs + 'ms' : '—';
+      var tps = (h && h.isHealthy && h.tps > 0) ? h.tps.toFixed(2) + ' tok/s' : '—';
+      var poolDot = '<span class="pool-dot ' + (inPool ? 'on' : '') + '" title="' + (inPool ? '在强制故障池' : '未在池中') + '"></span>';
+      var poolBtn = '<button class="btn-ghost ' + (inPool ? 'danger' : '') + '" style="padding:2px 8px;font-size:12px" onclick="toggleForcedModel(\'' + key.replace(/'/g, '') + '\')">' + (inPool ? '移出池' : '加入池') + '</button>';
+      rankRows += '<tr><td>' + poolDot + '</td><td>' + (i+1) + '</td><td>' + esc(mid) + '</td><td>P' + esc(pid) + '</td><td>' + ttft + '</td><td>' + tps + '</td><td>' + lat + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td><td>' + poolBtn + '</td></tr>';
     });
-    // 强制故障池
+    // 强制故障池（池灯展示）
     var poolHtml = '';
-    var pool = st.forcedPool || [];
     if(pool.length){
       poolHtml = '<div class="card"><h3>🎯 强制故障池 (' + pool.length + ')</h3><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' +
         pool.map(function(k){
           var mid = k.split('::').length > 1 ? k.split('::')[1] : k;
-          return '<span class="badge purple">' + esc(mid) + '</span>';
+          return '<span class="badge purple">' + esc(mid) + ' <span class="pool-dot on"></span></span>';
         }).join('') + '</div><button class="btn-ghost" onclick="clearForcedPool()">↩️ 清空</button></div>';
     }
     // 地址行
@@ -110,8 +115,8 @@ loaders.dashboard = function(){
       '</div>',
       addrHtml,
       poolHtml,
-      '<div class="card"><h3>📊 模型排行榜</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>模型ID</th><th>服务商</th><th>延迟</th><th>状态</th></tr></thead><tbody>' +
-        (rankRows || '<tr><td colspan="5" style="text-align:center;color:var(--muted)">暂无模型，请先在服务商页添加并同步</td></tr>') +
+      '<div class="card"><h3>📊 模型排行榜 <span style="font-size:12px;color:var(--muted)">（点击 ⚪ 灯加入/移出强制故障池，多选支持自动故障转移）</span></h3><div class="table-wrap"><table><thead><tr><th>池</th><th>#</th><th>模型ID</th><th>服务商</th><th>TTFT</th><th>TPS</th><th>总耗时</th><th>状态</th><th>强制池</th></tr></thead><tbody>' +
+        (rankRows || '<tr><td colspan="9" style="text-align:center;color:var(--muted)">暂无启用模型，请先在服务商页添加并同步</td></tr>') +
       '</tbody></table></div></div>'
     ].join('');
   });
@@ -137,6 +142,19 @@ window.saveSpeedInterval = function(){
   var on = ($('autoSpeedBtn') ? $('autoSpeedBtn').textContent.indexOf('停止') >= 0 : false);
   api('/api/gateway/auto-speedtest', { method:'POST', body: { enabled: on, intervalMin: interval } }).then(function(r){
     toast(r.msg, r.code === 0);
+  });
+};
+window.toggleForcedModel = function(key){
+  var action = 'add';
+  // 判断当前是否在池中：从配置再拉一次最新状态
+  api('/api/status').then(function(r){
+    var pool = (r.data && r.data.forcedPool) || [];
+    var inPool = pool.indexOf(key) >= 0;
+    var body = { action: inPool ? 'remove' : 'add', modelKey: key };
+    api('/api/gateway/forced-pool', { method:'POST', body: body }).then(function(r2){
+      toast(r2.msg, r2.code === 0);
+      loaders.dashboard();
+    });
   });
 };
 window.clearForcedPool = function(){

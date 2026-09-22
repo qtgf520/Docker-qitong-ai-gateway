@@ -36,6 +36,9 @@ dependencies {
     // SQLite (JDBC) — 代替 Room，纯JVM
     implementation("org.xerial:sqlite-jdbc:3.46.0.0")
 
+    // JSON（org.json 兼容 SSE 流式解析，对齐原APP）
+    implementation("org.json:json:20240303")
+
     // BCrypt 密码哈希
     implementation("org.mindrot:jbcrypt:0.4")
 

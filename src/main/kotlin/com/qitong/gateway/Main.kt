@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-1
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-1    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22"))
+                put("version", JsonPrimitive("3.18.22-1"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -333,6 +333,28 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.deleteModel(database, id)
             AdminApi.ok(call, null, "已删除")
         }
+        // 模型启用/停用
+        post("/api/models/toggle") {
+            if (call.requireAuth(database) == null) return@post
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "模型ID无效", 400); return@post }
+            val model = database.getModelById(id) ?: run { AdminApi.fail(call, "模型不存在", 404); return@post }
+            val newEnabled = body["enabled"]?.let {
+                when { it is JsonPrimitive && it.isString -> it.content == "true" || it.content == "1"; else -> !model.isEnabled }
+            } ?: !model.isEnabled
+            database.updateModel(model.copy(isEnabled = newEnabled))
+            AdminApi.ok(call, mapOf("id" to id, "enabled" to newEnabled), if (newEnabled) "模型已启用" else "模型已停用")
+        }
+        // 批量测速（原APP方式：逐个串行，通过自动启用，失败可选自动关闭）
+        post("/api/speedtest/batch") {
+            if (call.requireAuth(database) == null) return@post
+            val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            val autoClose = body["autoClose"]?.let {
+                when { it is JsonPrimitive && it.isString -> it.content == "true" || it.content == "1"; else -> false }
+            } ?: false
+            val results = AdminApi.batchSpeedTest(database, autoClose)
+            AdminApi.ok(call, results, "批量测速完成")
+        }
         post("/api/models/sync/{providerId}") {
             val pid = call.parameters["providerId"]?.toLongOrNull() ?: return@post
             if (call.requireAuth(database) == null) return@post
@@ -513,7 +535,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22"))
+                    put("version", JsonPrimitive("3.18.22-1"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
@@ -529,15 +551,27 @@ fun Application.moduleWeb(database: Database) {
                     // 自动测速
                     put("autoSpeedTest", JsonPrimitive(database.getConfig("auto_speedtest", "false").toBoolean()))
                     put("speedIntervalMin", JsonPrimitive(database.getConfig("speed_interval_min", "240")))
-                    put("pipelineSorted", JsonArray(GatewayScheduler.pipelineSortedModelKeys.map { JsonPrimitive(it) }))
+                    // ③ 排行榜数据源：全部已启用模型 + 健康缓存三指标
+                    // 对齐原APP：所有已启用模型全显示（含待测速/失败），按健康+延迟排序
+                    val allModels = database.getModels()
+                    val enabledModels = allModels.filter { it.isEnabled }
+                    val pipSorted = GatewayScheduler.buildPipelineSortedModels(database)
+                    val sortedAll = pipSorted + enabledModels
+                        .filter { GatewayScheduler.routeKey(it.providerId, it.modelId) !in pipSorted }
+                        .map { GatewayScheduler.routeKey(it.providerId, it.modelId) }
+                    put("pipelineSorted", JsonArray(sortedAll.map { JsonPrimitive(it) }))
                     put("healthCache", JsonArray(synchronized(GatewayScheduler.healthCache) {
                         GatewayScheduler.healthCache.entries.map { (k, v) ->
                             buildJsonObject {
                                 put("key", JsonPrimitive(k))
                                 put("modelId", JsonPrimitive(v.modelId))
                                 put("providerId", JsonPrimitive(v.providerId))
-                                put("latencyMs", JsonPrimitive(v.latencyMs))
+                                put("latencyMs", JsonPrimitive(if (v.isHealthy) v.totalMs else -1))
+                                put("ttftMs", JsonPrimitive(v.ttftMs))
+                                put("tps", JsonPrimitive(v.tps))
+                                put("totalMs", JsonPrimitive(v.totalMs))
                                 put("isHealthy", JsonPrimitive(v.isHealthy))
+                                put("successCount", JsonPrimitive(v.successCount))
                             }
                         }
                     }))

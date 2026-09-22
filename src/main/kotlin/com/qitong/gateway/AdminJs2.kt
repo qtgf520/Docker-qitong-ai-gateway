@@ -11,14 +11,55 @@ loaders.models = function(){
     state.models = res[0].data || []; state.providers = res[1].data || [];
     var pmap = {}; state.providers.forEach(function(p){ pmap[p.id] = p.name; });
     var rows = state.models.map(function(m){
-      return '<tr><td>'+(m.isEnabled?'<span class="badge green">✓</span>':'<span class="badge gray">✗</span>')+'</td><td>'+esc(m.modelId)+'</td><td>'+esc(m.displayName)+(m.customAlias?' <span class="badge purple">'+esc(m.customAlias)+'</span>':'')+'</td><td><span class="badge blue">'+esc(pmap[m.providerId]||('P'+m.providerId))+'</span></td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td><td><button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
+      var enBtn = '<button class="btn-ghost ' + (m.isEnabled ? '' : 'danger') + '" style="padding:2px 8px;font-size:12px" onclick="toggleModel(' + m.id + ')">' + (m.isEnabled ? '停用' : '启用') + '</button>';
+      return '<tr><td>'+(m.isEnabled?'<span class="badge green">✓</span>':'<span class="badge gray">✗</span>')+'</td><td>'+esc(m.modelId)+'</td><td>'+esc(m.displayName)+(m.customAlias?' <span class="badge purple">'+esc(m.customAlias)+'</span>':'')+'</td><td><span class="badge blue">'+esc(pmap[m.providerId]||('P'+m.providerId))+'</span></td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td><td>'+enBtn+'</td><td><button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
     }).join('');
     box.innerHTML = [
-      '<div class="action-bar"><button class="btn" onclick="editModel(0)">＋ 手动添加模型</button><span style="color:var(--muted);font-size:12px">提示：服务商页点「同步」可自动拉取</span></div>',
-      '<div class="card"><div class="table-wrap"><table><thead><tr><th></th><th>模型ID</th><th>显示名</th><th>服务商</th><th>默认</th><th>上下文</th><th>操作</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
+      '<div class="action-bar">',
+        '<button class="btn" onclick="editModel(0)">＋ 手动添加模型</button>',
+        '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">⚡ 自动全部测速</button>',
+        '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked> 自动关闭失败模型</label>',
+        '<span style="color:var(--muted);font-size:12px">测速通过自动启用 / 失败自动关闭（可手动启用）</span>',
+      '</div><div class="card" id="batchSpeedCard" style="display:none"></div>',
+      '<div class="card"><div class="table-wrap"><table><thead><tr><th></th><th>模型ID</th><th>显示名</th><th>服务商</th><th>默认</th><th>上下文</th><th>启停</th><th>操作</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
       '</tbody></table></div></div>'
     ].join('');
+  });
+};
+// 行内启停（对齐原APP toggleModel）
+window.toggleModel = function(id){
+  api('/api/models/toggle', { method:'POST', body: { id: id } }).then(function(r){
+    toast(r.msg, r.code === 0);
+    loaders.models();
+  });
+};
+// 自动全部测速（对齐原APP batchTestAllModels）：串行测试全部模型，可选自动关闭失败模型
+window.runBatchSpeedTest = function(){
+  var card = $('batchSpeedCard');
+  var autoClose = $('batchAutoClose') ? $('batchAutoClose').checked : true;
+  card.style.display = 'block';
+  card.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px">⚡ 正在逐个串行测速全部模型（三指标：TTFT/TPS/总耗时）...<br><span style="font-size:12px">测速通过将自动启用，失败' + (autoClose ? '将自动关闭' : '保留原状态') + '</span></div>';
+  $('batchSpeedBtn').disabled = true;
+  api('/api/speedtest/batch', { method:'POST', body: { autoClose: autoClose } }).then(function(r){
+    $('batchSpeedBtn').disabled = false;
+    if(r.code === 0){
+      var list = r.data || [];
+      var rows = list.map(function(h,i){
+        var stOk = h.isHealthy;
+        var ttft = stOk && h.ttftMs > 0 ? h.ttftMs + 'ms' : '—';
+        var tps = stOk && h.tps > 0 ? h.tps.toFixed(2) + ' tok/s' : '—';
+        var total = stOk && h.totalMs > 0 ? h.totalMs + 'ms' : '—';
+        return '<tr><td>'+(i+1)+'</td><td>'+esc(h.modelId)+'</td><td>P'+h.providerId+'</td><td>'+ttft+'</td><td>'+tps+'</td><td>'+total+'</td><td>'+esc(h.displayName||'')+'</td><td><span class="badge '+(stOk?'green':'red')+'">'+(stOk?'正常':'失败')+'</span></td><td><span class="badge '+(h.enabled?'green':'gray')+'">'+(h.enabled?'已启用':'已停用')+'</span></td></tr>';
+      }).join('');
+      card.innerHTML = '<div class="table-wrap"><table><thead><tr><th>#</th><th>模型ID</th><th>服务商</th><th>TTFT</th><th>TPS</th><th>总耗时</th><th>显示名</th><th>状态</th><th>启用</th></tr></thead><tbody>' +
+        rows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (list.length ? '' : '没有可测速的模型') + '</td></tr>' +
+      '</tbody></table></div>';
+      toast('✅ 批量测速完成：' + list.filter(function(x){ return x.isHealthy; }).length + '/' + list.length + ' 正常', true);
+      loaders.models(); // 刷新启停状态
+    } else {
+      card.innerHTML = '<div style="color:var(--red);padding:20px;text-align:center">' + esc(r.msg || '测速失败') + '</div>';
+    }
   });
 };
 window.editModel = function(id){
@@ -46,22 +87,26 @@ window.delModel = function(id){
     if(r.code === 0){ toast('✅ 已删除', true); loaders.models(); } else toast(r.msg, false);
   });
 };
-// ===== 测速 =====
+// ===== 测速（对齐原APP：三指标 TTFT/TPS/总耗时 串行测试） =====
 loaders.speedtest = function(){
-  $('view-speedtest').innerHTML = '<div class="action-bar"><button class="btn" onclick="runSpeedTest()">⚡ 开始批量测速</button><span id="stStatus" style="color:var(--muted);font-size:13px"></span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">点击上方按钮开始测速</div></div>';
+  $('view-speedtest').innerHTML = '<div class="action-bar"><button class="btn" onclick="runSpeedTest()">⚡ 开始批量测速</button><span style="color:var(--muted);font-size:13px">原APP方式：逐个串行测试，采集 TTFT/TPS/总耗时</span><span id="stStatus" style="color:var(--muted);font-size:13px"></span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">点击上方按钮开始测速</div></div>';
 };
 window.runSpeedTest = function(){
   var st = $('stStatus'); st.innerHTML = '测速中，请稍候...';
-  $('stCard').innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px">正在测速全部模型...</div>';
+  $('stCard').innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px">正在逐模型串行测速（TTFT/TPS/总耗时）...</div>';
   api('/api/speedtest', { method:'POST' }).then(function(r){
     st.innerHTML = '';
     if(r.code === 0){
       var list = r.data || [];
       var rows = list.map(function(h,i){
-        return '<tr><td>'+(i+1)+'</td><td>'+esc(h.modelId)+'</td><td>P'+h.providerId+'</td><td>'+(h.isHealthy?h.latencyMs+' ms':'—')+'</td><td><span class="badge '+(h.isHealthy?'green':'red')+'">'+(h.isHealthy?'正常':'失败')+'</span></td></tr>';
+        var ok = h.isHealthy;
+        var ttft = ok && h.ttftMs > 0 ? h.ttftMs + ' ms' : '—';
+        var tps = ok && h.tps > 0 ? h.tps.toFixed(2) + ' tok/s' : '—';
+        var total = ok && h.totalMs > 0 ? h.totalMs + ' ms' : '—';
+        return '<tr><td>'+(i+1)+'</td><td>'+esc(h.modelId)+'</td><td>P'+h.providerId+'</td><td>'+ttft+'</td><td>'+tps+'</td><td>'+total+'</td><td><span class="badge '+(ok?'green':'red')+'">'+(ok?'正常':'失败')+'</span></td></tr>';
       }).join('');
-      $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>排名</th><th>模型ID</th><th>服务商</th><th>延迟</th><th>状态</th></tr></thead><tbody>' +
-        rows + '<tr><td colspan="5" style="text-align:center;color:var(--muted)">' + (list.length ? '' : '没有可测速的模型') + '</td></tr>' +
+      $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>排名</th><th>模型ID</th><th>服务商</th><th>TTFT</th><th>TPS</th><th>总耗时</th><th>状态</th></tr></thead><tbody>' +
+        rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + (list.length ? '' : '没有可测速的模型') + '</td></tr>' +
       '</tbody></table></div>';
       toast('✅ 测速完成', true);
     } else toast(r.msg, false);

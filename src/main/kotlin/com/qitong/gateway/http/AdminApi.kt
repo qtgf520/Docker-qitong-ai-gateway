@@ -246,19 +246,64 @@ object AdminApi {
         } catch (_: Exception) { 0 }
     }
 
-    /** 批量测速 */
+    /** 批量测速（三指标：TTFT/TPS/总耗时，串行测试全部启用模型） */
     suspend fun speedTest(database: Database): List<Map<String, Any?>> {
-        val results = GatewayScheduler.refreshHealthCache(database)
+        val results = GatewayScheduler.refreshHealthCache(database, force = true)
         GatewayScheduler.buildPipelineSortedModels(database)
         return results.map {
             mapOf(
                 "modelId" to it.modelId,
                 "providerId" to it.providerId,
-                "latencyMs" to (if (it.isHealthy) it.latencyMs else -1),
+                "ttftMs" to it.ttftMs,
+                "tps" to it.tps,
+                "totalMs" to it.totalMs,
+                "latencyMs" to (if (it.isHealthy) it.totalMs else -1),
                 "isHealthy" to it.isHealthy,
                 "successCount" to it.successCount
             )
         }
+    }
+
+    /**
+     * 批量测速（对齐原APP batchTestAllModels）：
+     * 逐个串行测试全部模型，通过的自动启用(isEnabled=true)，失败的可选自动关闭(isEnabled=false)
+     * 三指标：TTFT/TPS/总耗时
+     */
+    suspend fun batchSpeedTest(database: Database, autoClose: Boolean): List<Map<String, Any?>> {
+        val allModels = database.getModels()
+        val results = mutableListOf<Map<String, Any?>>()
+        for (model in allModels) {
+            val provider = database.getProviderById(model.providerId)
+            var h: GatewayScheduler.ModelHealth? = null
+            if (provider != null && provider.isEnabled) {
+                h = GatewayScheduler.measureModel(model, provider)
+            } else {
+                h = GatewayScheduler.ModelHealth(model.modelId, model.providerId, Long.MAX_VALUE, -1, 0.0, -1, 0, System.currentTimeMillis(), false)
+            }
+            val ok = h.isHealthy
+            // 通过→自动启用；失败→可选自动关闭
+            if (ok && !model.isEnabled) {
+                database.updateModel(model.copy(isEnabled = true))
+            } else if (!ok && autoClose && model.isEnabled) {
+                database.updateModel(model.copy(isEnabled = false))
+            }
+            results.add(mapOf(
+                "id" to model.id,
+                "modelId" to model.modelId,
+                "providerId" to model.providerId,
+                "displayName" to model.displayName,
+                "ttftMs" to h.ttftMs,
+                "tps" to h.tps,
+                "totalMs" to h.totalMs,
+                "latencyMs" to (if (ok) h.totalMs else -1),
+                "isHealthy" to ok,
+                "enabled" to (if (ok) true else if (autoClose) false else model.isEnabled)
+            ))
+        }
+        // 刷新健康缓存和排行榜
+        GatewayScheduler.refreshHealthCache(database, force = true)
+        GatewayScheduler.buildPipelineSortedModels(database)
+        return results
     }
 
     // ============ 配置 ============
