@@ -232,13 +232,24 @@ loaders.users = function(){
       var bindTxt = (u.bindModels && u.bindModels.length) ? u.bindModels.map(function(m){ return '<span class="badge blue">'+esc(m)+'</span>'; }).join(' ') : '<span style="color:var(--muted)">全部模型</span>';
       var permTxt = (u.permissions && u.permissions.length) ? u.permissions.map(function(p){ return '<span class="badge purple">'+esc(p)+'</span>'; }).join(' ') : '<span style="color:var(--muted)">仅私有</span>';
       if(u.role === 'admin') permTxt = '<span class="badge green">全部权限</span>';
-      return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td><span class="badge '+(u.role==='admin'?'purple':'blue')+'">'+(u.role==='admin'?'管理员':'用户')+'</span></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
+      var balTxt = '<span style="color:var(--green);font-weight:700">¥'+(u.balance||0).toFixed(2)+'</span>';
+      return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td><span class="badge '+(u.role==='admin'?'purple':'blue')+'">'+(u.role==='admin'?'管理员':'用户')+'</span></td><td>'+balTxt+' <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="rechargeUser('+u.id+',\''+esc(u.username)+'\')">充值</button></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
     }).join('');
     box.innerHTML = [
-      '<div class="card"><h3>👥 用户管理</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>操作</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + (users.length ? '' : '暂无用户') + '</td></tr>' +
-      '</tbody></table></div><div style="margin-top:10px;color:var(--muted);font-size:12px">注册页开放注册；可编辑用户角色 / 额度 / 绑定模型 / 系统权限；无权限的用户只能管理自己的服务商与模型</div></div>'
+      '<div class="card"><h3>👥 用户管理</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>操作</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (users.length ? '' : '暂无用户') + '</td></tr>' +
+      '</tbody></table></div><div style="margin-top:10px;color:var(--muted);font-size:12px">注册页开放注册；可编辑用户角色 / 额度 / 绑定模型 / 系统权限；余额用于按模型价格扣费</div></div>'
     ].join('');
+  });
+};
+// ===== 用户充值 =====
+window.rechargeUser = function(id, name){
+  openModal('充值 - ' + name, '<div class="form-row"><label>充值金额（元）</label><input id="rcAmount" class="input" type="number" step="0.01" min="0.01" placeholder="如 10.00"></div>', function(){
+    var amount = parseFloat($('rcAmount').value);
+    if(!amount || amount <= 0){ toast('请输入有效金额', false); return; }
+    api('/api/users/recharge', { method:'POST', body: { id: id, amount: amount } }).then(function(r){
+      if(r.code === 0){ toast('✅ ' + r.msg, true); closeModal(); loaders.users(); } else toast(r.msg, false);
+    });
   });
 };
 // ===== 用户编辑（含权限设置） =====

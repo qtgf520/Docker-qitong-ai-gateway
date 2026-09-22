@@ -63,6 +63,16 @@ loaders.dashboard = function(){
   api('/api/status').then(function(r){
     var st = r.data;
     if(!st) return;
+    // 用户余额（顶部）
+    api('/api/me/balance').then(function(br){
+      var bal = br.data || {};
+      var balEl = $('view-dashboard') ? document.querySelector('#view-dashboard .bal-card') : null;
+      if(balEl){
+        balEl.innerHTML = '<div class="stat"><div class="num" style="color:var(--green)">¥'+(bal.balance||0).toFixed(2)+'</div><div class="lbl">我的余额</div></div>' +
+          (bal.quotaLimit>0 ? '<div class="stat"><div class="num">'+fmtNum(bal.quotaUsed||0)+' / '+fmtNum(bal.quotaLimit)+'</div><div class="lbl">额度(token)</div></div>' : '') +
+          '<div class="stat"><div class="num">'+(bal.totalRecharge||0).toFixed(2)+'</div><div class="lbl">累计充值</div></div>';
+      }
+    });
     // 模型排行榜（三指标 + 全部已启用模型 + 点击加入/移出强制池）
     var rankRows = '';
     var pool = st.forcedPool || [];
@@ -96,6 +106,7 @@ loaders.dashboard = function(){
       '<div class="form-row"><label>本地地址</label><div class="addr-line" onclick="copyAddr(this)">http://localhost:' + gwPort + '/v1 <span class="copy-tag">📋 复制</span></div></div>' +
       '<div class="form-row"><label>服务器地址（对外）</label><div class="addr-line" onclick="copyAddr(this)">http://' + esc(ip) + ':' + gwPort + '/v1 <span class="copy-tag">📋 复制</span></div></div></div>';
     box.innerHTML = [
+      '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥0.00</div><div class="lbl">我的余额</div></div></div></div>',
       '<div class="grid grid-2">',
         '<div class="card"><h3>⚡ 网关控制</h3><div style="display:flex;gap:10px;align-items:center">' +
           '<span id="gwDot" class="dot ' + (st.running ? '' : 'off') + '"></span>' +
@@ -175,30 +186,34 @@ loaders.providers = function(){
   api('/api/providers').then(function(r){
     state.providers = r.data || [];
     var rows = state.providers.map(function(p){
-      return '<tr><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
+      var keyTxt = p.apiKey ? (p.apiKey.indexOf('****')>=0 ? p.apiKey : esc(p.apiKey)) : '<span style="color:var(--muted)">无</span>';
+      var pubTxt = p.isPublic ? '<span class="badge green">公用</span>' : (p.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
+      return '<tr><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px;font-family:monospace">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
     }).join('');
     box.innerHTML = [
-      '<div class="action-bar"><button class="btn" onclick="editProvider(0)">＋ 添加服务商</button><span style="color:var(--muted);font-size:12px">OpenAI Compatible / Ollama / Custom</span></div>',
-      '<div class="card"><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>地址</th><th>状态</th><th>操作</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="5" style="text-align:center;color:var(--muted)">' + (state.providers.length ? '' : '暂无服务商') + '</td></tr>' +
+      '<div class="action-bar"><button class="btn" onclick="editProvider(0)">＋ 添加服务商</button><span style="color:var(--muted);font-size:12px">OpenAI Compatible / Ollama / Custom · 公用=所有人可见</span></div>',
+      '<div class="card"><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>地址</th><th>API Key</th><th>归属</th><th>状态</th><th>操作</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + (state.providers.length ? '' : '暂无服务商') + '</td></tr>' +
       '</tbody></table></div></div>'
     ].join('');
   });
 };
 window.editProvider = function(id){
   var p = state.providers.find(function(x){ return x.id===id; }) || {};
+  var canEditKey = !p.apiKey || p.apiKey.indexOf('****') < 0;
+  var keyVal = canEditKey ? esc(p.apiKey||'') : '';
   var html = [
     '<div class="form-row"><label>名称 *</label><input id="pvName" class="input" value="'+esc(p.name||'')+'"></div>',
     '<div class="form-row"><label>类型</label><select id="pvType" class="input"><option value="OpenAI Compatible"'+(p.type==='OpenAI Compatible'?' selected':'')+'>OpenAI Compatible</option><option value="Ollama"'+(p.type==='Ollama'?' selected':'')+'>Ollama</option><option value="Custom"'+(p.type==='Custom'?' selected':'')+'>Custom</option></select></div>',
     '<div class="form-row"><label>Base URL *</label><input id="pvUrl" class="input" value="'+esc(p.baseUrl||'')+'" placeholder="https://api.openai.com"></div>',
     '<div class="form-row"><label>端口（可选）</label><input id="pvPort" class="input" value="'+esc(p.port||'')+'"></div>',
-    '<div class="form-row"><label>API Key</label><input id="pvKey" class="input" value="'+esc(p.apiKey||'')+'"></div>',
+    '<div class="form-row"><label>API Key'+(canEditKey?'':'（无权限查看，留空保持不变）')+'</label><input id="pvKey" class="input" value="'+keyVal+'"'+(canEditKey?'':' placeholder="**** 已隐藏 ****"')+'></div>',
     '<div class="form-row"><label>聊天路径</label><input id="pvPath" class="input" value="'+esc(p.chatPath||'')+'" placeholder="/v1/chat/completions"></div>',
     '<div class="form-row"><label>自定义服务商ID（pID）</label><input id="pvCid" class="input" value="'+esc(p.customId||'')+'"></div>',
-    '<div class="form-row"><label><input type="checkbox" id="pvEnabled"'+(p.isEnabled!==false?' checked':'')+'> 启用</label></div>'
+    '<div class="form-row"><label><input type="checkbox" id="pvEnabled"'+(p.isEnabled!==false?' checked':'')+'> 启用</label> <label style="margin-left:14px"><input type="checkbox" id="pvPublic"'+(p.isPublic?' checked':'')+'> 公用（所有人可见可用）</label></div>'
   ].join('');
   openModal(id ? '编辑服务商' : '添加服务商', html, function(){
-    var body = { id: id||0, name:$('pvName').value.trim(), type:$('pvType').value, baseUrl:$('pvUrl').value.trim(), port:$('pvPort').value.trim(), apiKey:$('pvKey').value.trim(), chatPath:$('pvPath').value.trim(), customId:$('pvCid').value.trim(), isEnabled:$('pvEnabled').checked };
+    var body = { id: id||0, name:$('pvName').value.trim(), type:$('pvType').value, baseUrl:$('pvUrl').value.trim(), port:$('pvPort').value.trim(), apiKey:$('pvKey').value.trim(), chatPath:$('pvPath').value.trim(), customId:$('pvCid').value.trim(), isEnabled:$('pvEnabled').checked, isPublic:$('pvPublic').checked };
     if(!body.name || !body.baseUrl){ toast('请填写名称和Base URL', false); return; }
     api('/api/providers', { method:'POST', body: body }).then(function(r){
       if(r.code === 0){ toast('✅ 保存成功', true); closeModal(); loaders.providers(); } else toast(r.msg, false);

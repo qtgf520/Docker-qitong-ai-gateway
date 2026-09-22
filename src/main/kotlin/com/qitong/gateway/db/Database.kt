@@ -163,10 +163,17 @@ class Database(private val dbPath: String) {
             )
             // 兼容旧库：补齐 owner_id（0=系统资源，>0=用户私有）与权限列
             try { st.executeUpdate("ALTER TABLE providers ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE providers ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE models ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE models ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE models ADD COLUMN price REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE routing_rule ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE api_keys ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN balance REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN total_recharge REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN cost REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
             // 人格配置表（对齐原APP人设系统）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS persona (
@@ -263,7 +270,8 @@ class Database(private val dbPath: String) {
         chatPath = r["chat_path"] as? String,
         supportsSystemRole = (r["supports_system_role"] as? Number)?.toInt() == 1,
         customId = r["custom_id"] as? String ?: "",
-        ownerId = (r["owner_id"] as? Number)?.toLong() ?: 0
+        ownerId = (r["owner_id"] as? Number)?.toLong() ?: 0,
+        isPublic = (r["is_public"] as? Number)?.toInt() == 1
     )
 
     private fun rowToModel(r: Map<String, Any?>) = AiModel(
@@ -277,7 +285,9 @@ class Database(private val dbPath: String) {
         customAlias = r["custom_alias"] as? String ?: "",
         useProxy = (r["use_proxy"] as? Number)?.toInt() == 1,
         contextWindow = (r["context_window"] as? Number)?.toInt() ?: 4096,
-        ownerId = (r["owner_id"] as? Number)?.toLong() ?: 0
+        ownerId = (r["owner_id"] as? Number)?.toLong() ?: 0,
+        isPublic = (r["is_public"] as? Number)?.toInt() == 1,
+        price = (r["price"] as? Number)?.toDouble() ?: 0.0
     )
 
     private fun rowToRoute(r: Map<String, Any?>) = RoutingRule(
@@ -306,16 +316,16 @@ class Database(private val dbPath: String) {
 
     fun addProvider(p: Provider): Long {
         stmt(
-            "INSERT INTO providers (name,type,base_url,port,api_key,is_enabled,order_index,chat_path,supports_system_role,custom_id,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            p.name, p.type, p.baseUrl, p.port, p.apiKey, if (p.isEnabled) 1 else 0, p.orderIndex, p.chatPath, if (p.supportsSystemRole) 1 else 0, p.customId, p.ownerId
+            "INSERT INTO providers (name,type,base_url,port,api_key,is_enabled,order_index,chat_path,supports_system_role,custom_id,owner_id,is_public) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            p.name, p.type, p.baseUrl, p.port, p.apiKey, if (p.isEnabled) 1 else 0, p.orderIndex, p.chatPath, if (p.supportsSystemRole) 1 else 0, p.customId, p.ownerId, if (p.isPublic) 1 else 0
         )
         return lastInsertId()
     }
 
     fun updateProvider(p: Provider) {
         stmt(
-            "UPDATE providers SET name=?,type=?,base_url=?,port=?,api_key=?,is_enabled=?,order_index=?,chat_path=?,supports_system_role=?,custom_id=?,owner_id=? WHERE id=?",
-            p.name, p.type, p.baseUrl, p.port, p.apiKey, if (p.isEnabled) 1 else 0, p.orderIndex, p.chatPath, if (p.supportsSystemRole) 1 else 0, p.customId, p.ownerId, p.id
+            "UPDATE providers SET name=?,type=?,base_url=?,port=?,api_key=?,is_enabled=?,order_index=?,chat_path=?,supports_system_role=?,custom_id=?,owner_id=?,is_public=? WHERE id=?",
+            p.name, p.type, p.baseUrl, p.port, p.apiKey, if (p.isEnabled) 1 else 0, p.orderIndex, p.chatPath, if (p.supportsSystemRole) 1 else 0, p.customId, p.ownerId, if (p.isPublic) 1 else 0, p.id
         )
     }
 
@@ -355,16 +365,16 @@ class Database(private val dbPath: String) {
 
     fun addModel(m: AiModel): Long {
         stmt(
-            "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId
+            "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window,owner_id,is_public,price) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price
         )
         return lastInsertId()
     }
 
     fun updateModel(m: AiModel) {
         stmt(
-            "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=?,owner_id=? WHERE id=?",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, m.id
+            "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=?,owner_id=?,is_public=?,price=? WHERE id=?",
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, m.id
         )
     }
 
@@ -440,13 +450,17 @@ class Database(private val dbPath: String) {
 
     fun addTokenUsage(t: TokenUsage) {
         stmt(
-            "INSERT INTO token_usage (model_key,model_name,provider_id,prompt_tokens,completion_tokens,total_tokens,upload_bytes,download_bytes,api_key_label,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            t.modelKey, t.modelName, t.providerId, t.promptTokens, t.completionTokens, t.totalTokens, t.uploadBytes, t.downloadBytes, t.apiKeyLabel, t.createdAt
+            "INSERT INTO token_usage (model_key,model_name,provider_id,prompt_tokens,completion_tokens,total_tokens,upload_bytes,download_bytes,api_key_label,user_id,cost,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            t.modelKey, t.modelName, t.providerId, t.promptTokens, t.completionTokens, t.totalTokens, t.uploadBytes, t.downloadBytes, t.apiKeyLabel, t.userId, t.cost, t.createdAt
         )
     }
 
     fun getTokenUsageSummary(): List<Map<String, Any?>> =
-        query("SELECT model_key, model_name, provider_id, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(upload_bytes) as upload_bytes, SUM(download_bytes) as download_bytes, COUNT(*) as calls FROM token_usage GROUP BY model_key ORDER BY total_tokens DESC")
+        query("SELECT model_key, model_name, provider_id, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(upload_bytes) as upload_bytes, SUM(download_bytes) as download_bytes, SUM(cost) as cost, COUNT(*) as calls FROM token_usage GROUP BY model_key ORDER BY total_tokens DESC")
+
+    /** 按用户维度的用量汇总（商业化） */
+    fun getTokenUsageByUser(userId: Long): List<Map<String, Any?>> =
+        query("SELECT model_key, model_name, provider_id, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(cost) as cost, COUNT(*) as calls FROM token_usage WHERE user_id=? GROUP BY model_key ORDER BY total_tokens DESC", userId)
 
     fun getTokenUsageRecent(limit: Int = 200): List<TokenUsage> =
         query("SELECT * FROM token_usage ORDER BY id DESC LIMIT $limit").map {
@@ -524,7 +538,7 @@ class Database(private val dbPath: String) {
     fun getUsers(): List<User> =
         query("SELECT * FROM users ORDER BY id").map { rowToUser(it) }
 
-    /** 行转User（含额度/绑定模型/权限） */
+    /** 行转User（含额度/绑定模型/权限/余额） */
     private fun rowToUser(it: Map<String, Any?>): User = User(
         id = (it["id"] as Number).toLong(),
         username = it["username"] as? String ?: "",
@@ -540,7 +554,9 @@ class Database(private val dbPath: String) {
         } catch (_: Exception) { emptyList() },
         permissions = try {
             kotlinx.serialization.json.Json.decodeFromString<List<String>>(it["permissions"] as? String ?: "[]")
-        } catch (_: Exception) { emptyList() }
+        } catch (_: Exception) { emptyList() },
+        balance = (it["balance"] as? Number)?.toDouble() ?: 0.0,
+        totalRecharge = (it["total_recharge"] as? Number)?.toDouble() ?: 0.0
     )
 
     fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = ""): Long {
@@ -581,6 +597,28 @@ class Database(private val dbPath: String) {
         stmt("UPDATE users SET quota_used = quota_used + ? WHERE id=?", tokens, userId)
         return true
     }
+
+    // ============ 商业化：余额/充值/扣费 ============
+
+    /** 充值（增加余额 + 累计充值） */
+    fun rechargeBalance(userId: Long, amount: Double): Boolean {
+        val user = getUserById(userId) ?: return false
+        if (amount < 0) return false
+        stmt("UPDATE users SET balance = balance + ?, total_recharge = total_recharge + ? WHERE id=?", amount, amount, userId)
+        return true
+    }
+
+    /** 扣费：从余额扣款，返回是否成功（余额不足返回 false） */
+    fun deductBalance(userId: Long, amount: Double): Boolean {
+        if (amount <= 0) return true
+        val user = getUserById(userId) ?: return false
+        if (user.balance + 1e-9 < amount) return false  // 余额不足
+        stmt("UPDATE users SET balance = balance - ? WHERE id=?", amount, userId)
+        return true
+    }
+
+    /** 查询用户余额 */
+    fun getUserBalance(userId: Long): Double = getUserById(userId)?.balance ?: 0.0
 
     // ============ 人格配置 ============
 

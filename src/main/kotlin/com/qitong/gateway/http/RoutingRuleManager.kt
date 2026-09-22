@@ -35,25 +35,28 @@ object RoutingRuleManager {
     }
 
     private fun matchesPath(pattern: String, path: String): Boolean {
-        if (pattern.isBlank()) return true
-        return wildcardMatch(pattern, path)
+        if (pattern.isBlank()) return false  // 空=不匹配（对齐APP）
+        return path.contains(pattern, ignoreCase = true)
     }
 
     private fun matchesModel(pattern: String, model: String): Boolean {
-        if (pattern.isBlank()) return true
+        if (pattern.isBlank()) return true   // 空=不限制
         return wildcardMatch(pattern, model)
     }
 
     private fun matchesApiKey(pattern: String, apiKey: String): Boolean {
         if (pattern.isBlank()) return true
-        return wildcardMatch(pattern, apiKey)
+        return apiKey.startsWith(pattern, ignoreCase = true)
     }
 
-    /** 通配符匹配：* 匹配任意字符序列 */
+    /** 通配符匹配：* 匹配任意字符序列（对齐APP：先转义 . 再替换 *） */
     private fun wildcardMatch(pattern: String, text: String): Boolean {
-        return Regex(
-            pattern.replace("*", ".*"),
-            RegexOption.IGNORE_CASE
-        ).matches(text)
+        if (pattern == "*") return true
+        if (!pattern.contains("*")) return text.equals(pattern, ignoreCase = true)
+        val regex = pattern
+            .replace(".", "\\.")
+            .replace("*", ".*")
+            .toRegex(RegexOption.IGNORE_CASE)
+        return regex.matches(text)
     }
 }

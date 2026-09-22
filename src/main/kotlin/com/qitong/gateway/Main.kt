@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-2
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-3
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-2    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-3    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-2"))
+                put("version", JsonPrimitive("3.18.22-3"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -479,6 +479,29 @@ fun Application.moduleWeb(database: Database) {
             database.deleteUser(userId)
             AdminApi.ok(call, null, "用户已删除")
         }
+        // 用户充值（admin / users.manage）
+        post("/api/users/recharge") {
+            val u = call.requireAuth(database) ?: return@post
+            if (!AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "用户ID无效", 400); return@post }
+            val amount = body["amount"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: run { AdminApi.fail(call, "金额无效", 400); return@post }
+            if (amount <= 0) { AdminApi.fail(call, "金额必须大于0", 400); return@post }
+            if (database.rechargeBalance(userId, amount)) {
+                val bal = database.getUserBalance(userId)
+                AdminApi.ok(call, mapOf("balance" to bal), "充值成功，当前余额 ¥$bal")
+            } else AdminApi.fail(call, "充值失败", 400)
+        }
+        // 当前用户余额查询
+        get("/api/me/balance") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, mapOf(
+                "balance" to u.balance,
+                "totalRecharge" to u.totalRecharge,
+                "quotaLimit" to u.quotaLimit,
+                "quotaUsed" to u.quotaUsed
+            ), "ok")
+        }
         // 人格配置：读取/保存
         get("/api/persona") {
             val user = call.requireAuth(database) ?: return@get
@@ -559,7 +582,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-2"))
+                    put("version", JsonPrimitive("3.18.22-3"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))

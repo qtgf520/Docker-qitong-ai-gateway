@@ -16,7 +16,8 @@ data class Provider(
     val chatPath: String? = null,          // e.g. /v1/chat/completions
     val supportsSystemRole: Boolean = false,
     val customId: String = "",             // pID 自定义ID
-    val ownerId: Long = 0                  // 0=系统资源, >0=用户私有
+    val ownerId: Long = 0,                 // 0=系统资源, >0=用户私有
+    val isPublic: Boolean = false           // 是否公用（公用=所有人可见可用）
 ) {
     /** 合并端口后的完整 Base URL */
     val resolvedBaseUrl: String
@@ -41,7 +42,9 @@ data class AiModel(
     val customAlias: String = "",
     val useProxy: Boolean = true,
     val contextWindow: Int = 4096,
-    val ownerId: Long = 0                  // 0=系统资源, >0=用户私有
+    val ownerId: Long = 0,                 // 0=系统资源, >0=用户私有
+    val isPublic: Boolean = false,         // 是否公用（公用=所有用户可见）
+    val price: Double = 0.0                // 单价（元/百万Token，0=按默认价格表）
 )
 
 /** 会话（对齐 conversations 表） */
@@ -65,7 +68,7 @@ data class ChatMessage(
     val createdAt: Long = System.currentTimeMillis()
 )
 
-/** 用量统计（对齐 token_usage 表） */
+/** 用量统计（对齐 token_usage 表 + 商业化扩展） */
 @Serializable
 data class TokenUsage(
     val id: Long = 0,
@@ -78,6 +81,8 @@ data class TokenUsage(
     val uploadBytes: Long = 0,
     val downloadBytes: Long = 0,
     val apiKeyLabel: String = "",
+    val userId: Long = 0,              // 调用者用户ID（0=匿名/本地）
+    val cost: Double = 0.0,            // 本次调用消耗金额（元）
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -126,7 +131,9 @@ data class User(
     val quotaLimit: Long = 0,           // 额度上限（token数，0=不限）
     val quotaUsed: Long = 0,            // 已用额度（token数）
     val bindModels: List<String> = emptyList(),   // 绑定模型ID列表（空=全部）
-    val permissions: List<String> = emptyList()    // 系统级权限位列表（空=普通用户仅私有资源）
+    val permissions: List<String> = emptyList(),    // 系统级权限位列表（空=普通用户仅私有资源）
+    val balance: Double = 0.0,          // 账户余额（元）
+    val totalRecharge: Double = 0.0     // 累计充值（元）
 )
 
 /** 人格配置（对齐原APP人设系统） */
@@ -172,7 +179,7 @@ data class GatewayConfig(
 data class GatewayStatus(
     val status: String = "ok",
     val service: String = "qitong-ai-gateway-docker",
-    val version: String = "3.18.22-2",
+    val version: String = "3.18.22-3",
     val running: Boolean = true,
     val port: Int,
     val failover: Boolean,

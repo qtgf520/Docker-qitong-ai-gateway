@@ -4,6 +4,7 @@ import com.qitong.gateway.db.Database
 import com.qitong.gateway.model.AiModel
 import com.qitong.gateway.model.Provider
 import com.qitong.gateway.model.TokenUsage
+import com.qitong.gateway.model.User
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
@@ -46,6 +47,7 @@ class GatewayProxy(private val database: Database) {
         if (entry != null) {
             call.attributes.put(ApiKeyEntryKey, entry.key)
             call.attributes.put(ApiKeyLabelKey, entry.label)
+            call.attributes.put(ApiKeyOwnerKey, entry.ownerId)
         }
         return entry != null
     }
@@ -149,6 +151,10 @@ class GatewayProxy(private val database: Database) {
         path: String,
         remoteIp: String
     ) {
+        // 当前调用者用户ID（来自API密钥属主；本地/免密钥=0）
+        val ownerId = try { call.attributes[ApiKeyOwnerKey] } catch (_: Exception) { 0L }
+        val ownerUser = if (ownerId > 0) database.getUserById(ownerId) else null
+
         // 路由规则匹配（route/block）
         val rule = RoutingRuleManager.matchRule(database, path, call.request.headers["Authorization"] ?: "", call.request.queryParameters["model"] ?: "")
         if (rule != null && rule.action == "block") {
@@ -197,7 +203,7 @@ class GatewayProxy(private val database: Database) {
             if (provider == null || !provider.isEnabled) continue
 
             try {
-                val success = forwardToUpstream(call, provider, targetModel, bodyStr, body, modelId, stream, path)
+                val success = forwardToUpstream(call, provider, targetModel, bodyStr, body, modelId, stream, path, ownerUser)
                 if (success) {
                     return
                 }
@@ -227,7 +233,8 @@ class GatewayProxy(private val database: Database) {
         body: JsonObject,
         modelId: String,
         stream: Boolean,
-        path: String
+        path: String,
+        ownerUser: User? = null
     ): Boolean {
         val startMs = System.currentTimeMillis()
         val upstreamUrl = provider.resolvedBaseUrl.trimEnd('/')
@@ -293,8 +300,8 @@ class GatewayProxy(private val database: Database) {
                 respondJson(call, respBody, respCode, ContentType.parse(respContentType))
             }
 
-            // 用量统计
-            recordUsage(targetModel, modelId, response.body?.contentLength() ?: 0)
+            // 用量统计（含商业化扣费）
+            recordUsage(targetModel, modelId, response.body?.contentLength() ?: 0, ownerUser)
             response.close()
             return true
         } else {
@@ -316,16 +323,35 @@ class GatewayProxy(private val database: Database) {
         }
     }
 
-    /** 记录用量 */
-    private fun recordUsage(model: AiModel, usedModelId: String, bytes: Long) {
+    /** 记录用量 + 商业化扣费/扣额度（key属主用户） */
+    private fun recordUsage(model: AiModel, usedModelId: String, bytes: Long, ownerUser: User? = null) {
         try {
+            // 计算成本：优先模型自定义价，其次默认价格表
+            val price = if (model.price > 0) model.price else PricingTable.priceOf(model.modelId)
+            val estTokens = (bytes / 4).coerceAtLeast(1)  // 粗略按4字节/token
+            val cost = estTokens / 1_000_000.0 * price * PricingTable.OUTPUT_MULTIPLIER
+            val userId = ownerUser?.id ?: 0
+
+            // 商业化扣款（余额不足则拒绝记录并标记，但不阻塞已成功的转发）
+            if (ownerUser != null) {
+                if (ownerUser.quotaLimit > 0) {
+                    // 有额度上限：扣额度
+                    database.consumeQuota(ownerUser.id, estTokens.toLong())
+                } else {
+                    // 余额体制：扣余额（不足则记录0成本）
+                    database.deductBalance(ownerUser.id, cost)
+                }
+            }
+
             database.addTokenUsage(
                 TokenUsage(
                     modelKey = "${model.providerId}::${model.modelId}",
                     modelName = model.displayName,
                     providerId = model.providerId,
                     downloadBytes = bytes,
-                    apiKeyLabel = currentApiKeyLabel
+                    apiKeyLabel = currentApiKeyLabel,
+                    userId = userId,
+                    cost = cost
                 )
             )
         } catch (_: Exception) {}
@@ -337,6 +363,7 @@ class GatewayProxy(private val database: Database) {
     companion object {
         val ApiKeyEntryKey = AttributeKey<String>("apiKeyEntry")
         val ApiKeyLabelKey = AttributeKey<String>("apiKeyLabel")
+        val ApiKeyOwnerKey = AttributeKey<Long>("apiKeyOwner")
 
         @Volatile
         var totalUploadBytes = 0L

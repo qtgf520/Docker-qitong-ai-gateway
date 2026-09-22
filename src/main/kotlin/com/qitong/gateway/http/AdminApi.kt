@@ -124,7 +124,7 @@ private fun providerToMap(p: Provider) = mapOf(
         "port" to p.port, "apiKey" to (p.apiKey ?: ""), "isEnabled" to p.isEnabled,
         "orderIndex" to p.orderIndex, "chatPath" to (p.chatPath ?: ""),
         "supportsSystemRole" to p.supportsSystemRole, "customId" to p.customId,
-        "ownerId" to p.ownerId
+        "ownerId" to p.ownerId, "isPublic" to p.isPublic
     )
 
     private fun modelToMap(m: AiModel) = mapOf(
@@ -132,7 +132,8 @@ private fun providerToMap(p: Provider) = mapOf(
         "displayName" to m.displayName, "isDefault" to m.isDefault,
         "syncStatus" to m.syncStatus, "isEnabled" to m.isEnabled,
         "customAlias" to m.customAlias, "useProxy" to m.useProxy,
-        "contextWindow" to m.contextWindow, "ownerId" to m.ownerId
+        "contextWindow" to m.contextWindow, "ownerId" to m.ownerId,
+        "isPublic" to m.isPublic, "price" to m.price
     )
 
     private fun apiKeyToMap(k: ApiKeyEntry) = mapOf(
@@ -183,10 +184,18 @@ private fun providerToMap(p: Provider) = mapOf(
 
     // ============ 服务商 CRUD（多租户） ============
 
-    /** 获取可见服务商：admin=全部；普通用户=系统+自己私有 */
+    /** 获取可见服务商：admin=全部；普通用户=系统+公用+自己私有（key 一律脱敏，除非是自己的） */
     fun getVisibleProviders(database: Database, user: User): List<Map<String, Any?>> {
         if (user.role == "admin") return database.getProviders().map { providerToMap(it) }
-        return database.getVisibleProviders(user.id).map { providerToMap(it) }
+        // 普通用户：自己私有 + 公用 + 有权限的系统服务商
+        return database.getVisibleProviders(user.id)
+            .filter { it.isPublic || it.ownerId == user.id || it.ownerId == 0L && hasPerm(user, Perm.P_MANAGE) }
+            .map { p ->
+                providerToMap(p).toMutableMap().apply {
+                    // 安全脱敏：只有 owner 自己能看到完整 key，其余一律 ****
+                    if (p.ownerId != user.id) this["apiKey"] = "****"
+                }
+            }
     }
 
     fun saveProvider(database: Database, body: JsonObject, user: User): Long {
@@ -201,19 +210,24 @@ private fun providerToMap(p: Provider) = mapOf(
         }
         // 权限校验：非 admin 只能管理自己 owner 的资源；系统资源需权限位
         if (!canManageResource(user, Perm.P_MANAGE, ownerId)) return -1
+        // key 保持：编辑时若前端提交空或 **** 则保留原key（防止覆盖）
+        val existing = if (id > 0) database.getProviderById(id) else null
+        var apiKey = body["apiKey"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+        if (apiKey == null || apiKey == "****") apiKey = existing?.apiKey
         val p = Provider(
             id = id,
             name = body["name"]?.jsonPrimitive?.content ?: "",
             type = body["type"]?.jsonPrimitive?.content ?: "OpenAI Compatible",
             baseUrl = body["baseUrl"]?.jsonPrimitive?.content ?: "",
             port = body["port"]?.jsonPrimitive?.content ?: "",
-            apiKey = body["apiKey"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
+            apiKey = apiKey,
             isEnabled = body["isEnabled"]?.let { parseBool(it) } ?: true,
             orderIndex = body["orderIndex"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
             chatPath = body["chatPath"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
             supportsSystemRole = body["supportsSystemRole"]?.let { parseBool(it) } ?: false,
             customId = body["customId"]?.jsonPrimitive?.content ?: "",
-            ownerId = ownerId
+            ownerId = ownerId,
+            isPublic = body["isPublic"]?.let { parseBool(it) } ?: false
         )
         return if (id > 0) {
             database.updateProvider(p); id
@@ -238,10 +252,15 @@ private fun providerToMap(p: Provider) = mapOf(
 
     // ============ 模型 CRUD（多租户） ============
 
-    /** 获取可见模型：admin=全部；普通用户=系统+自己私有 */
+    /** 获取可见模型：admin=全部；普通用户=系统公用+公用+自己私有 */
     fun getVisibleModels(database: Database, user: User): List<Map<String, Any?>> {
         if (user.role == "admin") return database.getModels().map { modelToMap(it) }
-        return database.getVisibleModels(user.id).map { modelToMap(it) }
+        val providerIds = database.getVisibleProviders(user.id)
+            .filter { it.isPublic || it.ownerId == user.id || it.ownerId == 0L && hasPerm(user, Perm.P_MANAGE) }
+            .map { it.id }
+        return database.getVisibleModels(user.id)
+            .filter { m -> m.ownerId == user.id || m.isPublic || m.ownerId == 0L && m.isPublic || m.providerId in providerIds }
+            .map { modelToMap(it) }
     }
 
     fun saveModel(database: Database, body: JsonObject, user: User): Long {
@@ -256,6 +275,8 @@ private fun providerToMap(p: Provider) = mapOf(
             }
         }
         if (!canManageResource(user, Perm.M_MANAGE, ownerId)) return -1
+        // 价格：默认0=按价格表；自定义值>0
+        val price = body["price"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.0
         val m = AiModel(
             id = id,
             providerId = body["providerId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0,
@@ -267,7 +288,9 @@ private fun providerToMap(p: Provider) = mapOf(
             customAlias = body["customAlias"]?.jsonPrimitive?.content ?: "",
             useProxy = body["useProxy"]?.let { parseBool(it) } ?: true,
             contextWindow = body["contextWindow"]?.jsonPrimitive?.content?.toIntOrNull() ?: 4096,
-            ownerId = ownerId
+            ownerId = ownerId,
+            isPublic = body["isPublic"]?.let { parseBool(it) } ?: false,
+            price = price
         )
         return if (id > 0) {
             database.updateModel(m); id
@@ -415,6 +438,7 @@ private fun providerToMap(p: Provider) = mapOf(
                 row.forEach { (k, v) -> put(k, encodeElement(v)) }
             }
         }))
+        put("totalCost", JsonPrimitive(usageSummary.sumOf { (it["cost"] as? Number)?.toDouble() ?: 0.0 }))
         put("totalUpload", JsonPrimitive(GatewayProxy.totalUploadBytes))
         put("totalDownload", JsonPrimitive(GatewayProxy.totalDownloadBytes))
         put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
@@ -523,7 +547,7 @@ private fun providerToMap(p: Provider) = mapOf(
             "id" to it.id, "username" to it.username, "role" to it.role,
             "displayName" to it.displayName, "createdAt" to it.createdAt, "lastLoginAt" to it.lastLoginAt,
             "quotaLimit" to it.quotaLimit, "quotaUsed" to it.quotaUsed, "bindModels" to it.bindModels,
-            "permissions" to it.permissions
+            "permissions" to it.permissions, "balance" to it.balance, "totalRecharge" to it.totalRecharge
         )
     }
 
