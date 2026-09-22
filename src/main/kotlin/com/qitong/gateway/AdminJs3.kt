@@ -281,8 +281,6 @@ window.editUser = function(id){
     });
   });
 };
-  });
-};
 window.delUser = function(id){
   if(!confirm('确定删除该用户？')) return;
   api('/api/users/delete', { method:'POST', body: { id: id } }).then(function(r){
