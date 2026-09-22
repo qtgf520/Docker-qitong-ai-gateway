@@ -172,6 +172,9 @@ class Database(private val dbPath: String) {
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN balance REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN total_recharge REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN inviter_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN invite_code TEXT NOT NULL DEFAULT ''") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN commission_rate REAL NOT NULL DEFAULT 0.1") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN cost REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
             // 人格配置表（对齐原APP人设系统）
@@ -209,6 +212,14 @@ class Database(private val dbPath: String) {
                     allowed_models TEXT NOT NULL DEFAULT '[]',
                     qtai_sj_access INTEGER NOT NULL DEFAULT 1,
                     created_at INTEGER NOT NULL
+                )"""
+            )
+            // 登录会话（7天免登录）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS sessions (
+                    token TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL
                 )"""
             )
         }
@@ -535,6 +546,13 @@ class Database(private val dbPath: String) {
     fun getUserById(id: Long): User? =
         query("SELECT * FROM users WHERE id=?", id).firstOrNull()?.let { rowToUser(it) }
 
+    fun getUserByInviteCode(code: String): User? =
+        query("SELECT * FROM users WHERE invite_code=? LIMIT 1", code).firstOrNull()?.let { rowToUser(it) }
+
+    /** 邀请人数（分销） */
+    fun getInvitedCount(inviterId: Long): Long =
+        queryOne("SELECT COUNT(*) FROM users WHERE inviter_id=?", inviterId) ?: 0
+
     fun getUsers(): List<User> =
         query("SELECT * FROM users ORDER BY id").map { rowToUser(it) }
 
@@ -556,13 +574,18 @@ class Database(private val dbPath: String) {
             kotlinx.serialization.json.Json.decodeFromString<List<String>>(it["permissions"] as? String ?: "[]")
         } catch (_: Exception) { emptyList() },
         balance = (it["balance"] as? Number)?.toDouble() ?: 0.0,
-        totalRecharge = (it["total_recharge"] as? Number)?.toDouble() ?: 0.0
+        totalRecharge = (it["total_recharge"] as? Number)?.toDouble() ?: 0.0,
+        inviterId = (it["inviter_id"] as? Number)?.toLong() ?: 0,
+        inviteCode = it["invite_code"] as? String ?: "",
+        commissionRate = (it["commission_rate"] as? Number)?.toDouble() ?: 0.1
     )
 
-    fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = ""): Long {
+    fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = "", inviterId: Long = 0): Long {
+        // 生成邀请码
+        val code = "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0')
         stmt(
-            "INSERT INTO users (username, password_hash, role, display_name, created_at) VALUES (?,?,?,?,?)",
-            username, passwordHash, role, displayName, System.currentTimeMillis()
+            "INSERT INTO users (username, password_hash, role, display_name, created_at, inviter_id, invite_code) VALUES (?,?,?,?,?,?,?)",
+            username, passwordHash, role, displayName, System.currentTimeMillis(), inviterId, code
         )
         return lastInsertId()
     }
@@ -600,11 +623,28 @@ class Database(private val dbPath: String) {
 
     // ============ 商业化：余额/充值/扣费 ============
 
-    /** 充值（增加余额 + 累计充值） */
+    /** 充值（增加余额 + 累计充值 + 给邀请人返佣） */
     fun rechargeBalance(userId: Long, amount: Double): Boolean {
         val user = getUserById(userId) ?: return false
         if (amount < 0) return false
         stmt("UPDATE users SET balance = balance + ?, total_recharge = total_recharge + ? WHERE id=?", amount, amount, userId)
+        // 分销返佣：邀请人获得 amount * commissionRate 佣金
+        if (user.inviterId > 0 && user.inviterId != userId) {
+            val inviter = getUserById(user.inviterId)
+            if (inviter != null) {
+                val commission = amount * (inviter.commissionRate.takeIf { it in 0.0..1.0 } ?: 0.1)
+                if (commission > 0) {
+                    stmt("UPDATE users SET balance = balance + ? WHERE id=?", commission, user.inviterId)
+                }
+            }
+        }
+        return true
+    }
+
+    /** 管理员手动扣款（余额扣减，扣成负数也允许标记欠费） */
+    fun deductBalanceAdmin(userId: Long, amount: Double): Boolean {
+        if (amount <= 0) return false
+        stmt("UPDATE users SET balance = balance - ? WHERE id=?", amount, userId)
         return true
     }
 
@@ -682,6 +722,30 @@ class Database(private val dbPath: String) {
 
     fun setUserConfig(userId: Long, key: String, value: String) {
         setConfig("user:$userId:$key", value)
+    }
+
+    // ============ 登录会话（7天免登录） ============
+
+    /** 保存会话token，days天后过期 */
+    fun saveSession(token: String, userId: Long, days: Long) {
+        val expires = System.currentTimeMillis() + days * 24 * 60 * 60 * 1000
+        stmt("INSERT OR REPLACE INTO sessions (token, user_id, expires_at) VALUES (?,?,?)", token, userId, expires)
+    }
+
+    /** 按token取用户ID（过期返回null） */
+    fun getSessionUser(token: String): Long? {
+        val row = query("SELECT user_id, expires_at FROM sessions WHERE token=?", token).firstOrNull() ?: return null
+        val expires = (row["expires_at"] as? Number)?.toLong() ?: 0
+        if (System.currentTimeMillis() > expires) {
+            stmt("DELETE FROM sessions WHERE token=?", token)
+            return null
+        }
+        return (row["user_id"] as? Number)?.toLong()
+    }
+
+    /** 删除会话（注销） */
+    fun deleteSession(token: String) {
+        stmt("DELETE FROM sessions WHERE token=?", token)
     }
 
     fun getAllConfig(): Map<String, String> =

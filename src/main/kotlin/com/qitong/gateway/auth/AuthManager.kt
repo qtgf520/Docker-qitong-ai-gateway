@@ -13,33 +13,40 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 后台认证 —— 注册/登录/会话Token
- * 密码 BCrypt 哈希，会话用随机Token（内存存储，重启失效）
+ * 密码 BCrypt 哈希，会话Token持久化到数据库（7天免登录）
  */
 object AuthManager {
 
-    private val sessions = ConcurrentHashMap<String, Long>()  // token -> userId
+    private const val SESSION_DAYS = 7L
     private val random = SecureRandom()
 
-    /** 注册新用户 */
-    fun register(database: Database, username: String, password: String, displayName: String = ""): Result<User> {
+    /** 注册新用户（支持邀请码） */
+    fun register(database: Database, username: String, password: String, displayName: String = "", inviteCode: String = ""): Result<User> {
         val name = username.trim()
         if (name.length < 3) return Result.failure(Exception("用户名至少3个字符"))
         if (password.length < 6) return Result.failure(Exception("密码至少6个字符"))
         if (database.getUserByUsername(name) != null) return Result.failure(Exception("用户名已存在"))
 
+        // 邀请码解析：找到邀请人
+        var inviterId = 0L
+        if (inviteCode.isNotBlank()) {
+            val inviter = database.getUserByInviteCode(inviteCode.trim())
+            if (inviter != null) inviterId = inviter.id
+        }
         val hash = BCrypt.hashpw(password, BCrypt.gensalt())
-        val id = database.addUser(name, hash, role = "user", displayName = displayName.ifBlank { name })
+        val id = database.addUser(name, hash, role = "user", displayName = displayName.ifBlank { name }, inviterId = inviterId)
         val user = database.getUserById(id)
         return if (user != null) Result.success(user) else Result.failure(Exception("注册失败"))
     }
 
-    /** 登录，成功返回会话token */
+    /** 登录，成功返回会话token（持久化7天） */
     fun login(database: Database, username: String, password: String): Result<String> {
         val user = database.getUserByUsername(username.trim()) ?: return Result.failure(Exception("用户名或密码错误"))
         if (!BCrypt.checkpw(password, user.passwordHash)) return Result.failure(Exception("用户名或密码错误"))
         database.updateUserLogin(user.id)
         val token = generateToken()
-        sessions[token] = user.id
+        // 持久化会话：token -> userId, 7天有效
+        database.saveSession(token, user.id, SESSION_DAYS)
         return Result.success(token)
     }
 
@@ -53,14 +60,14 @@ object AuthManager {
     }
 
     /** 注销 */
-    fun logout(token: String) {
-        sessions.remove(token)
+    fun logout(database: Database, token: String) {
+        database.deleteSession(token)
     }
 
-    /** 校验token，返回用户 */
+    /** 校验token，返回用户（7天内有效） */
     fun getUserByToken(database: Database, token: String?): User? {
         if (token.isNullOrBlank()) return null
-        val userId = sessions[token] ?: return null
+        val userId = database.getSessionUser(token) ?: return null
         return database.getUserById(userId)
     }
 

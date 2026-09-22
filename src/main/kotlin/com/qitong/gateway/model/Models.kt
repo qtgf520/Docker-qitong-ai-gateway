@@ -133,7 +133,10 @@ data class User(
     val bindModels: List<String> = emptyList(),   // 绑定模型ID列表（空=全部）
     val permissions: List<String> = emptyList(),    // 系统级权限位列表（空=普通用户仅私有资源）
     val balance: Double = 0.0,          // 账户余额（元）
-    val totalRecharge: Double = 0.0     // 累计充值（元）
+    val totalRecharge: Double = 0.0,    // 累计充值（元）
+    val inviterId: Long = 0,            // 邀请人ID（分销）
+    val inviteCode: String = "",        // 我的邀请码
+    val commissionRate: Double = 0.1    // 分销佣金比例（默认10%）
 )
 
 /** 人格配置（对齐原APP人设系统） */
@@ -179,7 +182,7 @@ data class GatewayConfig(
 data class GatewayStatus(
     val status: String = "ok",
     val service: String = "qitong-ai-gateway-docker",
-    val version: String = "3.18.22-4",
+    val version: String = "3.18.22-5",
     val running: Boolean = true,
     val port: Int,
     val failover: Boolean,

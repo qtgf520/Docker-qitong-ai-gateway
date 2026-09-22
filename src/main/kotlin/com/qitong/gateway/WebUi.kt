@@ -40,7 +40,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   <div class="logo">
     <div class="icon">⚡</div>
     <h1>綦桐AI网关</h1>
-    <p>Docker Server v3.18.22-4 · 后台管理</p>
+    <p>Docker Server v3.18.22-5 · 后台管理</p>
   </div>
   <div class="tabs">
     <button id="tabL" class="active" onclick="switchTab('L')">登录</button>
@@ -55,10 +55,11 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
     <div class="form-group"><label>用户名</label><input id="rgUser" placeholder="至少3个字符"></div>
     <div class="form-group"><label>密码</label><input id="rgPass" type="password" placeholder="至少6个字符"></div>
     <div class="form-group"><label>昵称（可选）</label><input id="rgName" placeholder="显示名称"></div>
+    <div class="form-group"><label>邀请码（可选，返佣10%）</label><input id="rgInvite" placeholder="输入邀请人邀请码"></div>
     <button class="btn" onclick="doRegister()">注 册</button>
   </div>
   <div id="msg" class="msg"></div>
-  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-4 Server</div>
+  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-5 Server</div>
 </div>
 <script>
 function $(id){return document.getElementById(id)}
@@ -84,11 +85,11 @@ async function doLogin(){
   else show(r.msg||'登录失败');
 }
 async function doRegister(){
-  var u=$('rgUser').value.trim(),p=$('rgPass').value,n=$('rgName').value.trim();
+  var u=$('rgUser').value.trim(),p=$('rgPass').value,n=$('rgName').value.trim(),inv=$('rgInvite').value.trim();
   if(!u){show('请输入用户名');return}
   if(!p||p.length<6){show('密码至少6个字符');return}
   show('注册中...',true);
-  var r=await postJson('/api/auth/register',{username:u,password:p,displayName:n});
+  var r=await postJson('/api/auth/register',{username:u,password:p,displayName:n,inviteCode:inv});
   if(r.code===0){show('✅ 注册成功，请登录',true);$('lgUser').value=u;switchTab('L')}
   else show(r.msg||'注册失败');
 }
@@ -111,7 +112,7 @@ ${adminCss()}
   <!-- 顶栏 -->
   <header class="topbar">
     <button class="burger" id="burger" onclick="toggleSidebar()">☰</button>
-    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-4</span></div>
+    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-5</span></div>
     <div class="topbar-right">
       <span id="onlineDot" class="dot"></span>
       <span id="userInfo" class="user-name">未登录</span>

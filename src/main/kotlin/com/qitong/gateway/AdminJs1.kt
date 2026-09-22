@@ -194,6 +194,10 @@ window.copyAddr = function(el){
   if(navigator.clipboard){ navigator.clipboard.writeText(txt).then(function(){ toast('✅ 已复制: ' + txt, true); }); }
   else { toast('已复制: ' + txt, true); }
 };
+window.copyText = function(txt){
+  if(navigator.clipboard){ navigator.clipboard.writeText(txt).then(function(){ toast('✅ 已复制', true); }); }
+  else { toast('已复制: ' + txt, true); }
+};
 // ===== 服务商 =====
 loaders.providers = function(){
   var box = $('view-providers');

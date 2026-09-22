@@ -145,13 +145,12 @@ loaders.settings = function(){
       '<div class="form-row"><label>活跃模型Key（qtai-sj 解析目标）</label><input id="cfgActive" class="input" value="'+esc(cfg.active_model_key||'')+'" placeholder="如 1::gpt-4o"></div>',
       '<div class="form-row"><label>强制故障池（逗号分隔）</label><input id="cfgPool" class="input" value="'+esc(cfg.forced_pool_keys||'')+'" placeholder="如 1::gpt-4o,1::gpt-3.5-turbo"></div>',
       '<button class="btn" onclick="saveSettings()">保存设置</button>',
-      '</div>',
-      '<div class="card"><h3>🧠 个人人格配置</h3><small style="color:var(--muted);display:block;margin-bottom:12px">让 qtai-sj 回复时带上你设定的人设（对齐APP人格系统）</small>',
+'<div class="card"><h3>🧠 个人人格配置</h3><small style="color:var(--muted);display:block;margin-bottom:12px">让 qtai-sj 回复时带上你设定的人设（按用户独立存储）</small>',
       '<div class="form-row"><label>名字</label><input id="psName" class="input" placeholder="如：綦小桐"></div>',
       '<div class="form-row"><label>年龄</label><input id="psAge" class="input" placeholder="如：18岁"></div>',
       '<div class="form-row"><label>性格</label><input id="psPersonality" class="input" placeholder="如：开朗、幽默、乐于助人"></div>',
       '<div class="form-row"><label>语气</label><input id="psTone" class="input" placeholder="如：亲切、像朋友一样"></div>',
-      '<div class="form-row"><label>背景</label><input id="psBg" class="input" placeholder="如：我是綦桐AI网关的专属助手"></div>',
+      '<div class="form-row"><label>背景设定（超级文本，多行）</label><textarea id="psBg" class="input" rows="5" placeholder="如：你是綦桐AI网关的智能助手，擅长帮助用户使用AI网关、解答问题、管理记忆，像一个真实的朋友一样陪伴用户..."></textarea></div>',
       '<div class="form-row"><label>大五人格维度</label>',
       '<div style="font-size:12px;color:var(--muted)">开放度 <input id="psO" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psOv">0.5</span></div>',
       '<div style="font-size:12px;color:var(--muted)">尽责性 <input id="psC" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psCv">0.5</span></div>',
@@ -165,8 +164,23 @@ loaders.settings = function(){
       '<div class="form-row"><label>旧密码</label><input id="chgOld" class="input" type="password" placeholder="输入旧密码"></div>',
       '<div class="form-row"><label>新密码</label><input id="chgNew" class="input" type="password" placeholder="至少6个字符"></div>',
       '<button class="btn" onclick="changePassword()">修改密码</button>',
-      '</div>'
+      '</div>',
+      '<div class="card" id="distCard"><h3>💎 分销中心</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>'
     ].join('');
+    // 分销信息
+    api('/api/me/distribution').then(function(dr){
+      if(dr && dr.code === 0 && dr.data){
+        var d = dr.data;
+        var dc = $('distCard');
+        if(dc) dc.innerHTML = '<h3>💎 分销中心</h3>' +
+          '<div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\''+esc(d.inviteCode)+'\')"><b style="font-family:monospace">'+esc(d.inviteCode)+'</b> <span class="copy-tag">📋 复制</span></div></div>' +
+          '<div class="form-row"><label>邀请人数</label><div><b style="color:var(--cyan)">'+d.inviteCount+'</b> 人</div></div>' +
+          '<div class="form-row"><label>佣金比例</label><div><b style="color:var(--green)">'+d.commissionRate+'%</b>（被邀请人充值时自动返佣到你的余额）</div></div>' +
+          '<div class="form-row"><label>我的余额</label><div><b style="color:var(--green)">¥'+d.balance.toFixed(2)+'</b></div></div>' +
+          '<div class="form-row"><label>注册链接</label><div class="addr-line" onclick="copyText(location.origin+\'/login\')">' + location.origin + '/login <span class="copy-tag">📋 复制</span></div></div>' +
+          '<small style="color:var(--muted)">分享邀请码给朋友，朋友注册时填写你的邀请码，Ta 充值后你将获得 '+d.commissionRate+'% 佣金</small>';
+      }
+    });
     // 回填人格配置
     api('/api/persona').then(function(pr){
       if(pr && pr.code === 0 && pr.data && pr.data.name !== undefined){
@@ -239,13 +253,23 @@ loaders.users = function(){
       var permTxt = (u.permissions && u.permissions.length) ? u.permissions.map(function(p){ return '<span class="badge purple">'+esc(p)+'</span>'; }).join(' ') : '<span style="color:var(--muted)">仅私有</span>';
       if(u.role === 'admin') permTxt = '<span class="badge green">全部权限</span>';
       var balTxt = '<span style="color:var(--green);font-weight:700">¥'+(u.balance||0).toFixed(2)+'</span>';
-      return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td><span class="badge '+(u.role==='admin'?'purple':'blue')+'">'+(u.role==='admin'?'管理员':'用户')+'</span></td><td>'+balTxt+' <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="rechargeUser('+u.id+',\''+esc(u.username)+'\')">充值</button></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
+      return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td><span class="badge '+(u.role==='admin'?'purple':'blue')+'">'+(u.role==='admin'?'管理员':'用户')+'</span></td><td>'+balTxt+' <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="rechargeUser('+u.id+',\''+esc(u.username)+'\')">充值</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="deductUser('+u.id+',\''+esc(u.username)+'\')">扣款</button></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
     }).join('');
     box.innerHTML = [
       '<div class="card"><h3>👥 用户管理</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>操作</th></tr></thead><tbody>' +
       rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (users.length ? '' : '暂无用户') + '</td></tr>' +
       '</tbody></table></div><div style="margin-top:10px;color:var(--muted);font-size:12px">注册页开放注册；可编辑用户角色 / 额度 / 绑定模型 / 系统权限；余额用于按模型价格扣费</div></div>'
     ].join('');
+  });
+};
+// ===== 用户扣款 =====
+window.deductUser = function(id, name){
+  openModal('扣款 - ' + name, '<div class="form-row"><label>扣款金额（元）</label><input id="dcAmount" class="input" type="number" step="0.01" min="0.01" placeholder="如 5.00"></div>', function(){
+    var amount = parseFloat($('dcAmount').value);
+    if(!amount || amount <= 0){ toast('请输入有效金额', false); return; }
+    api('/api/users/deduct', { method:'POST', body: { id: id, amount: amount } }).then(function(r){
+      if(r.code === 0){ toast('✅ ' + r.msg, true); closeModal(); loaders.users(); } else toast(r.msg, false);
+    });
   });
 };
 // ===== 用户充值 =====

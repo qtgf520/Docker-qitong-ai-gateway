@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-4
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-5
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-4    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-5    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-4"))
+                put("version", JsonPrimitive("3.18.22-5"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -257,7 +257,8 @@ fun Application.moduleWeb(database: Database) {
                 database,
                 body["username"]?.jsonPrimitive?.content ?: "",
                 body["password"]?.jsonPrimitive?.content ?: "",
-                body["displayName"]?.jsonPrimitive?.content ?: ""
+                body["displayName"]?.jsonPrimitive?.content ?: "",
+                body["inviteCode"]?.jsonPrimitive?.content ?: ""
             )
             if (result.isSuccess) AdminApi.ok(call, "注册成功")
             else AdminApi.fail(call, result.exceptionOrNull()?.message ?: "注册失败", 400)
@@ -281,7 +282,7 @@ fun Application.moduleWeb(database: Database) {
         }
         post("/api/auth/logout") {
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
-            AuthManager.logout(token ?: "")
+            AuthManager.logout(database, token ?: "")
             AdminApi.ok(call, null, "已退出")
         }
         get("/api/auth/me") {
@@ -492,6 +493,31 @@ fun Application.moduleWeb(database: Database) {
                 AdminApi.ok(call, mapOf("balance" to bal), "充值成功，当前余额 ¥$bal")
             } else AdminApi.fail(call, "充值失败", 400)
         }
+        // 管理员手动扣款
+        post("/api/users/deduct") {
+            val u = call.requireAuth(database) ?: return@post
+            if (!AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "用户ID无效", 400); return@post }
+            val amount = body["amount"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: run { AdminApi.fail(call, "金额无效", 400); return@post }
+            if (amount <= 0) { AdminApi.fail(call, "金额必须大于0", 400); return@post }
+            if (database.deductBalanceAdmin(userId, amount)) {
+                val bal = database.getUserBalance(userId)
+                AdminApi.ok(call, mapOf("balance" to bal), "已扣款 ¥$amount，当前余额 ¥$bal")
+            } else AdminApi.fail(call, "扣款失败", 400)
+        }
+        // 我的分销信息（邀请码/邀请人数/累计佣金）
+        get("/api/me/distribution") {
+            val u = call.requireAuth(database) ?: return@get
+            val inviteCount = database.getInvitedCount(u.id)
+            AdminApi.ok(call, mapOf(
+                "inviteCode" to (u.inviteCode.ifBlank { "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0') }),
+                "inviteCount" to inviteCount,
+                "commissionRate" to (u.commissionRate * 100),
+                "balance" to u.balance,
+                "totalRecharge" to u.totalRecharge
+            ), "ok")
+        }
         // 当前用户余额查询
         get("/api/me/balance") {
             val u = call.requireAuth(database) ?: return@get
@@ -585,7 +611,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-4"))
+                    put("version", JsonPrimitive("3.18.22-5"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
