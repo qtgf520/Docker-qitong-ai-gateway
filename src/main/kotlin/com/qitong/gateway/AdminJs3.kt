@@ -211,7 +211,17 @@ window.saveSettings = function(){
     if(r.code === 0){ toast('✅ 设置已保存', true); } else toast(r.msg, false);
   });
 };
-// ===== 用户（可编辑：额度/绑定模型/角色/重置密码） =====
+// ===== 用户（可编辑：额度/绑定模型/角色/权限/重置密码） =====
+var PERM_OPTS = [
+  { id:'provider.manage', label:'🔌 管理服务商（含系统）' },
+  { id:'model.manage', label:'🤖 管理模型（含系统）' },
+  { id:'system.config', label:'⚙️ 修改系统配置' },
+  { id:'keys.manage', label:'🔑 管理API密钥（含系统）' },
+  { id:'rules.manage', label:'🛡️ 管理路由规则（含系统）' },
+  { id:'users.manage', label:'👥 用户管理' },
+  { id:'system.speedtest', label:'⚡ 全局测速/强制池' },
+  { id:'data.export', label:'📤 数据导出' }
+];
 loaders.users = function(){
   var box = $('view-users');
   box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
@@ -220,16 +230,18 @@ loaders.users = function(){
     var rows = users.map(function(u){
       var quotaText = u.quotaLimit > 0 ? (fmtNum(u.quotaUsed) + ' / ' + fmtNum(u.quotaLimit) + ' tok') : (u.quotaUsed > 0 ? fmtNum(u.quotaUsed) + ' tok' : '不限');
       var bindTxt = (u.bindModels && u.bindModels.length) ? u.bindModels.map(function(m){ return '<span class="badge blue">'+esc(m)+'</span>'; }).join(' ') : '<span style="color:var(--muted)">全部模型</span>';
-      return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td><span class="badge '+(u.role==='admin'?'purple':'blue')+'">'+(u.role==='admin'?'管理员':'用户')+'</span></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td>'+new Date(u.createdAt).toLocaleString('zh-CN')+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
+      var permTxt = (u.permissions && u.permissions.length) ? u.permissions.map(function(p){ return '<span class="badge purple">'+esc(p)+'</span>'; }).join(' ') : '<span style="color:var(--muted)">仅私有</span>';
+      if(u.role === 'admin') permTxt = '<span class="badge green">全部权限</span>';
+      return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td><span class="badge '+(u.role==='admin'?'purple':'blue')+'">'+(u.role==='admin'?'管理员':'用户')+'</span></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
     }).join('');
     box.innerHTML = [
-      '<div class="card"><h3>👥 用户管理</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>额度使用</th><th>绑定模型</th><th>注册时间</th><th>操作</th></tr></thead><tbody>' +
+      '<div class="card"><h3>👥 用户管理</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>操作</th></tr></thead><tbody>' +
       rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + (users.length ? '' : '暂无用户') + '</td></tr>' +
-      '</tbody></table></div><div style="margin-top:10px;color:var(--muted);font-size:12px">注册页开放注册；可编辑用户角色 / 额度和绑定模型</div></div>'
+      '</tbody></table></div><div style="margin-top:10px;color:var(--muted);font-size:12px">注册页开放注册；可编辑用户角色 / 额度 / 绑定模型 / 系统权限；无权限的用户只能管理自己的服务商与模型</div></div>'
     ].join('');
   });
 };
-// ===== 用户编辑 =====
+// ===== 用户编辑（含权限设置） =====
 window.editUser = function(id){
   api('/api/users').then(function(r){
     var users = r.data || [];
@@ -237,19 +249,29 @@ window.editUser = function(id){
     if(!u){ toast('用户不存在', false); return; }
     var modelOpts = '';
     api('/api/models').then(function(mr){
-      (mr.data || []).forEach(function(m){ modelOpts += '<option value="'+esc(m.modelId)+'"'+(u.bindModels.indexOf(m.modelId)>=0?' selected':'')+'>'+esc(m.modelId)+'</option>'; });
+      var models = mr.data || [];
+      // 仅列出系统级模型（ownerId=0）作为绑定选项
+      var sysModels = models.filter(function(m){ return m.ownerId === 0; });
+      if(!sysModels.length) sysModels = models;
+      sysModels.forEach(function(m){ modelOpts += '<option value="'+esc(m.modelId)+'"'+(u.bindModels.indexOf(m.modelId)>=0?' selected':'')+'>'+esc(m.modelId)+'</option>'; });
+      var permCheck = PERM_OPTS.map(function(p){
+        var checked = (u.role === 'admin') || (u.permissions||[]).indexOf(p.id) >= 0;
+        return '<label style="display:flex;align-items:center;gap:6px;margin:3px 0;font-size:13px"><input type="checkbox" class="usPermCb" value="'+p.id+'"'+(checked?' checked':'')+(u.role==='admin'?' disabled':'')+'> '+p.label+'</label>';
+      }).join('');
       var html = [
         '<div class="form-row"><label>用户名</label><input class="input" value="'+esc(u.username)+'" disabled></div>',
         '<div class="form-row"><label>昵称</label><input id="euName" class="input" value="'+esc(u.displayName||'')+'"></div>',
         '<div class="form-row"><label>角色</label><select id="euRole" class="input"><option value="user"'+(u.role==='user'?' selected':'')+'>用户</option><option value="admin"'+(u.role==='admin'?' selected':'')+'>管理员</option></select></div>',
         '<div class="form-row"><label>额度上限（token，0=不限）</label><input id="euQuota" class="input" type="number" value="'+(u.quotaLimit||0)+'"></div>',
         '<div class="form-row"><label>已用额度（token）</label><input id="euUsed" class="input" type="number" value="'+(u.quotaUsed||0)+'"></div>',
-        '<div class="form-row"><label>绑定模型（Ctrl多选，留空=全部）</label><select id="euModels" class="input" multiple size="5">'+modelOpts+'</select></div>',
+        '<div class="form-row"><label>绑定模型（Ctrl多选，留空=全部）</label><select id="euModels" class="input" multiple size="4">'+modelOpts+'</select></div>',
+        '<div class="form-row"><label>系统权限（勾选=可管理该系统资源）</label><div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px">'+permCheck+'</div></div>',
         '<div class="form-row"><label>重置密码（留空不改）</label><input id="euPwd" class="input" type="password" placeholder="至少6个字符"></div>'
       ].join('');
       openModal('编辑用户 - ' + u.username, html, function(){
         var models = Array.from($('euModels').selectedOptions).map(function(o){ return o.value; });
-        var body = { id: id, displayName: $('euName').value.trim(), role: $('euRole').value, quotaLimit: parseInt($('euQuota').value)||0, quotaUsed: parseInt($('euUsed').value)||0, bindModels: models };
+        var perms = Array.from(document.querySelectorAll('.usPermCb')).filter(function(c){ return c.checked && !c.disabled; }).map(function(c){ return c.value; });
+        var body = { id: id, displayName: $('euName').value.trim(), role: $('euRole').value, quotaLimit: parseInt($('euQuota').value)||0, quotaUsed: parseInt($('euUsed').value)||0, bindModels: models, permissions: perms };
         var pwd = $('euPwd').value;
         if(pwd){ if(pwd.length < 6){ toast('密码至少6个字符', false); return; } body.newPassword = pwd; }
         api('/api/users/update', { method:'POST', body: body }).then(function(rr){
@@ -257,6 +279,8 @@ window.editUser = function(id){
         });
       });
     });
+  });
+};
   });
 };
 window.delUser = function(id){

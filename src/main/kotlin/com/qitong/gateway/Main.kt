@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-1
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-2
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-1    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-2    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-1"))
+                put("version", JsonPrimitive("3.18.22-2"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -300,45 +300,54 @@ fun Application.moduleWeb(database: Database) {
         }
 
         // 服务商
-        get("/api/providers") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getProviders(database)) }
+        get("/api/providers") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getVisibleProviders(database, u)) }
         post("/api/providers") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
-            AdminApi.ok(call, mapOf("id" to AdminApi.saveProvider(database, body)), "保存成功")
+            val id = AdminApi.saveProvider(database, body, u)
+            if (id < 0) AdminApi.fail(call, "无权限管理该服务商", 403)
+            else AdminApi.ok(call, mapOf("id" to id), "保存成功")
         }
         delete("/api/providers/{id}") {
             val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
-            if (call.requireAuth(database) == null) return@delete
-            AdminApi.deleteProvider(database, id)
-            AdminApi.ok(call, null, "已删除")
+            val u = call.requireAuth(database) ?: return@delete
+            if (AdminApi.deleteProvider(database, id, u)) AdminApi.ok(call, null, "已删除")
+            else AdminApi.fail(call, "无权限删除该服务商", 403)
         }
         post("/api/providers/{id}/sync") {
             val id = call.parameters["id"]?.toLongOrNull() ?: return@post
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
+            val provider = database.getProviderById(id)
+            if (provider == null || (!AdminApi.canManageResource(u, AdminApi.Perm.P_MANAGE, provider.ownerId))) {
+                AdminApi.fail(call, "无权限同步该服务商", 403); return@post
+            }
             val count = AdminApi.syncProviderModels(database, id)
             if (count > 0) AdminApi.ok(call, mapOf("synced" to count), "同步成功 $count 个模型")
             else AdminApi.fail(call, "同步失败或没有新模型", 400)
         }
 
         // 模型
-        get("/api/models") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getModels(database)) }
+        get("/api/models") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getVisibleModels(database, u)) }
         post("/api/models") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
-            AdminApi.ok(call, mapOf("id" to AdminApi.saveModel(database, body)), "保存成功")
+            val id = AdminApi.saveModel(database, body, u)
+            if (id < 0) AdminApi.fail(call, "无权限管理该模型", 403)
+            else AdminApi.ok(call, mapOf("id" to id), "保存成功")
         }
         delete("/api/models/{id}") {
             val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
-            if (call.requireAuth(database) == null) return@delete
-            AdminApi.deleteModel(database, id)
-            AdminApi.ok(call, null, "已删除")
+            val u = call.requireAuth(database) ?: return@delete
+            if (AdminApi.deleteModel(database, id, u)) AdminApi.ok(call, null, "已删除")
+            else AdminApi.fail(call, "无权限删除该模型", 403)
         }
         // 模型启用/停用
         post("/api/models/toggle") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
             val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "模型ID无效", 400); return@post }
             val model = database.getModelById(id) ?: run { AdminApi.fail(call, "模型不存在", 404); return@post }
+            if (!AdminApi.canManageResource(u, AdminApi.Perm.M_MANAGE, model.ownerId)) { AdminApi.fail(call, "无权限操作该模型", 403); return@post }
             val newEnabled = body["enabled"]?.let {
                 when { it is JsonPrimitive && it.isString -> it.content == "true" || it.content == "1"; else -> !model.isEnabled }
             } ?: !model.isEnabled
@@ -347,7 +356,9 @@ fun Application.moduleWeb(database: Database) {
         }
         // 批量测速（原APP方式：逐个串行，通过自动启用，失败可选自动关闭）
         post("/api/speedtest/batch") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
+            // 系统级测速需权限：admin 或 system.speedtest
+            if (!AdminApi.hasPerm(u, AdminApi.Perm.SYS_SPEED)) { AdminApi.fail(call, "无权限执行全局测速", 403); return@post }
             val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
             val autoClose = body["autoClose"]?.let {
                 when { it is JsonPrimitive && it.isString -> it.content == "true" || it.content == "1"; else -> false }
@@ -357,21 +368,28 @@ fun Application.moduleWeb(database: Database) {
         }
         post("/api/models/sync/{providerId}") {
             val pid = call.parameters["providerId"]?.toLongOrNull() ?: return@post
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
+            val provider = database.getProviderById(pid)
+            if (provider == null || (!AdminApi.canManageResource(u, AdminApi.Perm.M_MANAGE, provider.ownerId))) {
+                AdminApi.fail(call, "无权限同步该模型", 403); return@post
+            }
             val count = AdminApi.syncProviderModels(database, pid)
             AdminApi.ok(call, mapOf("synced" to count), "同步完成")
         }
 
         // 测速
         post("/api/speedtest") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
+            if (!AdminApi.hasPerm(u, AdminApi.Perm.SYS_SPEED)) { AdminApi.fail(call, "无权限执行全局测速", 403); return@post }
             AdminApi.ok(call, AdminApi.speedTest(database), "测速完成")
         }
 
         // 配置
         get("/api/config") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getAllConfig(database)) }
         post("/api/config") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
+            // 修改系统配置需权限：admin 或 system.config
+            if (!AdminApi.hasPerm(u, AdminApi.Perm.SYS_CONFIG)) { AdminApi.fail(call, "无权限修改系统配置", 403); return@post }
             val body = call.receive<JsonObject>()
             AdminApi.setConfigs(database, body)
             AdminApi.ok(call, null, "已保存")
@@ -387,44 +405,46 @@ fun Application.moduleWeb(database: Database) {
         }
 
         // 密钥
-        get("/api/keys") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getApiKeys(database)) }
+        get("/api/keys") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getVisibleApiKeys(database, u)) }
         post("/api/keys") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
-            if (AdminApi.addApiKey(database, body)) AdminApi.ok(call, null, "添加成功")
+            if (AdminApi.addApiKey(database, body, u)) AdminApi.ok(call, null, "添加成功")
             else AdminApi.fail(call, "密钥已存在或无效", 400)
         }
         delete("/api/keys/{key}") {
             val key = call.parameters["key"] ?: return@delete
-            if (call.requireAuth(database) == null) return@delete
-            AdminApi.deleteApiKey(database, key)
-            AdminApi.ok(call, null, "已删除")
+            val u = call.requireAuth(database) ?: return@delete
+            if (AdminApi.deleteApiKey(database, key, u)) AdminApi.ok(call, null, "已删除")
+            else AdminApi.fail(call, "无权限删除该密钥", 403)
         }
 
         // 路由规则
-        get("/api/rules") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getRules(database)) }
+        get("/api/rules") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getVisibleRules(database, u)) }
         post("/api/rules") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
-            AdminApi.ok(call, mapOf("id" to AdminApi.saveRule(database, body)), "保存成功")
+            val id = AdminApi.saveRule(database, body, u)
+            if (id < 0) AdminApi.fail(call, "无权限管理该规则", 403)
+            else AdminApi.ok(call, mapOf("id" to id), "保存成功")
         }
         delete("/api/rules/{id}") {
             val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
-            if (call.requireAuth(database) == null) return@delete
-            AdminApi.deleteRule(database, id)
-            AdminApi.ok(call, null, "已删除")
+            val u = call.requireAuth(database) ?: return@delete
+            if (AdminApi.deleteRule(database, id, u)) AdminApi.ok(call, null, "已删除")
+            else AdminApi.fail(call, "无权限删除该规则", 403)
         }
 
-        // 用户
+        // 用户（admin 或 users.manage 权限）
         get("/api/users") {
             val u = call.requireAuth(database) ?: return@get
-            if (u.role != "admin") AdminApi.fail(call, "无权限", 403)
+            if (!AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) AdminApi.fail(call, "无权限", 403)
             else AdminApi.ok(call, AdminApi.getUsers(database))
         }
-        // 编辑用户（昵称/角色/额度/绑定模型/重置密码）
+        // 编辑用户（昵称/角色/额度/绑定模型/权限/重置密码）
         post("/api/users/update") {
-            val admin = call.requireAuth(database) ?: return@post
-            if (admin.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            val u = call.requireAuth(database) ?: return@post
+            if (!AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
             val body = call.receive<JsonObject>()
             val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: return@post
             val user = database.getUserById(userId) ?: run { AdminApi.fail(call, "用户不存在", 404); return@post }
@@ -435,7 +455,10 @@ fun Application.moduleWeb(database: Database) {
                 quotaUsed = body["quotaUsed"]?.jsonPrimitive?.content?.toLongOrNull() ?: user.quotaUsed,
                 bindModels = body["bindModels"]?.let {
                     try { kotlinx.serialization.json.Json.decodeFromString<List<String>>(it.toString()) } catch (_: Exception) { user.bindModels }
-                } ?: user.bindModels
+                } ?: user.bindModels,
+                permissions = body["permissions"]?.let {
+                    try { kotlinx.serialization.json.Json.decodeFromString<List<String>>(it.toString()) } catch (_: Exception) { user.permissions }
+                } ?: user.permissions
             )
             database.updateUser(updated)
             // 可选重置密码
@@ -448,11 +471,11 @@ fun Application.moduleWeb(database: Database) {
         }
         // 删除用户
         post("/api/users/delete") {
-            val admin = call.requireAuth(database) ?: return@post
-            if (admin.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            val u = call.requireAuth(database) ?: return@post
+            if (!AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
             val body = call.receive<JsonObject>()
             val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: return@post
-            if (userId == admin.id) { AdminApi.fail(call, "不能删除自己", 400); return@post }
+            if (userId == u.id) { AdminApi.fail(call, "不能删除自己", 400); return@post }
             database.deleteUser(userId)
             AdminApi.ok(call, null, "用户已删除")
         }
@@ -485,10 +508,11 @@ fun Application.moduleWeb(database: Database) {
         }
         // 密钥编辑（启用/停用/放模型）
         post("/api/keys/update") {
-            if (call.requireAuth(database) == null) return@post
+            val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
             val key = body["key"]?.jsonPrimitive?.content ?: run { AdminApi.fail(call, "密钥无效", 400); return@post }
             val entry = database.getApiKeys().find { it.key == key } ?: run { AdminApi.fail(call, "密钥不存在", 404); return@post }
+            if (!AdminApi.canManageResource(u, AdminApi.Perm.K_MANAGE, entry.ownerId)) { AdminApi.fail(call, "无权限编辑该密钥", 403); return@post }
             val updated = entry.copy(
                 label = body["label"]?.jsonPrimitive?.content ?: entry.label,
                 enabled = body["enabled"]?.let {
@@ -535,7 +559,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-1"))
+                    put("version", JsonPrimitive("3.18.22-2"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))

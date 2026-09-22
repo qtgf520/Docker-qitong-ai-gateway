@@ -15,7 +15,8 @@ data class Provider(
     val orderIndex: Int = 0,
     val chatPath: String? = null,          // e.g. /v1/chat/completions
     val supportsSystemRole: Boolean = false,
-    val customId: String = ""             // pID 自定义ID
+    val customId: String = "",             // pID 自定义ID
+    val ownerId: Long = 0                  // 0=系统资源, >0=用户私有
 ) {
     /** 合并端口后的完整 Base URL */
     val resolvedBaseUrl: String
@@ -39,7 +40,8 @@ data class AiModel(
     val isEnabled: Boolean = true,
     val customAlias: String = "",
     val useProxy: Boolean = true,
-    val contextWindow: Int = 4096
+    val contextWindow: Int = 4096,
+    val ownerId: Long = 0                  // 0=系统资源, >0=用户私有
 )
 
 /** 会话（对齐 conversations 表） */
@@ -107,7 +109,8 @@ data class RoutingRule(
     val targetModelKey: String = "",
     val action: String = "route",        // route / block
     val blockMessage: String = "",
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val ownerId: Long = 0                  // 0=系统资源, >0=用户私有
 )
 
 /** 后台用户表（新增） */
@@ -122,7 +125,8 @@ data class User(
     val lastLoginAt: Long = 0,
     val quotaLimit: Long = 0,           // 额度上限（token数，0=不限）
     val quotaUsed: Long = 0,            // 已用额度（token数）
-    val bindModels: List<String> = emptyList()   // 绑定模型ID列表（空=全部）
+    val bindModels: List<String> = emptyList(),   // 绑定模型ID列表（空=全部）
+    val permissions: List<String> = emptyList()    // 系统级权限位列表（空=普通用户仅私有资源）
 )
 
 /** 人格配置（对齐原APP人设系统） */
@@ -152,7 +156,8 @@ data class ApiKeyEntry(
     val enabled: Boolean = true,
     val allowedModels: List<String> = emptyList(),
     val qtaiSjAccess: Boolean = true,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val ownerId: Long = 0                  // 0=系统密钥, >0=用户私有
 )
 
 /** 网关配置项 */
@@ -167,7 +172,7 @@ data class GatewayConfig(
 data class GatewayStatus(
     val status: String = "ok",
     val service: String = "qitong-ai-gateway-docker",
-    val version: String = "3.18.22-1",
+    val version: String = "3.18.22-2",
     val running: Boolean = true,
     val port: Int,
     val failover: Boolean,

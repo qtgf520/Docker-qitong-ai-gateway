@@ -119,12 +119,12 @@ object AdminApi {
         ))
         else -> JsonPrimitive(data.toString())
     }
-
-    private fun providerToMap(p: Provider) = mapOf(
+private fun providerToMap(p: Provider) = mapOf(
         "id" to p.id, "name" to p.name, "type" to p.type, "baseUrl" to p.baseUrl,
         "port" to p.port, "apiKey" to (p.apiKey ?: ""), "isEnabled" to p.isEnabled,
         "orderIndex" to p.orderIndex, "chatPath" to (p.chatPath ?: ""),
-        "supportsSystemRole" to p.supportsSystemRole, "customId" to p.customId
+        "supportsSystemRole" to p.supportsSystemRole, "customId" to p.customId,
+        "ownerId" to p.ownerId
     )
 
     private fun modelToMap(m: AiModel) = mapOf(
@@ -132,29 +132,75 @@ object AdminApi {
         "displayName" to m.displayName, "isDefault" to m.isDefault,
         "syncStatus" to m.syncStatus, "isEnabled" to m.isEnabled,
         "customAlias" to m.customAlias, "useProxy" to m.useProxy,
-        "contextWindow" to m.contextWindow
+        "contextWindow" to m.contextWindow, "ownerId" to m.ownerId
     )
 
     private fun apiKeyToMap(k: ApiKeyEntry) = mapOf(
         "key" to k.key, "label" to k.label, "enabled" to k.enabled,
         "allowedModels" to k.allowedModels, "qtaiSjAccess" to k.qtaiSjAccess,
-        "createdAt" to k.createdAt
+        "createdAt" to k.createdAt, "ownerId" to k.ownerId
     )
 
     private fun ruleToMap(r: RoutingRule) = mapOf(
-        "id" to r.id, "name" to r.name, "enabled" to r.enabled, "priority" to r.priority,
+        "id" to r.id, "name" to r.name, "enabled" to r.enabled,
+        "priority" to r.priority,
         "pathPattern" to r.pathPattern, "modelPattern" to r.modelPattern,
         "apiKeyPattern" to r.apiKeyPattern, "providerId" to r.providerId,
         "targetModelKey" to r.targetModelKey, "action" to r.action,
-        "blockMessage" to r.blockMessage, "createdAt" to r.createdAt
+        "blockMessage" to r.blockMessage, "createdAt" to r.createdAt,
+        "ownerId" to r.ownerId
     )
 
-    // ============ 服务商 CRUD ============
+    // ============ 权限引擎（多租户 + 细粒度权限位） ============
 
-    fun getProviders(database: Database): List<Map<String, Any?>> = database.getProviders().map { providerToMap(it) }
+    /** 全部系统级权限位 */
+    object Perm {
+        const val P_MANAGE = "provider.manage"   // 管理服务商（含系统级）
+        const val M_MANAGE = "model.manage"      // 管理模型（含系统级）
+        const val SYS_CONFIG = "system.config"   // 修改网关设置
+        const val K_MANAGE = "keys.manage"       // 管理API密钥（含系统级）
+        const val R_MANAGE = "rules.manage"      // 管理路由规则（含系统级）
+        const val U_MANAGE = "users.manage"      // 用户管理
+        const val SYS_SPEED = "system.speedtest" // 全局测速（含强制池）
+        const val DATA_EXPORT = "data.export"    // 数据导出
+    }
 
-    fun saveProvider(database: Database, body: JsonObject): Long {
+    /** 判断用户是否拥有某系统级权限（admin 天然拥有全部） */
+    fun hasPerm(user: User, perm: String): Boolean =
+        user.role == "admin" || user.permissions.contains(perm)
+
+    /** 判断用户能否管理该资源（owner=0 表示系统资源） */
+    fun canManageResource(user: User, perm: String, ownerId: Long): Boolean {
+        if (user.role == "admin") return true
+        return if (ownerId == 0L) hasPerm(user, perm)
+        else ownerId == user.id
+    }
+
+    /** 解析 JSON 数组字段（如 bindModels/permissions） */
+    private fun parseStringList(element: JsonElement?): List<String> = try {
+        strictJson.decodeFromString<List<String>>(element.toString())
+    } catch (_: Exception) { emptyList() }
+
+    // ============ 服务商 CRUD（多租户） ============
+
+    /** 获取可见服务商：admin=全部；普通用户=系统+自己私有 */
+    fun getVisibleProviders(database: Database, user: User): List<Map<String, Any?>> {
+        if (user.role == "admin") return database.getProviders().map { providerToMap(it) }
+        return database.getVisibleProviders(user.id).map { providerToMap(it) }
+    }
+
+    fun saveProvider(database: Database, body: JsonObject, user: User): Long {
         val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
+        // owner 判定：新建设为当前用户私有（除非用户拥有 provider.manage 且显式声明 ownerId=0 才建系统资源）
+        val ownerId = if (id > 0) {
+            database.getProviderById(id)?.ownerId ?: user.id
+        } else if (hasPerm(user, Perm.P_MANAGE) && body["ownerId"]?.jsonPrimitive?.content?.toLongOrNull() == 0L) {
+            0L
+        } else {
+            user.id
+        }
+        // 权限校验：非 admin 只能管理自己 owner 的资源；系统资源需权限位
+        if (!canManageResource(user, Perm.P_MANAGE, ownerId)) return -1
         val p = Provider(
             id = id,
             name = body["name"]?.jsonPrimitive?.content ?: "",
@@ -166,7 +212,8 @@ object AdminApi {
             orderIndex = body["orderIndex"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
             chatPath = body["chatPath"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
             supportsSystemRole = body["supportsSystemRole"]?.let { parseBool(it) } ?: false,
-            customId = body["customId"]?.jsonPrimitive?.content ?: ""
+            customId = body["customId"]?.jsonPrimitive?.content ?: "",
+            ownerId = ownerId
         )
         return if (id > 0) {
             database.updateProvider(p); id
@@ -175,9 +222,12 @@ object AdminApi {
         }
     }
 
-    fun deleteProvider(database: Database, id: Long) {
+    fun deleteProvider(database: Database, id: Long, user: User): Boolean {
+        val existing = database.getProviderById(id) ?: return false
+        if (!canManageResource(user, Perm.P_MANAGE, existing.ownerId)) return false
         database.deleteModelsByProvider(id)
         database.deleteProvider(id)
+        return true
     }
 
     private fun parseBool(e: JsonElement): Boolean = when {
@@ -186,12 +236,26 @@ object AdminApi {
         else -> false
     }
 
-    // ============ 模型 CRUD ============
+    // ============ 模型 CRUD（多租户） ============
 
-    fun getModels(database: Database): List<Map<String, Any?>> = database.getModels().map { modelToMap(it) }
+    /** 获取可见模型：admin=全部；普通用户=系统+自己私有 */
+    fun getVisibleModels(database: Database, user: User): List<Map<String, Any?>> {
+        if (user.role == "admin") return database.getModels().map { modelToMap(it) }
+        return database.getVisibleModels(user.id).map { modelToMap(it) }
+    }
 
-    fun saveModel(database: Database, body: JsonObject): Long {
+    fun saveModel(database: Database, body: JsonObject, user: User): Long {
         val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
+        // owner 判定：新建模型归属=其服务商归属（模型从属于服务商）
+        val ownerId = if (id > 0) {
+            database.getModelById(id)?.ownerId ?: user.id
+        } else {
+            val providerId = body["providerId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
+            database.getProviderById(providerId)?.ownerId ?: run {
+                if (hasPerm(user, Perm.M_MANAGE) && body["ownerId"]?.jsonPrimitive?.content?.toLongOrNull() == 0L) 0L else user.id
+            }
+        }
+        if (!canManageResource(user, Perm.M_MANAGE, ownerId)) return -1
         val m = AiModel(
             id = id,
             providerId = body["providerId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0,
@@ -202,7 +266,8 @@ object AdminApi {
             isEnabled = body["isEnabled"]?.let { parseBool(it) } ?: true,
             customAlias = body["customAlias"]?.jsonPrimitive?.content ?: "",
             useProxy = body["useProxy"]?.let { parseBool(it) } ?: true,
-            contextWindow = body["contextWindow"]?.jsonPrimitive?.content?.toIntOrNull() ?: 4096
+            contextWindow = body["contextWindow"]?.jsonPrimitive?.content?.toIntOrNull() ?: 4096,
+            ownerId = ownerId
         )
         return if (id > 0) {
             database.updateModel(m); id
@@ -211,8 +276,19 @@ object AdminApi {
         }
     }
 
-    fun deleteModel(database: Database, id: Long) {
+    fun deleteModel(database: Database, id: Long, user: User): Boolean {
+        val existing = database.getModelById(id) ?: return false
+        if (!canManageResource(user, Perm.M_MANAGE, existing.ownerId)) return false
         database.deleteModel(id)
+        return true
+    }
+
+    /** 切换模型启停（对齐原APP toggleModel） */
+    fun toggleModel(database: Database, id: Long, user: User): Boolean? {
+        val model = database.getModelById(id) ?: return null
+        if (!canManageResource(user, Perm.M_MANAGE, model.ownerId)) return false
+        database.updateModel(model.copy(isEnabled = !model.isEnabled))
+        return model.isEnabled
     }
 
     /** 同步服务商模型列表（调上游 /v1/models） */
@@ -345,12 +421,17 @@ object AdminApi {
         put("pipelineSorted", JsonArray(GatewayScheduler.pipelineSortedModelKeys.map { JsonPrimitive(it) }))
     }
 
-    // ============ 密钥 ============
+    // ============ 密钥（多租户） ============
 
-    fun getApiKeys(database: Database): List<Map<String, Any?>> = database.getApiKeys().map { apiKeyToMap(it) }
+    fun getVisibleApiKeys(database: Database, user: User): List<Map<String, Any?>> {
+        if (user.role == "admin") return database.getApiKeys().map { apiKeyToMap(it) }
+        return database.getApiKeysByOwner(user.id).map { apiKeyToMap(it) }
+    }
 
-    fun addApiKey(database: Database, body: JsonObject): Boolean {
+    fun addApiKey(database: Database, body: JsonObject, user: User): Boolean {
         val key = body["key"]?.jsonPrimitive?.content ?: return false
+        // 系统密钥需 keys.manage 权限；否则归属当前用户
+        val ownerId = if (hasPerm(user, Perm.K_MANAGE) && body["ownerId"]?.jsonPrimitive?.content?.toLongOrNull() == 0L) 0L else user.id
         val e = ApiKeyEntry(
             key = key,
             label = body["label"]?.jsonPrimitive?.content ?: "",
@@ -358,21 +439,53 @@ object AdminApi {
             allowedModels = body["allowedModels"]?.let {
                 try { strictJson.decodeFromString<List<String>>(it.toString()) } catch (_: Exception) { emptyList() }
             } ?: emptyList(),
-            qtaiSjAccess = body["qtaiSjAccess"]?.let { parseBool(it) } ?: true
+            qtaiSjAccess = body["qtaiSjAccess"]?.let { parseBool(it) } ?: true,
+            ownerId = ownerId
         )
         return database.addApiKey(e)
     }
 
-    fun deleteApiKey(database: Database, key: String) {
+    fun deleteApiKey(database: Database, key: String, user: User): Boolean {
+        val existing = database.getApiKeys().firstOrNull { it.key == key } ?: return false
+        if (!canManageResource(user, Perm.K_MANAGE, existing.ownerId)) return false
         database.deleteApiKey(key)
+        return true
     }
 
-    // ============ 路由规则 ============
+    fun updateApiKey(database: Database, body: JsonObject, user: User): Boolean {
+        val key = body["key"]?.jsonPrimitive?.content ?: return false
+        val existing = database.getApiKeys().firstOrNull { it.key == key } ?: return false
+        if (!canManageResource(user, Perm.K_MANAGE, existing.ownerId)) return false
+        val e = ApiKeyEntry(
+            key = key,
+            label = body["label"]?.jsonPrimitive?.content ?: existing.label,
+            enabled = body["enabled"]?.let { parseBool(it) } ?: existing.enabled,
+            allowedModels = body["allowedModels"]?.let {
+                try { strictJson.decodeFromString<List<String>>(it.toString()) } catch (_: Exception) { existing.allowedModels }
+            } ?: existing.allowedModels,
+            qtaiSjAccess = body["qtaiSjAccess"]?.let { parseBool(it) } ?: existing.qtaiSjAccess,
+            ownerId = existing.ownerId
+        )
+        return database.updateApiKey(e)
+    }
 
-    fun getRules(database: Database): List<Map<String, Any?>> = database.getRoutingRules().map { ruleToMap(it) }
+    // ============ 路由规则（多租户） ============
 
-    fun saveRule(database: Database, body: JsonObject): Long {
+    fun getVisibleRules(database: Database, user: User): List<Map<String, Any?>> {
+        if (user.role == "admin") return database.getRoutingRules().map { ruleToMap(it) }
+        return database.getVisibleRoutingRules(user.id).map { ruleToMap(it) }
+    }
+
+    fun saveRule(database: Database, body: JsonObject, user: User): Long {
         val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
+        val ownerId = if (id > 0) {
+            database.getRoutingRules().firstOrNull { it.id == id }?.ownerId ?: user.id
+        } else if (hasPerm(user, Perm.R_MANAGE) && body["ownerId"]?.jsonPrimitive?.content?.toLongOrNull() == 0L) {
+            0L
+        } else {
+            user.id
+        }
+        if (!canManageResource(user, Perm.R_MANAGE, ownerId)) return -1
         val r = RoutingRule(
             id = id,
             name = body["name"]?.jsonPrimitive?.content ?: "新规则",
@@ -384,7 +497,8 @@ object AdminApi {
             providerId = body["providerId"]?.jsonPrimitive?.content?.toLongOrNull(),
             targetModelKey = body["targetModelKey"]?.jsonPrimitive?.content ?: "",
             action = body["action"]?.jsonPrimitive?.content ?: "route",
-            blockMessage = body["blockMessage"]?.jsonPrimitive?.content ?: ""
+            blockMessage = body["blockMessage"]?.jsonPrimitive?.content ?: "",
+            ownerId = ownerId
         )
         return if (id > 0) {
             // 更新逻辑：删除重建
@@ -395,8 +509,11 @@ object AdminApi {
         }
     }
 
-    fun deleteRule(database: Database, id: Long) {
+    fun deleteRule(database: Database, id: Long, user: User): Boolean {
+        val existing = database.getRoutingRules().firstOrNull { it.id == id } ?: return false
+        if (!canManageResource(user, Perm.R_MANAGE, existing.ownerId)) return false
         database.deleteRoutingRule(id)
+        return true
     }
 
     // ============ 用户管理 ============
@@ -405,7 +522,8 @@ object AdminApi {
         mapOf(
             "id" to it.id, "username" to it.username, "role" to it.role,
             "displayName" to it.displayName, "createdAt" to it.createdAt, "lastLoginAt" to it.lastLoginAt,
-            "quotaLimit" to it.quotaLimit, "quotaUsed" to it.quotaUsed, "bindModels" to it.bindModels
+            "quotaLimit" to it.quotaLimit, "quotaUsed" to it.quotaUsed, "bindModels" to it.bindModels,
+            "permissions" to it.permissions
         )
     }
 

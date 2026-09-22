@@ -161,10 +161,12 @@ class Database(private val dbPath: String) {
                     bind_models TEXT NOT NULL DEFAULT '[]'
                 )"""
             )
-            // 兼容旧库：补齐额度字段列
-            try { st.executeUpdate("ALTER TABLE users ADD COLUMN quota_limit INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
-            try { st.executeUpdate("ALTER TABLE users ADD COLUMN quota_used INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
-            try { st.executeUpdate("ALTER TABLE users ADD COLUMN bind_models TEXT NOT NULL DEFAULT '[]'") } catch (_: Exception) {}
+            // 兼容旧库：补齐 owner_id（0=系统资源，>0=用户私有）与权限列
+            try { st.executeUpdate("ALTER TABLE providers ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE models ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE routing_rule ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE api_keys ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'") } catch (_: Exception) {}
             // 人格配置表（对齐原APP人设系统）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS persona (
@@ -260,7 +262,8 @@ class Database(private val dbPath: String) {
         orderIndex = (r["order_index"] as? Number)?.toInt() ?: 0,
         chatPath = r["chat_path"] as? String,
         supportsSystemRole = (r["supports_system_role"] as? Number)?.toInt() == 1,
-        customId = r["custom_id"] as? String ?: ""
+        customId = r["custom_id"] as? String ?: "",
+        ownerId = (r["owner_id"] as? Number)?.toLong() ?: 0
     )
 
     private fun rowToModel(r: Map<String, Any?>) = AiModel(
@@ -273,7 +276,8 @@ class Database(private val dbPath: String) {
         isEnabled = (r["is_enabled"] as? Number)?.toInt() == 1,
         customAlias = r["custom_alias"] as? String ?: "",
         useProxy = (r["use_proxy"] as? Number)?.toInt() == 1,
-        contextWindow = (r["context_window"] as? Number)?.toInt() ?: 4096
+        contextWindow = (r["context_window"] as? Number)?.toInt() ?: 4096,
+        ownerId = (r["owner_id"] as? Number)?.toLong() ?: 0
     )
 
     private fun rowToRoute(r: Map<String, Any?>) = RoutingRule(
@@ -288,7 +292,8 @@ class Database(private val dbPath: String) {
         targetModelKey = r["target_model_key"] as? String ?: "",
         action = r["action"] as? String ?: "route",
         blockMessage = r["block_message"] as? String ?: "",
-        createdAt = (r["created_at"] as? Number)?.toLong() ?: 0
+        createdAt = (r["created_at"] as? Number)?.toLong() ?: 0,
+        ownerId = (r["owner_id"] as? Number)?.toLong() ?: 0
     )
 
     // ============ 服务商 ============
@@ -301,22 +306,30 @@ class Database(private val dbPath: String) {
 
     fun addProvider(p: Provider): Long {
         stmt(
-            "INSERT INTO providers (name,type,base_url,port,api_key,is_enabled,order_index,chat_path,supports_system_role,custom_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            p.name, p.type, p.baseUrl, p.port, p.apiKey, if (p.isEnabled) 1 else 0, p.orderIndex, p.chatPath, if (p.supportsSystemRole) 1 else 0, p.customId
+            "INSERT INTO providers (name,type,base_url,port,api_key,is_enabled,order_index,chat_path,supports_system_role,custom_id,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            p.name, p.type, p.baseUrl, p.port, p.apiKey, if (p.isEnabled) 1 else 0, p.orderIndex, p.chatPath, if (p.supportsSystemRole) 1 else 0, p.customId, p.ownerId
         )
         return lastInsertId()
     }
 
     fun updateProvider(p: Provider) {
         stmt(
-            "UPDATE providers SET name=?,type=?,base_url=?,port=?,api_key=?,is_enabled=?,order_index=?,chat_path=?,supports_system_role=?,custom_id=? WHERE id=?",
-            p.name, p.type, p.baseUrl, p.port, p.apiKey, if (p.isEnabled) 1 else 0, p.orderIndex, p.chatPath, if (p.supportsSystemRole) 1 else 0, p.customId, p.id
+            "UPDATE providers SET name=?,type=?,base_url=?,port=?,api_key=?,is_enabled=?,order_index=?,chat_path=?,supports_system_role=?,custom_id=?,owner_id=? WHERE id=?",
+            p.name, p.type, p.baseUrl, p.port, p.apiKey, if (p.isEnabled) 1 else 0, p.orderIndex, p.chatPath, if (p.supportsSystemRole) 1 else 0, p.customId, p.ownerId, p.id
         )
     }
 
     fun deleteProvider(id: Long) {
         stmt("DELETE FROM providers WHERE id=?", id)
     }
+
+    /** 仅获取某用户私有服务商 */
+    fun getProvidersByOwner(ownerId: Long): List<Provider> =
+        query("SELECT * FROM providers WHERE owner_id=? ORDER BY order_index", ownerId).map { rowToProvider(it) }
+
+    /** 系统资源 + 某用户私有资源 */
+    fun getVisibleProviders(ownerId: Long): List<Provider> =
+        query("SELECT * FROM providers WHERE owner_id=0 OR owner_id=? ORDER BY order_index", ownerId).map { rowToProvider(it) }
 
     private fun lastInsertId(): Long {
         return queryOne("SELECT last_insert_rowid()") ?: 0
@@ -336,18 +349,22 @@ class Database(private val dbPath: String) {
     fun getModelByKey(providerId: Long, modelId: String): AiModel? =
         query("SELECT * FROM models WHERE provider_id=? AND model_id=?", providerId, modelId).firstOrNull()?.let { rowToModel(it) }
 
+    /** 系统资源 + 某用户私有资源 */
+    fun getVisibleModels(ownerId: Long): List<AiModel> =
+        query("SELECT * FROM models WHERE owner_id=0 OR owner_id=? ORDER BY id", ownerId).map { rowToModel(it) }
+
     fun addModel(m: AiModel): Long {
         stmt(
-            "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window) VALUES (?,?,?,?,?,?,?,?,?)",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow
+            "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId
         )
         return lastInsertId()
     }
 
     fun updateModel(m: AiModel) {
         stmt(
-            "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=? WHERE id=?",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.id
+            "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=?,owner_id=? WHERE id=?",
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, m.id
         )
     }
 
@@ -481,10 +498,13 @@ class Database(private val dbPath: String) {
     fun getRoutingRules(): List<RoutingRule> =
         query("SELECT * FROM routing_rule ORDER BY priority DESC").map { rowToRoute(it) }
 
+    fun getVisibleRoutingRules(ownerId: Long): List<RoutingRule> =
+        query("SELECT * FROM routing_rule WHERE owner_id=0 OR owner_id=? ORDER BY priority DESC", ownerId).map { rowToRoute(it) }
+
     fun addRoutingRule(r: RoutingRule): Long {
         stmt(
-            "INSERT INTO routing_rule (name,enabled,priority,path_pattern,model_pattern,api_key_pattern,provider_id,target_model_key,action,block_message,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            r.name, if (r.enabled) 1 else 0, r.priority, r.pathPattern, r.modelPattern, r.apiKeyPattern, r.providerId, r.targetModelKey, r.action, r.blockMessage, r.createdAt
+            "INSERT INTO routing_rule (name,enabled,priority,path_pattern,model_pattern,api_key_pattern,provider_id,target_model_key,action,block_message,created_at,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            r.name, if (r.enabled) 1 else 0, r.priority, r.pathPattern, r.modelPattern, r.apiKeyPattern, r.providerId, r.targetModelKey, r.action, r.blockMessage, r.createdAt, r.ownerId
         )
         return lastInsertId()
     }
@@ -502,9 +522,9 @@ class Database(private val dbPath: String) {
         query("SELECT * FROM users WHERE id=?", id).firstOrNull()?.let { rowToUser(it) }
 
     fun getUsers(): List<User> =
-        query("SELECT id,username,role,display_name,created_at,last_login_at,quota_limit,quota_used,bind_models FROM users ORDER BY id").map { rowToUser(it) }
+        query("SELECT * FROM users ORDER BY id").map { rowToUser(it) }
 
-    /** 行转User（含额度/绑定模型） */
+    /** 行转User（含额度/绑定模型/权限） */
     private fun rowToUser(it: Map<String, Any?>): User = User(
         id = (it["id"] as Number).toLong(),
         username = it["username"] as? String ?: "",
@@ -517,6 +537,9 @@ class Database(private val dbPath: String) {
         quotaUsed = (it["quota_used"] as? Number)?.toLong() ?: 0,
         bindModels = try {
             kotlinx.serialization.json.Json.decodeFromString<List<String>>(it["bind_models"] as? String ?: "[]")
+        } catch (_: Exception) { emptyList() },
+        permissions = try {
+            kotlinx.serialization.json.Json.decodeFromString<List<String>>(it["permissions"] as? String ?: "[]")
         } catch (_: Exception) { emptyList() }
     )
 
@@ -540,12 +563,13 @@ class Database(private val dbPath: String) {
         stmt("DELETE FROM users WHERE id=?", id)
     }
 
-    /** 更新用户资料（昵称/角色/额度/绑定模型） */
+    /** 更新用户资料（昵称/角色/额度/绑定模型/权限） */
     fun updateUser(user: User) {
         val bindModels = kotlinx.serialization.json.Json.encodeToString(user.bindModels)
+        val permissions = kotlinx.serialization.json.Json.encodeToString(user.permissions)
         stmt(
-            "UPDATE users SET role=?, display_name=?, quota_limit=?, quota_used=?, bind_models=? WHERE id=?",
-            user.role, user.displayName, user.quotaLimit, user.quotaUsed, bindModels, user.id
+            "UPDATE users SET role=?, display_name=?, quota_limit=?, quota_used=?, bind_models=?, permissions=? WHERE id=?",
+            user.role, user.displayName, user.quotaLimit, user.quotaUsed, bindModels, permissions, user.id
         )
     }
 
@@ -620,24 +644,28 @@ class Database(private val dbPath: String) {
     // ============ API 密钥 ============
 
     fun getApiKeys(): List<ApiKeyEntry> =
-        query("SELECT * FROM api_keys ORDER BY created_at").map {
-            ApiKeyEntry(
-                key = it["key"] as? String ?: "",
-                label = it["label"] as? String ?: "",
-                enabled = (it["enabled"] as? Number)?.toInt() == 1,
-                allowedModels = (it["allowed_models"] as? String ?: "[]").let { s ->
-                    try { kotlinx.serialization.json.Json.decodeFromString<List<String>>(s) } catch (_: Exception) { emptyList() }
-                },
-                qtaiSjAccess = (it["qtai_sj_access"] as? Number)?.toInt() == 1,
-                createdAt = (it["created_at"] as? Number)?.toLong() ?: 0
-            )
-        }
+        query("SELECT * FROM api_keys ORDER BY created_at").map { rowToApiKey(it) }
+
+    fun getApiKeysByOwner(ownerId: Long): List<ApiKeyEntry> =
+        query("SELECT * FROM api_keys WHERE owner_id=0 OR owner_id=? ORDER BY created_at", ownerId).map { rowToApiKey(it) }
+
+    private fun rowToApiKey(it: Map<String, Any?>): ApiKeyEntry = ApiKeyEntry(
+        key = it["key"] as? String ?: "",
+        label = it["label"] as? String ?: "",
+        enabled = (it["enabled"] as? Number)?.toInt() == 1,
+        allowedModels = (it["allowed_models"] as? String ?: "[]").let { s ->
+            try { kotlinx.serialization.json.Json.decodeFromString<List<String>>(s) } catch (_: Exception) { emptyList() }
+        },
+        qtaiSjAccess = (it["qtai_sj_access"] as? Number)?.toInt() == 1,
+        createdAt = (it["created_at"] as? Number)?.toLong() ?: 0,
+        ownerId = (it["owner_id"] as? Number)?.toLong() ?: 0
+    )
 
     fun addApiKey(e: ApiKeyEntry): Boolean {
         val exists = queryOne("SELECT COUNT(*) FROM api_keys WHERE key=?", e.key) ?: 0
         if (exists > 0) return false
         val allowed = kotlinx.serialization.json.Json.encodeToString(e.allowedModels)
-        stmt("INSERT INTO api_keys (key,label,enabled,allowed_models,qtai_sj_access,created_at) VALUES (?,?,?,?,?,?)", e.key, e.label, if (e.enabled) 1 else 0, allowed, if (e.qtaiSjAccess) 1 else 0, e.createdAt)
+        stmt("INSERT INTO api_keys (key,label,enabled,allowed_models,qtai_sj_access,created_at,owner_id) VALUES (?,?,?,?,?,?,?)", e.key, e.label, if (e.enabled) 1 else 0, allowed, if (e.qtaiSjAccess) 1 else 0, e.createdAt, e.ownerId)
         return true
     }
 
@@ -649,7 +677,7 @@ class Database(private val dbPath: String) {
         val exists = queryOne("SELECT COUNT(*) FROM api_keys WHERE key=?", e.key) ?: 0
         if (exists == 0L) return false
         val allowed = kotlinx.serialization.json.Json.encodeToString(e.allowedModels)
-        stmt("UPDATE api_keys SET label=?,enabled=?,allowed_models=?,qtai_sj_access=? WHERE key=?", e.label, if (e.enabled) 1 else 0, allowed, if (e.qtaiSjAccess) 1 else 0, e.key)
+        stmt("UPDATE api_keys SET label=?,enabled=?,allowed_models=?,qtai_sj_access=?,owner_id=? WHERE key=?", e.label, if (e.enabled) 1 else 0, allowed, if (e.qtaiSjAccess) 1 else 0, e.ownerId, e.key)
         return true
     }
 
