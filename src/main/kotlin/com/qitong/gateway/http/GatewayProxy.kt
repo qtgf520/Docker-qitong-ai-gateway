@@ -301,41 +301,33 @@ class GatewayProxy(private val database: Database) {
             var totalTokens = 0
 
             if (stream && respContentType.contains("text/event-stream")) {
-                // ★ 流式 SSE 透传 ★
-                val usageBox = IntArray(3) // prompt, completion, total
+                // ★ 流式 SSE 透传（字节流直通，最稳；对端断流不抛异常） ★
                 call.response.headers.append("Content-Type", "text/event-stream; charset=utf-8")
                 call.response.headers.append("Cache-Control", "no-cache")
                 call.response.headers.append("Connection", "keep-alive")
-                call.respondBytesWriter(ContentType.Text.EventStream, HttpStatusCode.OK) {
-                    val source = response.body?.source()
-                    if (source != null) {
-                        // 逐行读取以便统计字节 + 抠出 usage
-                        val reader = source.buffer()
-                        while (true) {
-                            val line = reader.readUtf8Line() ?: break
-                            val lineBytes = line.toByteArray(Charsets.UTF_8).size + 1
-                            writeFully(line.toByteArray(Charsets.UTF_8))
-                            writeFully(byteArrayOf('\n'.code.toByte()))
-                            flush()
-                            downloadBytes += lineBytes
-                            if (line.startsWith("data:")) {
-                                val data = line.removePrefix("data:").trim()
-                                if (data != "[DONE]") {
-                                    try {
-                                        val jobj = org.json.JSONObject(data)
-                                        val usage = jobj.optJSONObject("usage")
-                                        if (usage != null) {
-                                            usageBox[0] = usage.optInt("prompt_tokens", usageBox[0])
-                                            usageBox[1] = usage.optInt("completion_tokens", usageBox[1])
-                                            usageBox[2] = usage.optInt("total_tokens", usageBox[2])
-                                        }
-                                    } catch (_: Exception) {}
+                try {
+                    call.respondBytesWriter(ContentType.Text.EventStream, HttpStatusCode.OK) {
+                        val source = response.body?.source()
+                        if (source != null) {
+                            val buf = ByteArray(8192)
+                            var n: Int
+                            while (true) {
+                                n = runCatching { source.read(buf) }.getOrNull() ?: -1
+                                if (n < 0) break
+                                if (n > 0) {
+                                    runCatching { writeFully(buf, 0, n); flush() }
+                                    downloadBytes += n
                                 }
                             }
                         }
                     }
+                } catch (e: Exception) {
+                    // 客户端断开不影响上游标记成功（已完成内容已推流）
                 }
-                promptTokens = usageBox[0]; completionTokens = usageBox[1]; totalTokens = usageBox[2]
+                // 用量估算：取 ContentLength，避免 error
+                if (downloadBytes == 0L) {
+                    downloadBytes = (response.body?.contentLength() ?: 0L).takeIf { it > 0 } ?: 0L
+                }
                 recordTraffic(download = downloadBytes)
             } else {
                 val respBody = response.body?.string() ?: "{}"

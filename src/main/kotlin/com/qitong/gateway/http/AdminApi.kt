@@ -690,8 +690,10 @@ private fun providerToMap(p: Provider) = mapOf(
     /** 内置聊天：调用网关转发并保存消息（按用户隔离 + 人格注入） */
     suspend fun chat(database: Database, body: JsonObject, user: User?): Map<String, Any?> {
         val userId = user?.id ?: 0
-        val conversationId = body["conversationId"]?.jsonPrimitive?.content?.toLongOrNull()
-            ?: database.addConversation("新对话", userId)
+        // conversationId<=0 时新建会话（避免外键约束失败）
+        val rawConvId = body["conversationId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
+        val conversationId = if (rawConvId > 0 && database.getConversationById(rawConvId) != null) rawConvId
+            else database.addConversation("新对话", userId)
         val userContent = body["content"]?.jsonPrimitive?.content ?: ""
         val modelId = body["model"]?.jsonPrimitive?.content ?: ""
         val stream = body["stream"]?.let { parseBool(it) } ?: false
