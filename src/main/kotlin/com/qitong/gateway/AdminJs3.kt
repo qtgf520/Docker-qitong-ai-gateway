@@ -152,15 +152,17 @@ loaders.usage = function(){
 loaders.settings = function(){
   var box = $('view-settings');
   box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
-  api('/api/config').then(function(r){
+  api('/api/auth/me').then(function(me){
+    var isAdmin = me && me.code === 0 && me.data && me.data.role === 'admin';
+    api('/api/config').then(function(r){
     var cfg = r.data || {};
     box.innerHTML = [
-      '<div class="card"><h3>⚙️ 网关设置</h3>',
-      '<div class="form-row"><label><input type="checkbox" id="cfgRequireKey"'+(cfg.require_api_key==='true'?' checked':'')+'> 启用API密钥校验</label><small style="color:var(--muted);display:block;margin-top:4px">开启后本地除外，第三方请求需携带有效密钥</small></div>',
-      '<div class="form-row"><label><input type="checkbox" id="cfgFailover"'+(cfg.auto_failover!=='false'?' checked':'')+'> 启用自动故障转移</label><small style="color:var(--muted);display:block;margin-top:4px">模型失败时自动切换池内下一个可用模型</small></div>',
-      '<div class="form-row"><label>活跃模型Key（qtai-sj 解析目标）</label><input id="cfgActive" class="input" value="'+esc(cfg.active_model_key||'')+'" placeholder="如 1::gpt-4o"></div>',
-      '<div class="form-row"><label>强制故障池（逗号分隔）</label><input id="cfgPool" class="input" value="'+esc(cfg.forced_pool_keys||'')+'" placeholder="如 1::gpt-4o,1::gpt-3.5-turbo"></div>',
-      '<button class="btn" onclick="saveSettings()">保存设置</button>',
+      (isAdmin ? '<div class="card"><h3>⚙️ 网关设置</h3>' +
+      '<div class="form-row"><label><input type="checkbox" id="cfgRequireKey"'+(cfg.require_api_key==='true'?' checked':'')+'> 启用API密钥校验</label><small style="color:var(--muted);display:block;margin-top:4px">开启后本地除外，第三方请求需携带有效密钥</small></div>' +
+      '<div class="form-row"><label><input type="checkbox" id="cfgFailover"'+(cfg.auto_failover!=='false'?' checked':'')+'> 启用自动故障转移</label><small style="color:var(--muted);display:block;margin-top:4px">模型失败时自动切换池内下一个可用模型</small></div>' +
+      '<div class="form-row"><label>活跃模型Key（qtai-sj 解析目标）</label><input id="cfgActive" class="input" value="'+esc(cfg.active_model_key||'')+'" placeholder="如 1::gpt-4o"></div>' +
+      '<div class="form-row"><label>强制故障池（逗号分隔）</label><input id="cfgPool" class="input" value="'+esc(cfg.forced_pool_keys||'')+'" placeholder="如 1::gpt-4o,1::gpt-3.5-turbo"></div>' +
+      '<button class="btn" onclick="saveSettings()">保存设置</button></div>' : '') +
 '<div class="card"><h3>🧠 个人人格配置</h3><small style="color:var(--muted);display:block;margin-bottom:12px">让 qtai-sj 回复时带上你设定的人设（按用户独立存储）</small>',
       '<div class="form-row"><label>名字</label><input id="psName" class="input" placeholder="如：綦小桐"></div>',
       '<div class="form-row"><label>年龄</label><input id="psAge" class="input" placeholder="如：18岁"></div>',
@@ -183,6 +185,7 @@ loaders.settings = function(){
       '</div>',
       '<div class="card" id="distCard"><h3>💎 分销中心</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
       '<div class="card" id="memCard"><h3>🧠 大脑记忆</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+      '<div class="card" id="memCfgCard"><h3>🧠 记忆配置</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
       '<div class="card" id="brainCard"><h3>🧩 qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
       '<div class="card" id="langCard"><h3>🌐 界面语言</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
       '<div class="card" id="bakCard"><h3>💾 数据备份/恢复</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
@@ -214,6 +217,26 @@ loaders.settings = function(){
           mc.innerHTML = '<h3>🧠 大脑记忆 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="addMemory()">＋ 添加</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="clearMemories()">清空</button></h3>' +
             '<div class="table-wrap"><table><thead><tr><th>标题</th><th>内容</th><th>情感</th><th>重要</th><th>时间</th><th>操作</th></tr></thead><tbody>' +
             rows + '<tr><td colspan="6" style="text-align:center;color:var(--muted)">' + (mems.length ? '' : '暂无记忆') + '</td></tr></tbody></table></div>';
+        }
+      }
+    });
+    // 记忆配置（模型独立记忆开关，对齐原APP MemoryConfig）
+    api('/api/memory/config').then(function(cr){
+      if(cr && cr.code === 0){
+        var c = cr.data || {};
+        var cc = $('memCfgCard');
+        if(cc){
+          cc.innerHTML = '<h3>🧠 记忆配置</h3>' +
+            '<div class="form-row"><label><input type="checkbox" id="mcEnabled"'+(c.enabled?' checked':'')+'> 启用记忆系统</label></div>' +
+            '<div class="form-row"><label><input type="checkbox" id="mcIndependent"'+(c.modelIndependent?' checked':'')+'> 模型独立记忆</label><small style="color:var(--muted);display:block;margin-top:4px">开启后各模型记忆互相隔离，模型间互不干扰（对齐原APP）</small></div>' +
+            '<div class="form-row"><label>保存模式</label><select id="mcMode" class="input"><option value="frequent"'+(c.saveMode==='frequent'?' selected':'')+'>频繁保存</option><option value="normal"'+(c.saveMode==='normal'||!c.saveMode?' selected':'')+'>正常保存</option><option value="occasional"'+(c.saveMode==='occasional'?' selected':'')+'>偶尔保存</option></select></div>' +
+            '<div class="form-row"><label>共情力(1-10)：<b id="mcEmpV">'+(c.empathyLevel||8)+'</b></label><input id="mcEmp" type="range" min="1" max="10" value="'+(c.empathyLevel||8)+'" style="width:200px" oninput="$(\'mcEmpV\').textContent=this.value"></div>' +
+            '<div class="form-row"><label>思考深度(1-5)：<b id="mcThinkV">'+(c.thinkingDepth||3)+'</b></label><input id="mcThink" type="range" min="1" max="5" value="'+(c.thinkingDepth||3)+'" style="width:200px" oninput="$(\'mcThinkV\').textContent=this.value"></div>' +
+            '<div class="form-row"><label>口头禅（逗号分隔）</label><input id="mcCatch" class="input" value="'+esc(c.catchphrases||'')+'" placeholder="好嘞~,搞定了！"></div>' +
+            '<div class="form-row"><label>禁用词（逗号分隔）</label><input id="mcForbid" class="input" value="'+esc(c.forbiddenWords||'')+'" placeholder="作为一个AI,AI语言模型"></div>' +
+            '<div class="form-row"><label>专业领域</label><input id="mcExpert" class="input" value="'+esc(c.expertise||'全栈通用')+'"></div>' +
+            '<div class="form-row"><label>沟通风格</label><input id="mcStyle" class="input" value="'+esc(c.communicationStyle||'自然亲切、像朋友聊天')+'"></div>' +
+            '<button class="btn" onclick="saveMemoryCfg()">保存记忆配置</button>';
         }
       }
     });
@@ -270,7 +293,7 @@ loaders.settings = function(){
           var rows = (skills || []).map(function(s,i){
             return '<tr><td>'+(i+1)+'</td><td>'+esc(s.name||'')+'</td><td>'+esc(s.description||'')+'</td><td>' + ((s.triggers||[]).length ? '<span class="badge purple">'+esc((s.triggers||[]).join('、'))+'</span>' : '') + '</td><td><button class="btn-ghost" style="color:var(--red)" onclick="delSkill('+i+')">删</button></td></tr>';
           }).join('');
-          sc.innerHTML = '<h3>🧰 自定义技能 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="addSkill()">＋ 添加</button></h3>' +
+          sc.innerHTML = '<h3>🧰 自定义技能 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="addSkill()">＋ 添加</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="importSkillFromGit()">📥 Git导入</button></h3>' +
             '<div class="table-wrap"><table><thead><tr><th>#</th><th>名称</th><th>描述</th><th>触发词</th><th>操作</th></tr></thead><tbody>' +
             rows + '<tr><td colspan="5" style="text-align:center;color:var(--muted)">' + ((skills||[]).length ? '' : '暂无自定义技能，点击＋添加') + '</td></tr></tbody></table></div>' +
             '<small style="color:var(--muted)">自定义技能会注入大脑，命中触发词时 AI 按你的描述自动执行（按用户独立存储）</small>';
@@ -296,6 +319,7 @@ loaders.settings = function(){
     });
     // 滑块实时显示
     ['psO','psC','psE','psA','psN'].forEach(function(id){ $('view-settings').querySelector('#'+id).addEventListener('input', function(){ $(''+id+'v').textContent = this.value; }); });
+  });
   });
 };
 window.savePersona = function(){
@@ -342,6 +366,22 @@ window.saveBrain = function(){
 window.saveLang = function(){
   var lang = $('langSel').value;
   api('/api/me/language', { method:'POST', body: { language: lang } }).then(function(r){
+    if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
+  });
+};
+window.saveMemoryCfg = function(){
+  var body = {
+    enabled: $('mcEnabled').checked ? 'true' : 'false',
+    saveMode: $('mcMode').value,
+    empathyLevel: $('mcEmp').value,
+    thinkingDepth: $('mcThink').value,
+    catchphrases: $('mcCatch').value.trim(),
+    forbiddenWords: $('mcForbid').value.trim(),
+    expertise: $('mcExpert').value.trim(),
+    communicationStyle: $('mcStyle').value.trim(),
+    modelIndependent: $('mcIndependent').checked ? 'true' : 'false'
+  };
+  api('/api/memory/config', { method:'POST', body: body }).then(function(r){
     if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
   });
 };
@@ -397,6 +437,16 @@ window.delSkill = function(idx){
   if(!confirm('删除该技能？')) return;
   api('/api/skills/' + idx, { method:'DELETE' }).then(function(r){
     if(r.code === 0){ toast('✅ 已删除', true); loaders.settings(); } else toast(r.msg, false);
+  });
+};
+window.importSkillFromGit = function(){
+  openModal('Git/URL 导入技能', '<div class="form-row"><label>技能文件 URL</label><input id="skUrl" class="input" placeholder="https://raw.githubusercontent.com/xxx/skills.json 或任意 JSON 技能地址"></div><small style="color:var(--muted)">支持 Git raw 链接或任意返回 JSON 数组的技能地址（每项含 name/description/triggers）</small>', function(){
+    var url = $('skUrl').value.trim();
+    if(!url){ toast('请输入URL', false); return; }
+    toast('⏳ 正在导入...', true);
+    api('/api/skills/import', { method:'POST', body: { url: url } }).then(function(r){
+      if(r.code === 0){ toast('✅ ' + r.msg, true); closeModal(); loaders.settings(); } else toast(r.msg, false);
+    });
   });
 };
 window.changePassword = function(){
@@ -513,10 +563,166 @@ window.delUser = function(id){
     if(r.code === 0){ toast('✅ ' + r.msg, true); loaders.users(); } else toast(r.msg, false);
   });
 };
+// ===== 工单中心（用户提交，管理员反馈，聊天式） =====
+var currentTicketId = 0;
+loaders.tickets = function(){
+  var box = $('view-tickets');
+  box.innerHTML = '<div class="action-bar"><button class="btn" onclick="openNewTicket()">🎫 提交新工单</button><span style="color:var(--muted);font-size:13px">遇到问题提交工单，管理员会尽快回复</span></div><div class="card" id="ticketListCard"><div style="text-align:center;color:var(--muted);padding:30px">加载中...</div></div>';
+  api('/api/tickets').then(function(r){
+    if(r.code !== 0){ toast(r.msg, false); return; }
+    var list = r.data || [];
+    var rows = list.map(function(t){
+      var badge = t.status === 'open' ? '<span class="badge green">进行中</span>' : (t.status === 'closed' ? '<span class="badge gray">已关闭</span>' : '<span class="badge blue">'+esc(t.status)+'</span>');
+      return '<tr><td><b>'+esc(t.title)+'</b><div style="font-size:12px;color:var(--muted);margin-top:4px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.lastMsg||'')+'</div></td><td>'+badge+'</td><td style="font-size:12px;color:var(--muted)">'+new Date(t.createdAt).toLocaleString('zh-CN',{hour12:false})+'</td><td><button class="btn-ghost" onclick="openTicket('+t.id+')">查看/回复</button> <button class="btn-ghost" style="color:var(--red)" onclick="delTicket('+t.id+')">删除</button></td></tr>';
+    }).join('');
+    $('ticketListCard').innerHTML = '<h3>🎫 我的工单</h3><div class="table-wrap"><table><thead><tr><th>标题</th><th>状态</th><th>时间</th><th>操作</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="4" style="text-align:center;color:var(--muted)">' + (list.length ? '' : '暂无工单，点击上方按钮提交') + '</td></tr></tbody></table></div>';
+  });
+};
+window.openNewTicket = function(){
+  openModal('提交工单', '<div class="form-row"><label>工单标题</label><input id="tkTitle" class="input" placeholder="简要描述问题，如：某个模型不可用"></div>', function(){
+    var title = $('tkTitle').value.trim();
+    if(!title){ toast('请填写标题', false); return; }
+    api('/api/tickets', { method:'POST', body: { title: title } }).then(function(r){
+      if(r.code === 0){ toast('✅ 工单已提交', true); closeModal(); loaders.tickets(); } else toast(r.msg, false);
+    });
+  });
+};
+window.openTicket = function(id){
+  currentTicketId = id;
+  api('/api/tickets/' + id + '/messages').then(function(r){
+    if(r.code !== 0){ toast(r.msg, false); return; }
+    var msgs = r.data || [];
+    var rows = msgs.map(function(m){
+      var side = (m.role === 'admin') ? 'assistant' : 'user';
+      return '<div class="msg-row '+side+'"><div class="bubble"><small style="color:var(--muted);display:block">'+esc(m.role==='admin'?'管理员':'我')+' · '+new Date(m.createdAt).toLocaleString('zh-CN',{hour12:false})+'</small>'+esc(m.content)+'</div></div>';
+    }).join('');
+    openModal('工单对话', '<div class="chat-box" style="height:340px"><div class="chat-msgs" id="tkMsgs">' + (rows || '<div class="msg-row system"><div class="bubble">暂无消息</div></div>') + '</div><div class="chat-input"><input id="tkInput" class="input" placeholder="输入回复... (Enter发送)" onkeydown="if(event.key===EnterKey)sendTicketMsg()"><button class="btn" onclick="sendTicketMsg()">发送</button></div></div>' + (r.role==='admin' ? '<div style="margin-top:8px"><button class="btn-ghost" onclick="closeTicket('+id+')">🔒 关闭工单</button></div>' : ''), function(){});
+    var el = $('tkMsgs'); if(el) el.scrollTop = el.scrollHeight;
+  });
+};
+window.sendTicketMsg = function(){
+  var input = $('tkInput'); if(!input) return;
+  var content = input.value.trim(); if(!content || !currentTicketId) return;
+  api('/api/tickets/' + currentTicketId + '/messages', { method:'POST', body: { content: content } }).then(function(r){
+    if(r.code === 0){ openTicket(currentTicketId); } else toast(r.msg, false);
+  });
+};
+window.closeTicket = function(id){
+  if(!confirm('关闭该工单？')) return;
+  api('/api/tickets/' + id + '/status', { method:'POST', body: { status: 'closed' } }).then(function(r){
+    if(r.code === 0){ toast('✅ 工单已关闭', true); closeModal(); loaders.tickets(); } else toast(r.msg, false);
+  });
+};
+window.delTicket = function(id){
+  if(!confirm('删除该工单？')) return;
+  api('/api/tickets/' + id + '/delete', { method:'POST' }).then(function(r){
+    if(r.code === 0){ toast('✅ 工单已删除', true); loaders.tickets(); } else toast(r.msg, false);
+  });
+};
+// ===== 全部操作日志（仅管理员） =====
+loaders.logs = function(){
+  var box = $('view-logs');
+  box.innerHTML = '<div class="action-bar"><button class="btn-ghost" style="color:var(--red)" onclick="clearLogs()">🗑 清空日志</button><span style="color:var(--muted);font-size:13px">记录所有用户的关键操作（登录/发布公告/提交工单等）</span></div><div class="card" id="logsCard"><div style="text-align:center;color:var(--muted);padding:30px">加载中...</div></div>';
+  api('/api/logs').then(function(r){
+    if(r.code !== 0){ toast(r.msg, false); return; }
+    var list = r.data || [];
+    var rows = list.map(function(l){
+      return '<tr><td>'+esc(l.username||'-')+'</td><td><span class="badge blue">'+esc(l.action)+'</span></td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.detail||'')+'</td><td style="font-size:12px;color:var(--muted)">'+esc(l.ip||'')+'</td><td style="font-size:12px;color:var(--muted)">'+new Date(l.createdAt).toLocaleString('zh-CN',{hour12:false})+'</td></tr>';
+    }).join('');
+    $('logsCard').innerHTML = '<h3>📜 全部操作日志</h3><div class="table-wrap"><table><thead><tr><th>用户</th><th>操作</th><th>详情</th><th>IP</th><th>时间</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="5" style="text-align:center;color:var(--muted)">' + (list.length ? '' : '暂无日志') + '</td></tr></tbody></table></div>';
+  });
+};
+window.clearLogs = function(){
+  if(!confirm('清空全部操作日志？')) return;
+  api('/api/logs/clear', { method:'POST' }).then(function(r){
+    if(r.code === 0){ toast('✅ 已清空', true); loaders.logs(); } else toast(r.msg, false);
+  });
+};
+// ===== 公告管理（仅管理员） =====
+loaders.announcements = function(){
+  var box = $('view-announcements');
+  box.innerHTML = '<div class="action-bar"><button class="btn" onclick="openNewAnnouncement()">📢 发布公告</button><span style="color:var(--muted);font-size:13px">公告将显示在首页顶部</span></div><div class="card" id="annCard"><div style="text-align:center;color:var(--muted);padding:30px">加载中...</div></div>';
+  api('/api/announcements').then(function(r){
+    if(r.code !== 0){ toast(r.msg, false); return; }
+    var list = r.data || [];
+    var rows = list.map(function(a){
+      return '<tr><td>'+(a.isPinned?'<span class="badge red">📌 置顶</span>':'')+' <b>'+esc(a.title)+'</b></td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(a.content)+'</td><td style="font-size:12px;color:var(--muted)">'+new Date(a.createdAt).toLocaleString('zh-CN',{hour12:false})+'</td><td><button class="btn-ghost" onclick="editAnnouncement('+a.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delAnnouncement('+a.id+')">删除</button></td></tr>';
+    }).join('');
+    $('annCard').innerHTML = '<h3>📢 公告管理</h3><div class="table-wrap"><table><thead><tr><th>标题</th><th>内容</th><th>时间</th><th>操作</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="4" style="text-align:center;color:var(--muted)">' + (list.length ? '' : '暂无公告') + '</td></tr></tbody></table></div>';
+  });
+};
+window.openNewAnnouncement = function(){
+  openModal('发布公告', '<div class="form-row"><label>公告标题</label><input id="anTitle" class="input" placeholder="如：服务升级通知"></div><div class="form-row"><label>公告内容</label><textarea id="anContent" class="input" rows="4" placeholder="公告详情"></textarea></div><div class="form-row"><label><input type="checkbox" id="anPinned"> 置顶显示</label></div>', function(){
+    var title = $('anTitle').value.trim();
+    var content = $('anContent').value.trim();
+    if(!title || !content){ toast('请填写标题和内容', false); return; }
+    api('/api/announcements', { method:'POST', body: { title: title, content: content, isPinned: $('anPinned').checked ? 'true' : 'false' } }).then(function(r){
+      if(r.code === 0){ toast('✅ 公告已发布', true); closeModal(); loaders.announcements(); } else toast(r.msg, false);
+    });
+  });
+};
+window.editAnnouncement = function(id){
+  var all = null;
+  api('/api/announcements').then(function(r){
+    var a = (r.data || []).find(function(x){ return x.id === id; });
+    if(!a){ toast('公告不存在', false); return; }
+    openModal('编辑公告', '<div class="form-row"><label>公告标题</label><input id="anTitle" class="input" value="'+esc(a.title)+'"></div><div class="form-row"><label>公告内容</label><textarea id="anContent" class="input" rows="4">'+esc(a.content)+'</textarea></div><div class="form-row"><label><input type="checkbox" id="anPinned"'+(a.isPinned?' checked':'')+'> 置顶显示</label></div>', function(){
+      var title = $('anTitle').value.trim();
+      var content = $('anContent').value.trim();
+      if(!title || !content){ toast('请填写标题和内容', false); return; }
+      api('/api/announcements/update', { method:'POST', body: { id: id, title: title, content: content, isPinned: $('anPinned').checked ? 'true' : 'false' } }).then(function(rr){
+        if(rr.code === 0){ toast('✅ 公告已更新', true); closeModal(); loaders.announcements(); } else toast(rr.msg, false);
+      });
+    });
+  });
+};
+window.delAnnouncement = function(id){
+  if(!confirm('删除该公告？')) return;
+  api('/api/announcements/delete', { method:'POST', body: { id: id } }).then(function(r){
+    if(r.code === 0){ toast('✅ 公告已删除', true); loaders.announcements(); } else toast(r.msg, false);
+  });
+};
+// ===== 关于我们（对齐原APP AboutScreen） =====
+loaders.about = function(){
+  var box = $('view-about');
+  var ver = '3.18.22-13';
+  box.innerHTML = [
+    '<div class="card" style="text-align:center;padding:30px">',
+      '<div style="font-size:46px;margin-bottom:10px">⚡</div>',
+      '<h2 style="font-size:20px;color:var(--text)">綦桐AI网关</h2>',
+      '<p style="color:var(--cyan);margin:6px 0">Docker Server v' + ver + '</p>',
+      '<p style="color:var(--muted);font-size:13px">AI 网关管理工具 · 多租户 · 商业化 · 公益站</p>',
+      '<hr style="border-color:var(--border);margin:16px 0">',
+      '<div style="text-align:left;font-size:13px;line-height:2;color:var(--text)">',
+        '<div><b>📱 应用信息</b></div>',
+        '<div>名称：綦桐AI网关 Docker版</div>',
+        '<div>版本：v' + ver + '</div>',
+        '<div>协议：Apache 2.0 开源</div>',
+        '<div style="margin-top:10px"><b>✨ 核心功能</b></div>',
+        '<div>· 多租户权限管控 / API密钥私有化</div>',
+        '<div>· 商业化：余额/充值/扣款/模型定价</div>',
+        '<div>· 三指标测速（TTFT/TPS/总耗时）+ 故障转移</div>',
+        '<div>· AI大脑记忆 / 人格配置 / 技能系统</div>',
+        '<div>· 分销返佣 / 公告 / 工单 / 操作日志</div>',
+        '<div style="margin-top:10px"><b>💬 联系我们</b></div>',
+        '<div>GitHub：github.com/qtgf520/Docker-qitong-ai-gateway</div>',
+      '</div>',
+    '</div>'
+  ].join('');
+};
 // ===== 启动 =====
 api('/api/auth/me').then(function(r){
   if(r.code === 0){
-    $('userInfo').textContent = r.data.displayName || r.data.username;
+    var me = r.data;
+    $('userInfo').textContent = me.displayName || me.username;
+    var isAdmin = me.role === 'admin';
+    // 管理员功能隐藏：普通用户看不到 admin-only 菜单
+    var adminItems = document.querySelectorAll('.admin-only');
+    for(var i=0;i<adminItems.length;i++){ adminItems[i].style.display = isAdmin ? '' : 'none'; }
+    // 工单中心：管理员看到全部工单（含管理回复）
   } else { localStorage.removeItem('qt_token'); location.href='/login'; }
 });
 switchView('dashboard');

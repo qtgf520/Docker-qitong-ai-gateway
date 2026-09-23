@@ -239,6 +239,70 @@ class Database(private val dbPath: String) {
                     model_id TEXT NOT NULL DEFAULT ''
                 )"""
             )
+            // 记忆配置（每用户一条，含模型独立记忆开关，对齐原APP MemoryConfig）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS memory_config (
+                    user_id INTEGER PRIMARY KEY,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    save_mode TEXT NOT NULL DEFAULT 'normal',
+                    empathy_level INTEGER NOT NULL DEFAULT 8,
+                    thinking_depth INTEGER NOT NULL DEFAULT 3,
+                    catchphrases TEXT NOT NULL DEFAULT '',
+                    forbidden_words TEXT NOT NULL DEFAULT '',
+                    expertise TEXT NOT NULL DEFAULT '全栈通用',
+                    communication_style TEXT NOT NULL DEFAULT '自然亲切、像朋友聊天',
+                    model_independent INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
+            // 公告（管理员发布，首页顶部展示）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS announcements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL DEFAULT '',
+                    author_id INTEGER NOT NULL DEFAULT 0,
+                    is_pinned INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
+            // 工单（用户可提交，管理员可反馈，聊天式）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS tickets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'open',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    closed_at INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
+            // 工单消息（跟聊天一样）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS ticket_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticket_id INTEGER NOT NULL,
+                    sender_id INTEGER NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'user',
+                    content TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY(ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+                )"""
+            )
+            // 操作日志（管理员查看，用户不可见）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS op_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL DEFAULT 0,
+                    username TEXT NOT NULL DEFAULT '',
+                    action TEXT NOT NULL DEFAULT '',
+                    detail TEXT NOT NULL DEFAULT '',
+                    ip TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )"""
+            )
         }
     }
 
@@ -868,4 +932,160 @@ class Database(private val dbPath: String) {
                 createdAt = (it["created_at"] as? Number)?.toLong() ?: 0
             )
         }
+
+    // ============ 记忆配置（对齐原APP MemoryConfig：模型独立记忆） ============
+
+    fun getMemoryConfig(userId: Long): Map<String, Any?> {
+        val row = query("SELECT * FROM memory_config WHERE user_id=?", userId).firstOrNull()
+        return mapOf(
+            "userId" to userId,
+            "enabled" to (((row?.get("enabled") as? Number)?.toInt() ?: 1) == 1),
+            "saveMode" to (row?.get("save_mode") as? String ?: "normal"),
+            "empathyLevel" to ((row?.get("empathy_level") as? Number)?.toInt() ?: 8),
+            "thinkingDepth" to ((row?.get("thinking_depth") as? Number)?.toInt() ?: 3),
+            "catchphrases" to (row?.get("catchphrases") as? String ?: ""),
+            "forbiddenWords" to (row?.get("forbidden_words") as? String ?: ""),
+            "expertise" to (row?.get("expertise") as? String ?: "全栈通用"),
+            "communicationStyle" to (row?.get("communication_style") as? String ?: "自然亲切、像朋友聊天"),
+            "modelIndependent" to (((row?.get("model_independent") as? Number)?.toInt() ?: 0) == 1)
+        )
+    }
+
+    fun saveMemoryConfig(userId: Long, config: Map<String, Any?>) {
+        val now = System.currentTimeMillis()
+        val enabled = if ((config["enabled"] as? Boolean) == true) 1 else 0
+        val saveMode = config["saveMode"] as? String ?: "normal"
+        val empathy = (config["empathyLevel"] as? Number)?.toInt() ?: 8
+        val thinking = (config["thinkingDepth"] as? Number)?.toInt() ?: 3
+        val catchphrases = config["catchphrases"] as? String ?: ""
+        val forbidden = config["forbiddenWords"] as? String ?: ""
+        val expertise = config["expertise"] as? String ?: "全栈通用"
+        val style = config["communicationStyle"] as? String ?: "自然亲切、像朋友聊天"
+        val independent = if ((config["modelIndependent"] as? Boolean) == true) 1 else 0
+        val exists = queryOne("SELECT COUNT(*) FROM memory_config WHERE user_id=?", userId) ?: 0
+        if (exists > 0) {
+            stmt("UPDATE memory_config SET enabled=?, save_mode=?, empathy_level=?, thinking_depth=?, catchphrases=?, forbidden_words=?, expertise=?, communication_style=?, model_independent=?, updated_at=? WHERE user_id=?",
+                enabled, saveMode, empathy, thinking, catchphrases, forbidden, expertise, style, independent, now, userId)
+        } else {
+            stmt("INSERT INTO memory_config (user_id,enabled,save_mode,empathy_level,thinking_depth,catchphrases,forbidden_words,expertise,communication_style,model_independent,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                userId, enabled, saveMode, empathy, thinking, catchphrases, forbidden, expertise, style, independent, now)
+        }
+    }
+
+    // ============ 公告（管理员发布，首页顶部展示） ============
+
+    fun getAnnouncements(limit: Int = 50): List<Map<String, Any?>> =
+        query("SELECT * FROM announcements ORDER BY is_pinned DESC, created_at DESC LIMIT $limit").map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "title" to (it["title"] as? String ?: ""),
+                "content" to (it["content"] as? String ?: ""),
+                "authorId" to ((it["author_id"] as? Number)?.toLong() ?: 0),
+                "isPinned" to (((it["is_pinned"] as? Number)?.toInt() ?: 0) == 1),
+                "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0),
+                "updatedAt" to ((it["updated_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+
+    fun addAnnouncement(title: String, content: String, authorId: Long, isPinned: Boolean) {
+        val now = System.currentTimeMillis()
+        stmt("INSERT INTO announcements (title,content,author_id,is_pinned,created_at,updated_at) VALUES (?,?,?,?,?,?)",
+            title, content, authorId, if (isPinned) 1 else 0, now, now)
+    }
+
+    fun updateAnnouncement(id: Long, title: String, content: String, isPinned: Boolean) {
+        stmt("UPDATE announcements SET title=?, content=?, is_pinned=?, updated_at=? WHERE id=?",
+            title, content, if (isPinned) 1 else 0, System.currentTimeMillis(), id)
+    }
+
+    fun deleteAnnouncement(id: Long) {
+        stmt("DELETE FROM announcements WHERE id=?", id)
+    }
+
+    // ============ 工单（用户提交，管理员反馈，聊天式） ============
+
+    fun getTickets(userId: Long?, isAdmin: Boolean, limit: Int = 100): List<Map<String, Any?>> {
+        val sql = if (isAdmin) "SELECT * FROM tickets ORDER BY updated_at DESC LIMIT $limit"
+            else "SELECT * FROM tickets WHERE user_id=? ORDER BY updated_at DESC LIMIT $limit"
+        return (if (isAdmin) query(sql) else query(sql, userId)).map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "userId" to ((it["user_id"] as? Number)?.toLong() ?: 0),
+                "title" to (it["title"] as? String ?: ""),
+                "status" to (it["status"] as? String ?: "open"),
+                "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0),
+                "updatedAt" to ((it["updated_at"] as? Number)?.toLong() ?: 0),
+                "closedAt" to ((it["closed_at"] as? Number)?.toLong() ?: 0),
+                "lastMsg" to getTicketLastMessage((it["id"] as Number).toLong())
+            )
+        }
+    }
+
+    fun getTicketLastMessage(ticketId: Long): String =
+        query("SELECT content FROM ticket_messages WHERE ticket_id=? ORDER BY id DESC LIMIT 1", ticketId)
+            .firstOrNull()?.get("content") as? String ?: ""
+
+    fun addTicket(userId: Long, title: String): Long {
+        val now = System.currentTimeMillis()
+        stmt("INSERT INTO tickets (user_id,title,status,created_at,updated_at) VALUES (?,?,?,?,?)",
+            userId, title, "open", now, now)
+        return lastInsertId()
+    }
+
+    fun getTicketMessages(ticketId: Long): List<Map<String, Any?>> =
+        query("SELECT * FROM ticket_messages WHERE ticket_id=? ORDER BY id ASC", ticketId).map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "ticketId" to ((it["ticket_id"] as? Number)?.toLong() ?: 0),
+                "senderId" to ((it["sender_id"] as? Number)?.toLong() ?: 0),
+                "role" to (it["role"] as? String ?: "user"),
+                "content" to (it["content"] as? String ?: ""),
+                "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+
+    fun addTicketMessage(ticketId: Long, senderId: Long, role: String, content: String) {
+        val now = System.currentTimeMillis()
+        stmt("INSERT INTO ticket_messages (ticket_id,sender_id,role,content,created_at) VALUES (?,?,?,?,?)",
+            ticketId, senderId, role, content, now)
+        stmt("UPDATE tickets SET updated_at=? WHERE id=?", now, ticketId)
+    }
+
+    fun updateTicketStatus(ticketId: Long, status: String) {
+        val closedAt = if (status == "closed") System.currentTimeMillis() else 0
+        stmt("UPDATE tickets SET status=?, closed_at=?, updated_at=? WHERE id=?", status, closedAt, System.currentTimeMillis(), ticketId)
+    }
+
+    fun deleteTicket(ticketId: Long) {
+        stmt("DELETE FROM tickets WHERE id=?", ticketId)
+    }
+
+    fun isTicketOwner(ticketId: Long, userId: Long): Boolean =
+        (queryOne("SELECT user_id FROM tickets WHERE id=?", ticketId)?.takeIf { it == userId } ?: 0L) == userId
+
+    // ============ 操作日志（管理员查看） ============
+
+    fun addOpLog(userId: Long, username: String, action: String, detail: String, ip: String = "") {
+        try {
+            stmt("INSERT INTO op_logs (user_id,username,action,detail,ip,created_at) VALUES (?,?,?,?,?,?)",
+                userId, username, action, detail, ip, System.currentTimeMillis())
+        } catch (_: Exception) {}
+    }
+
+    fun getOpLogs(limit: Int = 200): List<Map<String, Any?>> =
+        query("SELECT * FROM op_logs ORDER BY id DESC LIMIT $limit").map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "userId" to ((it["user_id"] as? Number)?.toLong() ?: 0),
+                "username" to (it["username"] as? String ?: ""),
+                "action" to (it["action"] as? String ?: ""),
+                "detail" to (it["detail"] as? String ?: ""),
+                "ip" to (it["ip"] as? String ?: ""),
+                "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+
+    fun clearOpLogs() {
+        stmt("DELETE FROM op_logs")
+    }
 }

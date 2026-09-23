@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-12
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-13
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-12    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-13    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-12"))
+                put("version", JsonPrimitive("3.18.22-13"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -272,6 +272,7 @@ fun Application.moduleWeb(database: Database) {
             )
             if (result.isSuccess) {
                 val user = AuthManager.getUserByToken(database, result.getOrNull())
+                if (user != null) database.addOpLog(user.id, user.username, "登录", "后台登录成功", call.request.local.remoteHost)
                 AdminApi.ok(call, mapOf(
                     "token" to result.getOrNull(),
                     "user" to (user?.let { mapOf("id" to it.id, "username" to it.username, "role" to it.role, "displayName" to it.displayName) })
@@ -581,7 +582,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-12"))
+                put("version", JsonPrimitive("3.18.22-13"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -766,6 +767,63 @@ fun Application.moduleWeb(database: Database) {
                 AdminApi.ok(call, mapOf("count" to newList.size), "技能已删除")
             } else AdminApi.fail(call, "技能索引无效", 400)
         }
+        // 从 URL/Git raw 导入技能（支持 JSON 数组或对象格式）
+        post("/api/skills/import") {
+            val user = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val url = body["url"]?.jsonPrimitive?.content ?: ""
+            if (url.isBlank()) { AdminApi.fail(call, "请输入技能URL", 400); return@post }
+            // 请求远程技能文件
+            var imported = 0
+            try {
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                val req = okhttp3.Request.Builder().url(url).header("User-Agent", "qitong-gateway").build()
+                val resp = client.newCall(req).execute()
+                val text = resp.body?.string() ?: ""
+                resp.close()
+                if (text.isBlank()) { AdminApi.fail(call, "远程内容为空", 400); return@post }
+                // 解析 JSON（数组或对象）
+                val parsed = try { kotlinx.serialization.json.Json.parseToJsonElement(text) } catch (_: Exception) { null }
+                val items = when (parsed) {
+                    is JsonArray -> parsed.toList()
+                    is JsonObject -> listOf(parsed)
+                    else -> emptyList()
+                }
+                if (items.isEmpty()) { AdminApi.fail(call, "无法解析技能格式（应为JSON数组）", 400); return@post }
+                val s = database.getUserConfig(user.id, "custom_skills", "[]")
+                val arr = try { kotlinx.serialization.json.Json.decodeFromString<JsonArray>(s) } catch (_: Exception) { JsonArray(emptyList()) }
+                val list = arr.toMutableList()
+                items.forEach { item ->
+                    if (item is JsonObject) {
+                        val name = item["name"]?.jsonPrimitive?.content ?: item["title"]?.jsonPrimitive?.content ?: ""
+                        val desc = item["description"]?.jsonPrimitive?.content ?: item["desc"]?.jsonPrimitive?.content ?: ""
+                        if (name.isNotBlank() && desc.isNotBlank() && !list.any { it is JsonObject && it["name"]?.jsonPrimitive?.content == name }) {
+                            val trigs = mutableListOf<String>()
+                            item["triggers"]?.let { t ->
+                                if (t is JsonArray) t.forEach { trigs.add(it.jsonPrimitive.content) }
+                                else if (t is JsonPrimitive) trigs.add(t.content)
+                            }
+                            list.add(buildJsonObject {
+                                put("name", JsonPrimitive(name)); put("description", JsonPrimitive(desc))
+                                put("triggers", JsonArray(trigs.map { JsonPrimitive(it) }))
+                            })
+                            imported++
+                        }
+                    }
+                }
+                if (imported > 0) {
+                    database.setUserConfig(user.id, "custom_skills", JsonArray(list).toString())
+                    AdminApi.ok(call, mapOf("imported" to imported, "count" to list.size), "成功导入 $imported 个技能")
+                } else {
+                    AdminApi.ok(call, mapOf("imported" to 0, "count" to list.size), "没有新技能可导入（可能已存在）")
+                }
+            } catch (e: Exception) {
+                AdminApi.fail(call, "导入失败: ${e.message}", 400)
+            }
+        }
         // ===== 大脑记忆（按用户隔离） =====
         get("/api/memory") {
             val user = call.requireAuth(database) ?: return@get
@@ -807,6 +865,131 @@ fun Application.moduleWeb(database: Database) {
             val brain = body["brain"]?.jsonPrimitive?.content ?: ""
             database.setUserConfig(user.id, "qtai_brain", brain)
             AdminApi.ok(call, null, if (brain.isBlank()) "已解除大脑绑定" else "大脑已绑定: $brain")
+        }
+        // ===== 记忆配置（对齐原APP MemoryConfig：模型独立记忆开关） =====
+        get("/api/memory/config") {
+            val user = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, database.getMemoryConfig(user.id), "ok")
+        }
+        post("/api/memory/config") {
+            val user = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val config = mutableMapOf<String, Any?>()
+            body["enabled"]?.let { config["enabled"] = it.jsonPrimitive.content == "true" }
+            body["saveMode"]?.let { config["saveMode"] = it.jsonPrimitive.content }
+            body["empathyLevel"]?.let { config["empathyLevel"] = it.jsonPrimitive.content.toIntOrNull() ?: 8 }
+            body["thinkingDepth"]?.let { config["thinkingDepth"] = it.jsonPrimitive.content.toIntOrNull() ?: 3 }
+            body["catchphrases"]?.let { config["catchphrases"] = it.jsonPrimitive.content }
+            body["forbiddenWords"]?.let { config["forbiddenWords"] = it.jsonPrimitive.content }
+            body["expertise"]?.let { config["expertise"] = it.jsonPrimitive.content }
+            body["communicationStyle"]?.let { config["communicationStyle"] = it.jsonPrimitive.content }
+            body["modelIndependent"]?.let { config["modelIndependent"] = it.jsonPrimitive.content == "true" }
+            database.saveMemoryConfig(user.id, config)
+            AdminApi.ok(call, null, "记忆配置已保存")
+        }
+        // ===== 公告（首页顶部，任意用户可见） =====
+        get("/api/announcements") {
+            call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, database.getAnnouncements(), "ok")
+        }
+        // ===== 公告管理（仅管理员） =====
+        post("/api/announcements") {
+            val user = call.requireAuth(database) ?: return@post
+            if (user.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val title = body["title"]?.jsonPrimitive?.content ?: ""
+            val content = body["content"]?.jsonPrimitive?.content ?: ""
+            val isPinned = body["isPinned"]?.jsonPrimitive?.content == "true"
+            if (title.isBlank() || content.isBlank()) { AdminApi.fail(call, "标题和内容不能为空", 400); return@post }
+            database.addAnnouncement(title, content, user.id, isPinned)
+            database.addOpLog(user.id, user.username, "新增公告", title, call.request.local.remoteHost)
+            AdminApi.ok(call, null, "公告已发布")
+        }
+        post("/api/announcements/update") {
+            val user = call.requireAuth(database) ?: return@post
+            if (user.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: return@post
+            val title = body["title"]?.jsonPrimitive?.content ?: ""
+            val content = body["content"]?.jsonPrimitive?.content ?: ""
+            val isPinned = body["isPinned"]?.jsonPrimitive?.content == "true"
+            database.updateAnnouncement(id, title, content, isPinned)
+            database.addOpLog(user.id, user.username, "更新公告", title, call.request.local.remoteHost)
+            AdminApi.ok(call, null, "公告已更新")
+        }
+        post("/api/announcements/delete") {
+            val user = call.requireAuth(database) ?: return@post
+            if (user.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: return@post
+            database.deleteAnnouncement(id)
+            database.addOpLog(user.id, user.username, "删除公告", "id=$id", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "公告已删除")
+        }
+        // ===== 工单（用户提交，管理员可查看/反馈） =====
+        get("/api/tickets") {
+            val user = call.requireAuth(database) ?: return@get
+            val isAdmin = user.role == "admin"
+            val tickets = database.getTickets(if (isAdmin) null else user.id, isAdmin)
+            // 补充用户昵称
+            AdminApi.ok(call, tickets, "ok")
+        }
+        post("/api/tickets") {
+            val user = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val title = body["title"]?.jsonPrimitive?.content ?: ""
+            if (title.isBlank()) { AdminApi.fail(call, "请填写标题", 400); return@post }
+            val id = database.addTicket(user.id, title)
+            database.addOpLog(user.id, user.username, "提交工单", title, call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("id" to id), "工单已提交")
+        }
+        get("/api/tickets/{id}/messages") {
+            val user = call.requireAuth(database) ?: return@get
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@get
+            val isAdmin = user.role == "admin"
+            if (!isAdmin && !database.isTicketOwner(id, user.id)) { AdminApi.fail(call, "无权限查看该工单", 403); return@get }
+            AdminApi.ok(call, database.getTicketMessages(id), "ok")
+        }
+        post("/api/tickets/{id}/messages") {
+            val user = call.requireAuth(database) ?: return@post
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val isAdmin = user.role == "admin"
+            if (!isAdmin && !database.isTicketOwner(id, user.id)) { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val content = body["content"]?.jsonPrimitive?.content ?: ""
+            if (content.isBlank()) { AdminApi.fail(call, "消息不能为空", 400); return@post }
+            database.addTicketMessage(id, user.id, if (isAdmin) "admin" else "user", content)
+            AdminApi.ok(call, null, "已回复")
+        }
+        post("/api/tickets/{id}/status") {
+            val user = call.requireAuth(database) ?: return@post
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val isAdmin = user.role == "admin"
+            if (!isAdmin) { AdminApi.fail(call, "仅管理员可变更状态", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val status = body["status"]?.jsonPrimitive?.content ?: "open"
+            database.updateTicketStatus(id, status)
+            AdminApi.ok(call, null, "状态已更新为 $status")
+        }
+        post("/api/tickets/{id}/delete") {
+            val user = call.requireAuth(database) ?: return@post
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val isAdmin = user.role == "admin"
+            if (!isAdmin && !database.isTicketOwner(id, user.id)) { AdminApi.fail(call, "无权限", 403); return@post }
+            database.deleteTicket(id)
+            AdminApi.ok(call, null, "工单已删除")
+        }
+        // ===== 操作日志（仅管理员） =====
+        get("/api/logs") {
+            val user = call.requireAuth(database) ?: return@get
+            if (user.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
+            AdminApi.ok(call, database.getOpLogs(), "ok")
+        }
+        post("/api/logs/clear") {
+            val user = call.requireAuth(database) ?: return@post
+            if (user.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            database.clearOpLogs()
+            AdminApi.ok(call, null, "日志已清空")
         }
         // ===== qtai-sj MCP 控制接口（对齐APP远程控制） =====
         // action: status(状态) / setbrain(设大脑) / setactive(设活跃模型) / speedtest(测速) / toggle(启停) / forced(强制池)
@@ -932,7 +1115,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-12"))
+                    put("version", JsonPrimitive("3.18.22-13"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))

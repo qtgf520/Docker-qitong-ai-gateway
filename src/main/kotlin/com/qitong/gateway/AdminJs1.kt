@@ -107,6 +107,7 @@ loaders.dashboard = function(){
       '<div class="form-row"><label>服务器地址（对外）</label><div class="addr-line" onclick="copyAddr(this)">http://' + esc(ip) + ':' + gwPort + '/v1 <span class="copy-tag">📋 复制</span></div></div></div>';
     box.innerHTML = [
       '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥0.00</div><div class="lbl">我的余额</div></div></div></div>',
+      '<div class="card" id="announceCard"><h3>📢 公告</h3><div style="color:var(--muted);padding:8px;font-size:13px">加载中...</div></div>',
       '<div class="grid grid-2">',
         '<div class="card" id="gwCtrlCard"><h3>⚡ 网关控制</h3><div style="display:flex;gap:10px;align-items:center">' +
           '<span id="gwDot" class="dot ' + (st.running ? '' : 'off') + '"></span>' +
@@ -130,6 +131,27 @@ loaders.dashboard = function(){
         (rankRows || '<tr><td colspan="9" style="text-align:center;color:var(--muted)">暂无启用模型，请先在服务商页添加并同步</td></tr>') +
       '</tbody></table></div></div>'
     ].join('');
+    // 加载公告填充公告卡片
+    api('/api/announcements').then(function(ar){
+      if(ar && ar.code === 0){
+        var list = ar.data || [];
+        var ac = $('announceCard');
+        if(ac){
+          if(list.length){
+            var items = list.map(function(a){
+              return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">' +
+                (a.isPinned?'<span class="badge red">📌</span> ':'') + '<b style="color:var(--text)">'+esc(a.title)+'</b>' +
+                '<div style="color:var(--muted);font-size:13px;margin-top:4px">'+esc(a.content)+'</div>' +
+                '<small style="color:var(--muted);font-size:11px">'+new Date(a.createdAt).toLocaleString('zh-CN',{hour12:false})+'</small>' +
+                '</div>';
+            }).join('');
+            ac.innerHTML = '<h3>📢 公告</h3><div style="max-height:180px;overflow-y:auto">' + items + '</div>';
+          } else {
+            ac.innerHTML = '<h3>📢 公告</h3><div style="color:var(--muted);padding:8px;font-size:13px">暂无公告</div>';
+          }
+        }
+      }
+    });
     // 根据角色更新控制卡标题与范围提示
     api('/api/auth/me').then(function(me){
       if(me && me.code === 0 && me.data){

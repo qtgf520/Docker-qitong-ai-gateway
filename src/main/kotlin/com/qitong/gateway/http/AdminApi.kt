@@ -728,6 +728,31 @@ private fun providerToMap(p: Provider) = mapOf(
             }
             messages.add(0, sysMsg)
         }
+        // 注入大脑记忆（对齐原APP：记忆系统启用时注入；模型独立记忆开启时只取当前模型相关记忆）
+        if (userId > 0 && persona?.memoryEnabled != false) {
+            val memCfg = database.getMemoryConfig(userId)
+            val memEnabled = memCfg["enabled"] as? Boolean ?: true
+            val modelIndependent = memCfg["modelIndependent"] as? Boolean ?: false
+            if (memEnabled) {
+                val allMems = database.getMemories(userId, 30)
+                val filtered = if (modelIndependent && effectiveModel.isNotBlank() && effectiveModel != "qtai-sj") {
+                    allMems.filter { m -> (m["modelId"] as? String ?: "").isBlank() || (m["modelId"] as? String ?: "") == effectiveModel }
+                } else allMems
+                if (filtered.isNotEmpty()) {
+                    val msb = StringBuilder("\n\n## 🧠 用户历史记忆（共${filtered.size}条，按用户独立存储）\n")
+                    msb.append("以下是该用户过去与你的对话记忆，回复时自然运用这些记忆：\n")
+                    filtered.take(15).forEach { m ->
+                        val title = m["title"] as? String ?: ""
+                        val content = m["content"] as? String ?: ""
+                        if (content.isNotBlank()) msb.append("  • ${if (title.isNotBlank()) "$title：" else ""}$content\n")
+                    }
+                    messages.add(buildJsonObject {
+                        put("role", JsonPrimitive("system"))
+                        put("content", JsonPrimitive(msb.toString()))
+                    })
+                }
+            }
+        }
         // 注入技能池提示（让大脑能用技能）
         val skillPrompt = SkillRegistry.buildSkillPrompt()
         if (persona != null && persona.memoryEnabled) {

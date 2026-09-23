@@ -40,7 +40,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   <div class="logo">
     <div class="icon">⚡</div>
     <h1>綦桐AI网关</h1>
-    <p>Docker Server v3.18.22-12 · 后台管理</p>
+    <p>Docker Server v3.18.22-13 · 后台管理</p>
   </div>
   <div class="tabs">
     <button id="tabL" class="active" onclick="switchTab('L')">登录</button>
@@ -59,7 +59,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
     <button class="btn" onclick="doRegister()">注 册</button>
   </div>
   <div id="msg" class="msg"></div>
-  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-12 Server</div>
+  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-13 Server</div>
 </div>
 <script>
 function $(id){return document.getElementById(id)}
@@ -112,7 +112,7 @@ ${adminCss()}
   <!-- 顶栏 -->
   <header class="topbar">
     <button class="burger" id="burger" onclick="toggleSidebar()">☰</button>
-    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-12</span></div>
+    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-13</span></div>
     <div class="topbar-right">
       <span id="onlineDot" class="dot"></span>
       <span id="userInfo" class="user-name">未登录</span>
@@ -132,8 +132,12 @@ ${adminCss()}
       <a data-page="keys"><span>🔑</span><b>API密钥</b></a>
       <a data-page="rules"><span>🔀</span><b>路由规则</b></a>
       <a data-page="usage"><span>📊</span><b>用量统计</b></a>
+      <a data-page="tickets"><span>🎫</span><b>工单中心</b></a>
       <a data-page="settings"><span>⚙️</span><b>网关设置</b></a>
-      <a data-page="users"><span>👥</span><b>用户管理</b></a>
+      <a data-page="logs" class="admin-only"><span>📜</span><b>全部操作日志</b></a>
+      <a data-page="announcements" class="admin-only"><span>📢</span><b>公告管理</b></a>
+      <a data-page="users" class="admin-only"><span>👥</span><b>用户管理</b></a>
+      <a data-page="about"><span>ℹ️</span><b>关于我们</b></a>
     </nav>
   </aside>
   <!-- 内容区 -->
@@ -146,8 +150,12 @@ ${adminCss()}
     <div id="view-keys" class="view"></div>
     <div id="view-rules" class="view"></div>
     <div id="view-usage" class="view"></div>
+    <div id="view-tickets" class="view"></div>
     <div id="view-settings" class="view"></div>
+    <div id="view-logs" class="view"></div>
+    <div id="view-announcements" class="view"></div>
     <div id="view-users" class="view"></div>
+    <div id="view-about" class="view"></div>
   </main>
   <!-- 底部导航（移动端） -->
   <nav class="bottom-nav" id="bottomNav">
@@ -155,6 +163,7 @@ ${adminCss()}
     <a data-page="providers"><span>🏪</span><b>服务商</b></a>
     <a data-page="models"><span>🤖</span><b>模型</b></a>
     <a data-page="chat"><span>💬</span><b>聊天</b></a>
+    <a data-page="tickets"><span>🎫</span><b>工单</b></a>
     <a data-page="settings"><span>⚙️</span><b>设置</b></a>
   </nav>
 </div>
