@@ -112,24 +112,40 @@ window.delRule = function(id){
   });
 };
 // ===== 用量 =====
+function fmtTime(ts){
+  if(!ts) return '—';
+  var d = new Date(ts);
+  return d.toLocaleString('zh-CN', { hour12:false });
+}
 loaders.usage = function(){
   var box = $('view-usage');
   box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
   api('/api/stats').then(function(r){
     var s = r.data;
     var rows = (s.usage || []).map(function(u,i){
-      return '<tr><td>'+(i+1)+'</td><td>'+esc(u.model_key)+'</td><td>'+(u.calls||0)+'</td><td>'+fmtNum(u.total_tokens||0)+'</td><td>'+fmtBytes(u.upload_bytes||0)+'</td><td>'+fmtBytes(u.download_bytes||0)+'</td></tr>';
+      return '<tr><td>'+(i+1)+'</td><td>'+esc(u.model_key)+'</td><td>'+(u.calls||0)+'</td><td>'+fmtNum(u.total_tokens||0)+'</td><td>'+fmtBytes(u.upload_bytes||0)+'</td><td>'+fmtBytes(u.download_bytes||0)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td></tr>';
     }).join('');
-    box.innerHTML = [
-      '<div class="grid grid-3">',
-        '<div class="stat"><div class="num">'+fmtBytes(s.totalUpload)+'</div><div class="lbl">总上行</div></div>',
-        '<div class="stat"><div class="num">'+fmtBytes(s.totalDownload)+'</div><div class="lbl">总下行</div></div>',
-        '<div class="stat"><div class="num">'+(s.usage||[]).length+'</div><div class="lbl">模型维度</div></div>',
-      '</div>',
-      '<div class="card" style="margin-top:14px"><h3>按模型用量</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>模型Key</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="6" style="text-align:center;color:var(--muted)">' + ((s.usage||[]).length ? '' : '暂无用量') + '</td></tr>' +
-      '</tbody></table></div></div>'
-    ].join('');
+    // 传输明细（每次调用一条）
+    api('/api/usage/recent').then(function(rr){
+      var recent = (rr.data || []);
+      var rrows = recent.map(function(u){
+        var up = u.uploadBytes || 0, down = u.downloadBytes || 0, tt = u.totalTokens || 0;
+        return '<tr><td>'+esc(u.modelKey||u.modelName||'')+'</td><td>'+fmtNum(u.promptTokens||0)+'</td><td>'+fmtNum(u.completionTokens||0)+'</td><td>'+fmtNum(tt)+'</td><td>'+fmtBytes(up)+'</td><td>'+fmtBytes(down)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td><td>'+esc(u.apiKeyLabel||'本地')+'</td><td style="font-size:12px;color:var(--muted)">'+fmtTime(u.createdAt)+'</td></tr>';
+      }).join('');
+      box.innerHTML = [
+        '<div class="grid grid-3">',
+          '<div class="stat"><div class="num">'+fmtBytes(s.totalUpload)+'</div><div class="lbl">总上行</div></div>',
+          '<div class="stat"><div class="num">'+fmtBytes(s.totalDownload)+'</div><div class="lbl">总下行</div></div>',
+          '<div class="stat"><div class="num">'+(s.usage||[]).length+'</div><div class="lbl">模型维度</div></div>',
+        '</div>',
+        '<div class="card" style="margin-top:14px"><h3>按模型用量汇总</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>模型Key</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th><th>费用</th></tr></thead><tbody>' +
+        rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + ((s.usage||[]).length ? '' : '暂无用量') + '</td></tr>' +
+        '</tbody></table></div></div>',
+        '<div class="card" style="margin-top:14px"><h3>📋 传输明细（每次调用）<span style="font-size:12px;color:var(--muted)">对齐原APP TokenUsage，每条=一次API传输</span></h3><div class="table-wrap"><table><thead><tr><th>模型</th><th>Prompt</th><th>输出</th><th>总Token</th><th>上行</th><th>下行</th><th>费用</th><th>密钥</th><th>时间</th></tr></thead><tbody>' +
+        rrows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (recent.length ? '' : '暂无传输记录，发起API调用后显示') + '</td></tr>' +
+        '</tbody></table></div></div>'
+      ].join('');
+    });
   });
 };
 // ===== 设置 =====

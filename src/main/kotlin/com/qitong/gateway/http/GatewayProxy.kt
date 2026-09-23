@@ -271,6 +271,7 @@ class GatewayProxy(private val database: Database) {
         }
 
         val client = com.qitong.gateway.network.UpstreamClient.getClient(useProxy = targetModel.useProxy)
+        val uploadBytes = finalBody.toByteArray(Charsets.UTF_8).size.toLong()
         val req = okhttp3.Request.Builder()
             .url("$upstreamUrl$targetPath")
             .post(finalBody.toByteArray(Charsets.UTF_8).toRequestBody(DEFAULT_CT))
@@ -284,7 +285,7 @@ class GatewayProxy(private val database: Database) {
             ?: return false
 
         val isSuccess = response.isSuccessful
-        recordTraffic(download = (response.body?.contentLength() ?: 0))
+        recordTraffic(upload = uploadBytes)
 
         if (isSuccess) {
             GatewayScheduler.markModelSuccess(targetModel.modelId, targetModel.providerId, System.currentTimeMillis() - startMs)
@@ -293,31 +294,68 @@ class GatewayProxy(private val database: Database) {
             val respContentType = response.header("Content-Type") ?: "application/json"
             val respCode = response.code
 
+            // 用量统计变量（真实字节 + token）
+            var downloadBytes = 0L
+            var promptTokens = 0
+            var completionTokens = 0
+            var totalTokens = 0
+
             if (stream && respContentType.contains("text/event-stream")) {
                 // ★ 流式 SSE 透传 ★
+                val usageBox = IntArray(3) // prompt, completion, total
                 call.response.headers.append("Content-Type", "text/event-stream; charset=utf-8")
                 call.response.headers.append("Cache-Control", "no-cache")
                 call.response.headers.append("Connection", "keep-alive")
                 call.respondBytesWriter(ContentType.Text.EventStream, HttpStatusCode.OK) {
                     val source = response.body?.source()
                     if (source != null) {
-                        val buf = ByteArray(8192)
+                        // 逐行读取以便统计字节 + 抠出 usage
+                        val reader = source.buffer()
                         while (true) {
-                            val n = source.read(buf)
-                            if (n < 0) break
-                            writeFully(buf, 0, n)
+                            val line = reader.readUtf8Line() ?: break
+                            val lineBytes = line.toByteArray(Charsets.UTF_8).size + 1
+                            writeFully(line.toByteArray(Charsets.UTF_8))
+                            writeFully(byteArrayOf('\n'.code.toByte()))
                             flush()
+                            downloadBytes += lineBytes
+                            if (line.startsWith("data:")) {
+                                val data = line.removePrefix("data:").trim()
+                                if (data != "[DONE]") {
+                                    try {
+                                        val jobj = org.json.JSONObject(data)
+                                        val usage = jobj.optJSONObject("usage")
+                                        if (usage != null) {
+                                            usageBox[0] = usage.optInt("prompt_tokens", usageBox[0])
+                                            usageBox[1] = usage.optInt("completion_tokens", usageBox[1])
+                                            usageBox[2] = usage.optInt("total_tokens", usageBox[2])
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+                            }
                         }
                     }
                 }
+                promptTokens = usageBox[0]; completionTokens = usageBox[1]; totalTokens = usageBox[2]
+                recordTraffic(download = downloadBytes)
             } else {
                 val respBody = response.body?.string() ?: "{}"
-                recordTraffic(download = respBody.length.toLong())
+                downloadBytes = respBody.length.toLong()
+                recordTraffic(download = downloadBytes)
                 respondJson(call, respBody, respCode, ContentType.parse(respContentType))
+                // 非流式：解析 usage 真实 token
+                try {
+                    val jobj = org.json.JSONObject(respBody)
+                    val usage = jobj.optJSONObject("usage")
+                    if (usage != null) {
+                        promptTokens = usage.optInt("prompt_tokens", 0)
+                        completionTokens = usage.optInt("completion_tokens", 0)
+                        totalTokens = usage.optInt("total_tokens", 0)
+                    }
+                } catch (_: Exception) {}
             }
 
             // 用量统计（含商业化扣费）
-            recordUsage(targetModel, modelId, response.body?.contentLength() ?: 0, ownerUser)
+            recordUsage(targetModel, modelId, uploadBytes, downloadBytes, ownerUser, promptTokens, completionTokens, totalTokens)
             response.close()
             return true
         } else {
@@ -339,12 +377,19 @@ class GatewayProxy(private val database: Database) {
         }
     }
 
-    /** 记录用量 + 商业化扣费/扣额度（key属主用户） */
-    private fun recordUsage(model: AiModel, usedModelId: String, bytes: Long, ownerUser: User? = null) {
+    /** 记录用量 + 商业化扣费/扣额度（真实上传/下载字节 + 真实token，对齐原APP TokenUsage） */
+    private fun recordUsage(
+        model: AiModel, usedModelId: String,
+        uploadBytes: Long, downloadBytes: Long,
+        ownerUser: User? = null,
+        promptTokens: Int = 0, completionTokens: Int = 0, totalTokens: Int = 0
+    ) {
         try {
+            // token 缺省时按字节估算（兼容无 usage 字段的上游）
+            val estTokens = if (totalTokens > 0) totalTokens.toLong()
+                else ((downloadBytes + uploadBytes) / 4).coerceAtLeast(1)
             // 计算成本：优先模型自定义价，其次默认价格表
             val price = if (model.price > 0) model.price else PricingTable.priceOf(model.modelId)
-            val estTokens = (bytes / 4).coerceAtLeast(1)  // 粗略按4字节/token
             val cost = estTokens / 1_000_000.0 * price * PricingTable.OUTPUT_MULTIPLIER
             val userId = ownerUser?.id ?: 0
 
@@ -352,7 +397,7 @@ class GatewayProxy(private val database: Database) {
             if (ownerUser != null) {
                 if (ownerUser.quotaLimit > 0) {
                     // 有额度上限：扣额度
-                    database.consumeQuota(ownerUser.id, estTokens.toLong())
+                    database.consumeQuota(ownerUser.id, estTokens)
                 } else {
                     // 余额体制：扣余额（不足则记录0成本）
                     database.deductBalance(ownerUser.id, cost)
@@ -364,7 +409,11 @@ class GatewayProxy(private val database: Database) {
                     modelKey = "${model.providerId}::${model.modelId}",
                     modelName = model.displayName,
                     providerId = model.providerId,
-                    downloadBytes = bytes,
+                    promptTokens = promptTokens.toLong(),
+                    completionTokens = completionTokens.toLong(),
+                    totalTokens = totalTokens.toLong(),
+                    uploadBytes = uploadBytes,
+                    downloadBytes = downloadBytes,
                     apiKeyLabel = currentApiKeyLabel,
                     userId = userId,
                     cost = cost

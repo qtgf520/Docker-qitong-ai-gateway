@@ -90,11 +90,26 @@ window.delModel = function(id){
     if(r.code === 0){ toast('✅ 已删除', true); loaders.models(); } else toast(r.msg, false);
   });
 };
-// ===== 测速（对齐原APP：三指标 TTFT/TPS/总耗时 串行测试 + 动态显示 + 倒计时） =====
+// ===== 测速（对齐原APP：默认显示全部待测模型 + 逐个测速逐个显示 + 倒计时） =====
 var speedTestActive = false;
 loaders.speedtest = function(){
-  $('view-speedtest').innerHTML = '<div class="action-bar"><button class="btn" onclick="runSpeedTest()">⚡ 开始批量测速</button><span style="color:var(--muted);font-size:13px">原APP方式：逐个串行测试，采集 TTFT/TPS/总耗时</span><span id="stStatus" style="color:var(--muted);font-size:13px"></span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">点击上方按钮开始测速</div></div>';
+  $('view-speedtest').innerHTML = '<div class="action-bar"><button class="btn" onclick="runSpeedTest()">⚡ 开始批量测速</button><button class="btn-ghost" onclick="loadSpeedModels()">🔄 刷新列表</button><span style="color:var(--muted);font-size:13px">原APP方式：先显示全部已启用模型，再一个一个往下测速</span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">加载模型列表...</div></div>';
+  loadSpeedModels();
 };
+// 加载待测模型列表（默认全部显示为"待测速"）
+function loadSpeedModels(){
+  api('/api/speedtest/models').then(function(r){
+    if(r.code !== 0){ toast(r.msg, false); return; }
+    var models = r.data || [];
+    var rows = models.map(function(m){
+      var key = m.providerId + '::' + m.modelId;
+      return '<tr id="stRow-'+esc(key)+'" data-key="'+esc(key)+'"><td>'+esc(m.displayName||m.modelId)+'</td><td>'+esc(m.modelId)+'</td><td><span class="badge blue">'+esc(m.providerName||('P'+m.providerId))+'</span></td><td>'+(m.enabled?'<span class="badge green">已启用</span>':'<span class="badge gray">停用</span>')+'</td><td class="st-state" style="color:var(--muted)">⏳ 待测速</td><td class="st-ttft">—</td><td class="st-tps">—</td><td class="st-total">—</td></tr>';
+    }).join('');
+    $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>显示名</th><th>模型ID</th><th>服务商</th><th>状态</th><th>测试状态</th><th>TTFT</th><th>TPS</th><th>总耗时</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (models.length ? '' : '暂无已启用模型，请先在模型页启用或添加') + '</td></tr>' +
+      '</tbody></table></div><div style="text-align:center;color:var(--muted);font-size:12px" id="stCountdown"></div>';
+  });
+}
 // 5分钟倒计时
 var speedCountdownTimer = null;
 function startSpeedCountdown(seconds){
@@ -112,41 +127,47 @@ function startSpeedCountdown(seconds){
 window.runSpeedTest = function(){
   if(speedTestActive){ toast('测速进行中，请等待完成', false); return; }
   speedTestActive = true;
-  var st = $('stStatus'); st.innerHTML = '测速中，请稍候...';
-  $('stCard').innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px">正在逐模型串行测速（TTFT/TPS/总耗时）...<br><span style="font-size:12px" id="stCountdown"></span></div>';
-  api('/api/status').then(function(r){
-    var models = (r.data && r.data.pipelineSorted) || [];
-    // 先渲染所有模型为"待测速"
-    var rows = models.map(function(key){
-      var parts = key.split('::');
-      var mid = parts.length > 1 ? parts[1] : key;
-      var pid = parts.length > 1 ? parts[0] : '';
-      return '<tr id="stRow-'+esc(key)+'"><td>'+esc(mid)+'</td><td>P'+esc(pid)+'</td><td class="st-state" style="color:var(--muted)">⏳ 待测速</td><td class="st-ttft">—</td><td class="st-tps">—</td><td class="st-total">—</td></tr>';
-    }).join('');
-    $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>模型ID</th><th>服务商</th><th>状态</th><th>TTFT</th><th>TPS</th><th>总耗时</th></tr></thead><tbody>' + rows + '</tbody></table></div><div style="text-align:center;color:var(--muted);font-size:12px" id="stCountdown"></div>';
-    // 开始批量测速
-    api('/api/speedtest', { method:'POST' }).then(function(res){
+  var btn = $('view-speedtest').querySelector('.action-bar .btn');
+  if(btn) btn.innerHTML = '⏳ 测速中...';
+  // 收集当前表格中的待测行（按顺序）
+  var rows = Array.prototype.slice.call(document.querySelectorAll('#stCard tbody tr[data-key]'));
+  if(!rows.length){ toast('暂无待测模型', false); speedTestActive = false; if(btn) btn.innerHTML = '⚡ 开始批量测速'; return; }
+  var idx = 0;
+  var passed = 0, failed = 0;
+  function next(){
+    if(idx >= rows.length){
       speedTestActive = false;
-      st.innerHTML = '';
-      if(res.code === 0){
-        var list = res.data || [];
-        // 更新每个模型的状态
-        list.forEach(function(h){
-          var row = $('stRow-' + esc(h.providerId + '::' + h.modelId));
-          if(row){
-            var ok = h.isHealthy;
-            var cells = row.querySelectorAll('td');
-            cells[2].textContent = ok ? '✅ 完成' : '❌ 失败';
-            cells[2].style.color = ok ? 'var(--green)' : 'var(--red)';
-            cells[3].textContent = ok && h.ttftMs > 0 ? h.ttftMs + 'ms' : '—';
-            cells[4].textContent = ok && h.tps > 0 ? h.tps.toFixed(2) + ' tok/s' : '—';
-            cells[5].textContent = ok && h.totalMs > 0 ? h.totalMs + 'ms' : '—';
-          }
-        });
-        toast('✅ 测速完成：' + list.filter(function(x){ return x.isHealthy; }).length + '/' + list.length + ' 正常', true);
-      } else toast(res.msg, false);
+      if(btn) btn.innerHTML = '⚡ 开始批量测速';
+      toast('✅ 测速完成：' + passed + '/' + rows.length + ' 正常', true);
+      return;
+    }
+    var row = rows[idx];
+    var key = row.getAttribute('data-key');
+    var cells = row.querySelectorAll('td');
+    var stateCell = cells[4];
+    stateCell.textContent = '⏳ 测速中...';
+    stateCell.style.color = 'var(--cyan)';
+    var parts = key.split('::');
+    api('/api/speedtest/one', { method:'POST', body: { providerId: parts[0], modelId: parts[1] } }).then(function(h){
+      if(h.code === 0 && h.data){
+        var d = h.data;
+        var ok = d.isHealthy;
+        stateCell.textContent = ok ? '✅ 完成' : '❌ 失败';
+        stateCell.style.color = ok ? 'var(--green)' : 'var(--red)';
+        cells[5].textContent = ok && d.ttftMs > 0 ? d.ttftMs + 'ms' : '—';
+        cells[6].textContent = ok && d.tps > 0 ? d.tps.toFixed(2) + ' tok/s' : '—';
+        cells[7].textContent = ok && d.totalMs > 0 ? d.totalMs + 'ms' : '—';
+        if(ok) passed++; else failed++;
+      } else {
+        stateCell.textContent = '❌ 失败';
+        stateCell.style.color = 'var(--red)';
+        failed++;
+      }
+      idx++;
+      setTimeout(next, 200);
     });
-  });
+  }
+  next();
 };
 // ===== 聊天 =====
 loaders.chat = function(){

@@ -387,6 +387,78 @@ private fun providerToMap(p: Provider) = mapOf(
     }
 
     /**
+     * 单模型测速（对齐原APP：测一个测一个，前端逐个调用逐个显示）
+     * 测完立即写入 healthCache + 更新排行榜
+     */
+    suspend fun speedTestOneModel(database: Database, providerId: Long, modelId: String): Map<String, Any?> {
+        val model = database.getModelByKey(providerId, modelId)
+            ?: return mapOf("modelId" to modelId, "providerId" to providerId,
+                "isHealthy" to false, "ttftMs" to -1L, "tps" to 0.0, "totalMs" to -1L,
+                "displayName" to modelId, "msg" to "模型不存在")
+        val provider = database.getProviderById(providerId)
+            ?: return mapOf("modelId" to modelId, "providerId" to providerId,
+                "isHealthy" to false, "ttftMs" to -1L, "tps" to 0.0, "totalMs" to -1L,
+                "displayName" to model.displayName, "msg" to "服务商不存在")
+        // 测速：服务商或模型未启用则直接失败
+        val h = if (provider.isEnabled && model.isEnabled) GatewayScheduler.measureModel(model, provider)
+            else GatewayScheduler.ModelHealth(model.modelId, model.providerId, Long.MAX_VALUE, -1, 0.0, -1, 0, System.currentTimeMillis(), false)
+        // 立即写入健康缓存（排行榜即时刷新）
+        synchronized(GatewayScheduler.healthCache) {
+            GatewayScheduler.healthCache[GatewayScheduler.routeKey(model.providerId, model.modelId)] = h
+        }
+        // 通过→自动启用；失败→保持原状态
+        if (h.isHealthy && !model.isEnabled) database.updateModel(model.copy(isEnabled = true))
+        return mapOf(
+            "id" to model.id,
+            "modelId" to model.modelId,
+            "providerId" to model.providerId,
+            "displayName" to model.displayName,
+            "ttftMs" to h.ttftMs,
+            "tps" to h.tps,
+            "totalMs" to h.totalMs,
+            "latencyMs" to (if (h.isHealthy) h.totalMs else -1),
+            "isHealthy" to h.isHealthy,
+            "enabled" to model.isEnabled,
+            "msg" to (if (h.isHealthy) "测速通过" else "测速失败")
+        )
+    }
+
+    /** 待测速模型列表（当前全部已启用模型，用于测速页默认渲染"待测速"状态） */
+    fun getSpeedTestModels(database: Database): List<Map<String, Any?>> =
+        database.getEnabledModels().map { m ->
+            val p = database.getProviderById(m.providerId)
+            mapOf(
+                "id" to m.id,
+                "modelId" to m.modelId,
+                "providerId" to m.providerId,
+                "displayName" to m.displayName.ifBlank { m.modelId },
+                "providerName" to (p?.name ?: "P${m.providerId}"),
+                "enabled" to m.isEnabled,
+                "customAlias" to m.customAlias
+            )
+        }
+
+    /** 传输明细（对齐原APP TokenUsage：每一次调用一条，含上传/下载字节与 token） */
+    fun getUsageRecent(database: Database, limit: Int = 200): List<Map<String, Any?>> =
+        database.getTokenUsageRecent(limit).map { t ->
+            mapOf(
+                "id" to t.id,
+                "modelKey" to t.modelKey,
+                "modelName" to t.modelName,
+                "providerId" to t.providerId,
+                "promptTokens" to t.promptTokens,
+                "completionTokens" to t.completionTokens,
+                "totalTokens" to t.totalTokens,
+                "uploadBytes" to t.uploadBytes,
+                "downloadBytes" to t.downloadBytes,
+                "apiKeyLabel" to t.apiKeyLabel,
+                "userId" to t.userId,
+                "cost" to t.cost,
+                "createdAt" to t.createdAt
+            )
+        }
+
+    /**
      * 批量测速（对齐原APP batchTestAllModels）：
      * 逐个串行测试全部模型，通过的自动启用(isEnabled=true)，失败的可选自动关闭(isEnabled=false)
      * 三指标：TTFT/TPS/总耗时

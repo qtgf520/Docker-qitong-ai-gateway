@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-11
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-12
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-11    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-12    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-11"))
+                put("version", JsonPrimitive("3.18.22-12"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -384,6 +384,26 @@ fun Application.moduleWeb(database: Database) {
             if (!AdminApi.hasPerm(u, AdminApi.Perm.SYS_SPEED)) { AdminApi.fail(call, "无权限执行全局测速", 403); return@post }
             AdminApi.ok(call, AdminApi.speedTest(database), "测速完成")
         }
+        // 待测速模型列表（测速页默认渲染全部已启用模型为"待测速"）
+        get("/api/speedtest/models") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, AdminApi.getSpeedTestModels(database), "ok")
+        }
+        // 单模型测速（前端逐个调用，测一个显示一个，对齐原APP缓冲流式刷新）
+        post("/api/speedtest/one") {
+            val u = call.requireAuth(database) ?: return@post
+            if (!AdminApi.hasPerm(u, AdminApi.Perm.SYS_SPEED)) { AdminApi.fail(call, "无权限执行测速", 403); return@post }
+            val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            val providerId = body["providerId"]?.jsonPrimitive?.content?.toLongOrNull() ?: -1
+            val modelId = body["modelId"]?.jsonPrimitive?.content ?: ""
+            AdminApi.ok(call, AdminApi.speedTestOneModel(database, providerId, modelId), "ok")
+        }
+        // 传输明细（每次调用一条：上传/下载/token，对齐原APP TokenUsage）
+        get("/api/usage/recent") {
+            val u = call.requireAuth(database) ?: return@get
+            val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 200
+            AdminApi.ok(call, AdminApi.getUsageRecent(database, limit), "ok")
+        }
 
         // 配置
         get("/api/config") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getAllConfig(database)) }
@@ -561,7 +581,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-11"))
+                put("version", JsonPrimitive("3.18.22-12"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -912,7 +932,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-11"))
+                    put("version", JsonPrimitive("3.18.22-12"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
