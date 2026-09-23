@@ -42,6 +42,10 @@ dependencies {
     // BCrypt 密码哈希
     implementation("org.mindrot:jbcrypt:0.4")
 
+    // 邮箱通知（SMTP）
+    implementation("com.sun.mail:jakarta.mail:2.0.1")
+    implementation("jakarta.mail:jakarta.mail-api:2.0.1")
+
     // 日志
     implementation("ch.qos.logback:logback-classic:1.5.6")
 

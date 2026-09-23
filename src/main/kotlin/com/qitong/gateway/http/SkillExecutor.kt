@@ -46,20 +46,53 @@ object SkillExecutor {
 
             // ========== 2xxxxx 模型切换 ==========
             "200001", "200002" -> {
-                // 切换指定模型（存为用户活跃模型）
+                // 切换指定模型（存为用户活跃模型，按key属主隔离）
                 if (param.isBlank()) "⚠️ 请指定模型，例如：切换模型 deepseek-chat"
                 else {
                     val models = database.getModels()
                     val target = models.firstOrNull { it.modelId.contains(param, true) || it.displayName.contains(param, true) }
                     if (target == null) "❌ 未找到模型: $param"
                     else {
-                        database.setConfig("active_model_key", "${target.providerId}::${target.modelId}")
-                        "✅ 已切换活跃模型为: ${target.modelId}"
+                        val key = "${target.providerId}::${target.modelId}"
+                        if (userId > 0) {
+                            database.setUserConfig(userId, "active_model_key", key)
+                            // 同步加入用户强制池首位（点灯语义）
+                            val cur = database.getUserConfig(userId, "forced_pool_keys", "")
+                            val list = cur.split(",").map { it.trim() }.filter { it.isNotBlank() && it != key }.toMutableList()
+                            list.add(0, key)
+                            database.setUserConfig(userId, "forced_pool_keys", list.joinToString(","))
+                        } else {
+                            database.setConfig("active_model_key", key)
+                        }
+                        "✅ 已切换活跃模型为: ${target.modelId}（qtai-sj 优先走它）"
                     }
                 }
             }
+            "200003" -> {
+                // 上一个模型（用户池）
+                val pool = currentUserPool(database, userId)
+                if (pool.isEmpty()) "⚠️ 当前没有强制池模型，无法切换"
+                else {
+                    val newKey = rotatePool(pool, -1, database, userId)
+                    "✅ 已切换到上一个模型: ${newKey.substringAfter("::", newKey)}"
+                }
+            }
+            "200004" -> {
+                // 下一个模型（用户池）
+                val pool = currentUserPool(database, userId)
+                if (pool.isEmpty()) "⚠️ 当前没有强制池模型，无法切换"
+                else {
+                    val newKey = rotatePool(pool, 1, database, userId)
+                    "✅ 已切换到下一个模型: ${newKey.substringAfter("::", newKey)}"
+                }
+            }
             "200005" -> {
-                database.setConfig("active_model_key", "")
+                if (userId > 0) {
+                    database.setUserConfig(userId, "active_model_key", "")
+                    database.setUserConfig(userId, "forced_pool_keys", "")
+                } else {
+                    database.setConfig("active_model_key", "")
+                }
                 "✅ 已恢复自动选择模型"
             }
 
@@ -78,7 +111,14 @@ object SkillExecutor {
             "600001" -> {
                 val running = GatewayProxy.running
                 val failover = database.getConfig("auto_failover", "true")
-                "📊 网关状态：${if (running) "运行中" else "已停止"} | 端口: ${database.getConfig("gateway_port", "18889")} | 故障转移: ${if (failover == "true") "开" else "关"}"
+                // 当前活跃（用户级优先）
+                val active = if (userId > 0) {
+                    database.getUserConfig(userId, "active_model_key", "").ifBlank {
+                        database.getConfig("active_model_key", "")
+                    }
+                } else database.getConfig("active_model_key", "")
+                val activeName = active.substringAfter("::", active).ifBlank { "qtai-sj（自动）" }
+                "📊 网关状态：${if (running) "运行中" else "已停止"} | 端口: ${database.getConfig("gateway_port", "18889")} | 故障转移: ${if (failover == "true") "开" else "关"} | 当前活跃: $activeName"
             }
             "600002" -> {
                 val keys = GatewayScheduler.pipelineSortedModelKeys
@@ -87,7 +127,11 @@ object SkillExecutor {
                 } else "📋 暂无测速数据，请先运行测速"
             }
             "600003" -> {
-                val active = database.getConfig("active_model_key", "")
+                val active = if (userId > 0) {
+                    database.getUserConfig(userId, "active_model_key", "").ifBlank {
+                        database.getConfig("active_model_key", "")
+                    }
+                } else database.getConfig("active_model_key", "")
                 if (active.isNotBlank()) "🧠 当前活跃模型: ${active.substringAfter("::", active)}"
                 else "🧠 当前为 qtai-sj 自动化切换模式"
             }
@@ -148,5 +192,37 @@ object SkillExecutor {
         if (b < 1024) return "$b B"
         if (b < 1048576) return "%.1f KB".format(b / 1024.0)
         return "%.1f MB".format(b / 1048576.0)
+    }
+
+    /** 当前用户/全局强制池 */
+    private fun currentUserPool(database: Database, userId: Long): List<String> {
+        val raw = if (userId > 0) {
+            database.getUserConfig(userId, "forced_pool_keys", "").ifBlank {
+                database.getConfig("forced_pool_keys", "")
+            }
+        } else {
+            database.getConfig("forced_pool_keys", "")
+        }
+        return raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
+    }
+
+    /** 在池中轮转切换（dir=1下一个 / dir=-1上一个），更新首尾活跃 */
+    private fun rotatePool(pool: List<String>, dir: Int, database: Database, userId: Long): String {
+        if (pool.isEmpty()) return ""
+        val currentActive = if (userId > 0) database.getUserConfig(userId, "active_model_key", "")
+            else database.getConfig("active_model_key", "")
+        val idx = pool.indexOf(currentActive).let { if (it < 0) 0 else it }
+        val newIdx = ((idx + dir) % pool.size + pool.size) % pool.size
+        val newKey = pool[newIdx]
+        // 新模型置首位（模拟点灯）
+        val reordered = (listOf(newKey) + pool.filter { it != newKey })
+        if (userId > 0) {
+            database.setUserConfig(userId, "forced_pool_keys", reordered.joinToString(","))
+            database.setUserConfig(userId, "active_model_key", newKey)
+        } else {
+            database.setConfig("forced_pool_keys", reordered.joinToString(","))
+            database.setConfig("active_model_key", newKey)
+        }
+        return newKey
     }
 }

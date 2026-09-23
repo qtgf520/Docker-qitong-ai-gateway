@@ -189,8 +189,32 @@ loaders.settings = function(){
       '<div class="card" id="brainCard"><h3>🧩 qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
       '<div class="card" id="langCard"><h3>🌐 界面语言</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
       '<div class="card" id="bakCard"><h3>💾 数据备份/恢复</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-      '<div class="card" id="skillCard"><h3>🧰 自定义技能</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>'
+      '<div class="card" id="skillCard"><h3>🧰 自定义技能</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+      (isAdmin ? '<div class="card" id="notifyCard"><h3>🔔 通知设置</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>' : '')
     ].join('');
+    // 通知设置（仅管理员）
+    if(isAdmin){
+      api('/api/notify/config').then(function(nr){
+        if(nr && nr.code === 0){
+          var n = nr.data || {};
+          var nc = $('notifyCard');
+          if(nc){
+            nc.innerHTML = '<h3>🔔 通知设置（钉钉 / 邮箱）</h3>' +
+              '<div class="form-row"><label><input type="checkbox" id="ntDing"'+((n.enable_dingtalk==="true")?' checked':'')+'> 启用钉钉通知</label><small style="color:var(--muted);display:block;margin-top:4px">新用户注册 / 新工单时推送到钉钉群</small></div>' +
+              '<div class="form-row"><label>钉钉 Webhook 地址</label><input id="ntWebhook" class="input" value="'+esc(n.dingtalk_webhook||'')+'" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."></div>' +
+              '<hr style="border-color:var(--border);margin:10px 0">' +
+              '<div class="form-row"><label><input type="checkbox" id="ntEmail"'+((n.enable_email==="true")?' checked':'')+'> 启用邮箱通知</label></div>' +
+              '<div class="form-row"><label>SMTP 服务器</label><input id="ntSmtpHost" class="input" value="'+esc(n.email_smtp_host||'')+'" placeholder="smtp.qq.com"></div>' +
+              '<div class="form-row"><label>SMTP 端口（SSL默认465）</label><input id="ntSmtpPort" class="input" value="'+esc(n.email_smtp_port||'465')+'"></div>' +
+              '<div class="form-row"><label>邮箱账号</label><input id="ntEmailUser" class="input" value="'+esc(n.email_username||'')+'" placeholder="xxx@qq.com"></div>' +
+              '<div class="form-row"><label>邮箱授权码/密码</label><input id="ntEmailPwd" class="input" type="password" value="'+esc(n.email_password||'')+'" placeholder="SMTP 授权码"></div>' +
+              '<div class="form-row"><label>收件人（管理员）</label><input id="ntEmailTo" class="input" value="'+esc(n.email_to||'')+'" placeholder="admin@example.com"></div>' +
+              '<div class="action-bar"><button class="btn" onclick="saveNotifyCfg()">保存通知设置</button>&nbsp;<button class="btn-ghost" onclick="testNotifyCfg()">📨 发送测试通知</button></div>' +
+              '<small style="color:var(--muted)">通知事件：新用户注册、新工单提交（对齐 dingtalk-notification.php）</small>';
+          }
+        }
+      });
+    }
     // 分销信息
     api('/api/me/distribution').then(function(dr){
       if(dr && dr.code === 0 && dr.data){
@@ -383,6 +407,27 @@ window.saveMemoryCfg = function(){
   };
   api('/api/memory/config', { method:'POST', body: body }).then(function(r){
     if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
+  });
+};
+window.saveNotifyCfg = function(){
+  var body = {
+    dingtalk_webhook: $('ntWebhook').value.trim(),
+    enable_dingtalk: $('ntDing').checked ? 'true' : 'false',
+    email_smtp_host: $('ntSmtpHost').value.trim(),
+    email_smtp_port: $('ntSmtpPort').value.trim(),
+    email_username: $('ntEmailUser').value.trim(),
+    email_password: $('ntEmailPwd').value.trim(),
+    email_to: $('ntEmailTo').value.trim(),
+    email_tls: 'true',
+    enable_email: $('ntEmail').checked ? 'true' : 'false'
+  };
+  api('/api/notify/config', { method:'POST', body: body }).then(function(r){
+    if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
+  });
+};
+window.testNotifyCfg = function(){
+  api('/api/notify/test', { method:'POST', body: { message: '【綦桐AI网关】测试通知，配置成功！' } }).then(function(r){
+    if(r.code === 0){ toast('📨 ' + r.msg, true); } else toast(r.msg, false);
   });
 };
 // ===== 数据备份/恢复 =====
@@ -688,7 +733,7 @@ window.delAnnouncement = function(id){
 // ===== 关于我们（对齐原APP AboutScreen） =====
 loaders.about = function(){
   var box = $('view-about');
-  var ver = '3.18.22-14';
+  var ver = '3.18.22-15';
   box.innerHTML = [
     '<div class="card" style="text-align:center;padding:30px">',
       '<div style="font-size:46px;margin-bottom:10px">⚡</div>',

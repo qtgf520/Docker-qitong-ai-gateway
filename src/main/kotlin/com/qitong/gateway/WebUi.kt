@@ -40,7 +40,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   <div class="logo">
     <div class="icon">⚡</div>
     <h1>綦桐AI网关</h1>
-    <p>Docker Server v3.18.22-14 · 后台管理</p>
+    <p>Docker Server v3.18.22-15 · 后台管理</p>
   </div>
   <div class="tabs">
     <button id="tabL" class="active" onclick="switchTab('L')">登录</button>
@@ -59,7 +59,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
     <button class="btn" onclick="doRegister()">注 册</button>
   </div>
   <div id="msg" class="msg"></div>
-  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-14 Server</div>
+  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-15 Server</div>
 </div>
 <script>
 function $(id){return document.getElementById(id)}
@@ -112,7 +112,7 @@ ${adminCss()}
   <!-- 顶栏 -->
   <header class="topbar">
     <button class="burger" id="burger" onclick="toggleSidebar()">☰</button>
-    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-14</span></div>
+    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-15</span></div>
     <div class="topbar-right">
       <span id="onlineDot" class="dot"></span>
       <span id="userInfo" class="user-name">未登录</span>
@@ -237,6 +237,8 @@ tr:hover td{background:rgba(100,116,139,.06)}
 .badge.gray{background:rgba(148,163,184,.15);color:var(--muted)}
 .pool-dot{width:10px;height:10px;border-radius:50%;background:#334155;border:1.5px solid #475569;display:inline-block;cursor:pointer;transition:.2s;vertical-align:middle}
 .pool-dot.on{background:var(--green);border-color:var(--green);box-shadow:0 0 6px var(--green);animation:poolPulse 1.5s ease-in-out infinite}
+.pool-dot.pooled{background:rgba(245,158,11,.6);border-color:#F59E0B;box-shadow:0 0 4px rgba(245,158,11,.5)}
+.badge.cyan{background:rgba(6,182,212,.15);color:var(--cyan)}
 @keyframes poolPulse{0%,100%{opacity:1;box-shadow:0 0 4px var(--green)}50%{opacity:.6;box-shadow:0 0 10px var(--green)}}
 .btn-ghost.danger{color:var(--red)!important;border-color:rgba(239,68,68,.4)!important}
 .btn-ghost.danger:hover{background:rgba(239,68,68,.15)!important}

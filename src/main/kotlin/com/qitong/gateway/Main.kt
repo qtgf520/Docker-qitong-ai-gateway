@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-14
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-15
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-14    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-15    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-14"))
+                put("version", JsonPrimitive("3.18.22-15"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -253,14 +253,24 @@ fun Application.moduleWeb(database: Database) {
         // 认证
         post("/api/auth/register") {
             val body = call.receive<JsonObject>()
+            val uname = body["username"]?.jsonPrimitive?.content ?: ""
             val result = AuthManager.register(
                 database,
-                body["username"]?.jsonPrimitive?.content ?: "",
+                uname,
                 body["password"]?.jsonPrimitive?.content ?: "",
                 body["displayName"]?.jsonPrimitive?.content ?: "",
                 body["inviteCode"]?.jsonPrimitive?.content ?: ""
             )
-            if (result.isSuccess) AdminApi.ok(call, "注册成功")
+            if (result.isSuccess) {
+                // 新用户注册通知管理员（钉钉/邮箱）- 异步线程
+                Thread {
+                    try { kotlinx.coroutines.runBlocking { com.qitong.gateway.notify.NotificationManager.notify(
+                        database, "🆕 新用户注册",
+                        "新用户注册: $uname\n时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(java.util.Date())}"
+                    ) } } catch (_: Exception) {}
+                }.start()
+                AdminApi.ok(call, "注册成功")
+            }
             else AdminApi.fail(call, result.exceptionOrNull()?.message ?: "注册失败", 400)
         }
         post("/api/auth/login") {
@@ -582,7 +592,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-14"))
+                put("version", JsonPrimitive("3.18.22-15"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -941,6 +951,13 @@ fun Application.moduleWeb(database: Database) {
             if (title.isBlank()) { AdminApi.fail(call, "请填写标题", 400); return@post }
             val id = database.addTicket(user.id, title)
             database.addOpLog(user.id, user.username, "提交工单", title, call.request.local.remoteHost)
+            // 新工单通知管理员
+            Thread {
+                try { kotlinx.coroutines.runBlocking { com.qitong.gateway.notify.NotificationManager.notify(
+                    database, "🎫 新工单",
+                    "用户 ${user.username} 提交工单: $title"
+                ) } } catch (_: Exception) {}
+            }.start()
             AdminApi.ok(call, mapOf("id" to id), "工单已提交")
         }
         get("/api/tickets/{id}/messages") {
@@ -990,6 +1007,38 @@ fun Application.moduleWeb(database: Database) {
             if (user.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
             database.clearOpLogs()
             AdminApi.ok(call, null, "日志已清空")
+        }
+        // ===== 通知设置（钉钉Webhook + 邮箱SMTP，仅管理员） =====
+        get("/api/notify/config") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
+            AdminApi.ok(call, com.qitong.gateway.notify.NotificationManager.getConfig(database), "ok")
+        }
+        post("/api/notify/config") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val cfg = mutableMapOf<String, String>()
+            body["dingtalk_webhook"]?.let { cfg["dingtalk_webhook"] = it.jsonPrimitive.content }
+            body["email_smtp_host"]?.let { cfg["email_smtp_host"] = it.jsonPrimitive.content }
+            body["email_smtp_port"]?.let { cfg["email_smtp_port"] = it.jsonPrimitive.content }
+            body["email_username"]?.let { cfg["email_username"] = it.jsonPrimitive.content }
+            body["email_password"]?.let { cfg["email_password"] = it.jsonPrimitive.content }
+            body["email_to"]?.let { cfg["email_to"] = it.jsonPrimitive.content }
+            body["email_tls"]?.let { cfg["email_tls"] = it.jsonPrimitive.content }
+            body["enable_dingtalk"]?.let { cfg["enable_dingtalk"] = it.jsonPrimitive.content }
+            body["enable_email"]?.let { cfg["enable_email"] = it.jsonPrimitive.content }
+            com.qitong.gateway.notify.NotificationManager.saveConfig(database, cfg)
+            database.addOpLog(u.id, u.username, "更新通知配置", "钉钉/邮箱", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "通知配置已保存")
+        }
+        post("/api/notify/test") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val msg = body["message"]?.jsonPrimitive?.content ?: "【綦桐AI网关】测试通知，配置成功！"
+            com.qitong.gateway.notify.NotificationManager.notify(database, "綦桐AI网关通知", msg)
+            AdminApi.ok(call, null, "通知已发送（钉钉/邮箱）")
         }
         // ===== qtai-sj MCP 控制接口（对齐APP远程控制） =====
         // action: status(状态) / setbrain(设大脑) / setactive(设活跃模型) / speedtest(测速) / toggle(启停) / forced(强制池)
@@ -1115,7 +1164,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-14"))
+                    put("version", JsonPrimitive("3.18.22-15"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
@@ -1124,8 +1173,6 @@ fun Application.moduleWeb(database: Database) {
                     put("gatewayPort", JsonPrimitive(database.getConfig("gateway_port", "18889")))
                     put("serverIp", JsonPrimitive(serverIp()))
                     put("localAddr", JsonPrimitive("http://" + serverIp() + ":" + database.getConfig("gateway_port", "18889") + "/v1"))
-                    // 活跃模型
-                    put("activeModel", JsonPrimitive(database.getConfig("active_model_key", "").substringAfter("::", "")))
                     // 强制故障池：管理员=全局池；用户=自己的池
                     val forcedPoolStr = if (isAdmin) {
                         database.getConfig("forced_pool_keys", "")
@@ -1134,6 +1181,20 @@ fun Application.moduleWeb(database: Database) {
                     } else {
                         database.getConfig("forced_pool_keys", "")
                     }
+                    // 活跃模型：用户=自己的（点灯后）；管理员=全局
+                    val activeStr = if (isAdmin) {
+                        database.getConfig("active_model_key", "").substringAfter("::", "")
+                    } else if (viewerId > 0) {
+                        val userActive = database.getUserConfig(viewerId, "active_model_key", "")
+                        if (userActive.isNotBlank()) userActive.substringAfter("::", userActive)
+                        else database.getConfig("active_model_key", "").substringAfter("::", "")
+                    } else {
+                        database.getConfig("active_model_key", "").substringAfter("::", "")
+                    }
+                    put("activeModel", JsonPrimitive(activeStr))
+                    // 当前真实活跃（含强制池首位）
+                    val forcedActive = forcedPoolStr.split(",").filter { it.isNotBlank() }.firstOrNull()
+                    put("forcedActive", JsonPrimitive(forcedActive?.substringAfter("::", forcedActive) ?: ""))
                     put("forcedPool", JsonArray(forcedPoolStr.split(",").filter { it.isNotBlank() }.map { JsonPrimitive(it) }))
                     // 自动测速：管理员=全局；用户=自己的
                     val autoSpeedStr = if (isAdmin) {
@@ -1206,22 +1267,49 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, "已设置活跃模型")
         }
 
-        // 强制故障池：管理员=全局池；用户=自己的池
+        // 强制故障池 + 点灯强制切换：管理员=全局池；用户=自己的池（按key属主隔离）
         post("/api/gateway/forced-pool") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
             val action = body["action"]?.jsonPrimitive?.content ?: "add"
             val modelKey = body["modelKey"]?.jsonPrimitive?.content ?: ""
             val isAdmin = u.role == "admin"
-            val key = if (isAdmin) "forced_pool_keys" else "user:${u.id}:forced_pool_keys"
+            // 非管理员走用户级隔离（用户自己的池 + 活跃模型互不串）
+            if (!isAdmin) {
+                val proxy = GatewayProxy(database)
+                when (action) {
+                    "add" -> {
+                        proxy.userForceModel(u.id, modelKey) // 点灯=强制切到该模型（置首位+活跃）
+                        val pool = database.getUserConfig(u.id, "forced_pool_keys", "").split(",").filter { it.isNotBlank() }
+                        AdminApi.ok(call, mapOf("forcedPool" to pool, "activeModel" to modelKey.substringAfter("::", modelKey)), "已强制切换到 $modelKey")
+                    }
+                    "remove" -> {
+                        proxy.userUnforceModel(u.id, modelKey)
+                        val pool = database.getUserConfig(u.id, "forced_pool_keys", "").split(",").filter { it.isNotBlank() }
+                        AdminApi.ok(call, mapOf("forcedPool" to pool, "activeModel" to database.getUserConfig(u.id, "active_model_key", "").substringAfter("::", "")), "已移出强制池")
+                    }
+                    "clear" -> {
+                        database.setUserConfig(u.id, "forced_pool_keys", "")
+                        database.setUserConfig(u.id, "active_model_key", "")
+                        AdminApi.ok(call, mapOf("forcedPool" to emptyList<String>(), "activeModel" to ""), "已清空，恢复自动选择")
+                    }
+                    else -> AdminApi.fail(call, "未知操作", 400)
+                }
+                return@post
+            }
+            // 管理员：全局池（不改用户级）
+            val key = "forced_pool_keys"
             val current = database.getConfig(key, "").split(",").filter { it.isNotBlank() }.toMutableList()
             when (action) {
-                "add" -> if (modelKey.isNotBlank() && modelKey !in current) current.add(modelKey)
+                "add" -> {
+                    if (modelKey.isNotBlank() && modelKey !in current) current.add(0, modelKey) // 点灯=置首位
+                    if (modelKey.isNotBlank()) database.setConfig("active_model_key", modelKey)
+                }
                 "remove" -> current.remove(modelKey)
                 "clear" -> current.clear()
             }
             database.setConfig(key, current.joinToString(","))
-            AdminApi.ok(call, mapOf("forcedPool" to current), "已更新强制故障池")
+            AdminApi.ok(call, mapOf("forcedPool" to current, "activeModel" to database.getConfig("active_model_key", "").substringAfter("::", "")), "已更新强制故障池")
         }
 
         // 自动测速开关 + 间隔：管理员=全局；用户=自己的

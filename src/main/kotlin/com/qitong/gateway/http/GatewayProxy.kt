@@ -61,9 +61,17 @@ class GatewayProxy(private val database: Database) {
 
     // ============ 模型选择 ============
 
-    /** 解析请求模型：qtai-sj → 当前活跃模型 / 健康缓存最优 */
-    fun resolveModelId(requested: String, models: List<AiModel>): String {
+    /** 解析请求模型：qtai-sj → 当前用户活跃模型 / 用户强制池首位 / 全局强制池首位 / 健康缓存最优 */
+    fun resolveModelId(requested: String, models: List<AiModel>, userId: Long = 0L): String {
         if (requested != "qtai-sj") return requested
+        // 用户级活跃模型（点灯/强制选择后写入，key属主独立）
+        if (userId > 0) {
+            val userActive = database.getUserConfig(userId, "active_model_key", "")
+            if (userActive.isNotBlank()) return userActive.substringAfter("::", userActive)
+            // 用户池首位
+            val userPool = database.getUserConfig(userId, "forced_pool_keys", "")
+            if (userPool.isNotBlank()) return userPool.split(",").first().trim().substringAfter("::", userPool.split(",").first().trim())
+        }
         val active = database.getConfig("active_model_key", "")
         if (active.isNotBlank()) return active.substringAfter("::", active)
         val best = GatewayScheduler.getBestModel()
@@ -113,6 +121,35 @@ class GatewayProxy(private val database: Database) {
         val others = available.filter { it.modelId != (primary?.modelId) || it.providerId != (primary?.providerId) }
         val sortedOthers = GatewayScheduler.getSortedModels(others)
         return (listOfNotNull(primary) + sortedOthers).distinctBy { it.providerId to it.modelId }
+    }
+
+    /** 保存用户活跃模型（点灯/强制切换；按key属主隔离） */
+    fun setUserActiveModel(userId: Long, modelKey: String) {
+        if (userId <= 0) return
+        database.setUserConfig(userId, "active_model_key", modelKey)
+    }
+
+    /** 用户强制池加入（点灯=强制切到该模型，置为池首位 + 活跃模型） */
+    fun userForceModel(userId: Long, modelKey: String) {
+        if (userId <= 0) return
+        val cur = database.getUserConfig(userId, "forced_pool_keys", "")
+        val list = cur.split(",").map { it.trim() }.filter { it.isNotBlank() && it != modelKey }.toMutableList()
+        list.add(0, modelKey) // 最新选中置首位
+        database.setUserConfig(userId, "forced_pool_keys", list.joinToString(","))
+        database.setUserConfig(userId, "active_model_key", modelKey)
+    }
+
+    /** 用户强制池移除 */
+    fun userUnforceModel(userId: Long, modelKey: String) {
+        if (userId <= 0) return
+        val cur = database.getUserConfig(userId, "forced_pool_keys", "")
+        val list = cur.split(",").map { it.trim() }.filter { it.isNotBlank() && it != modelKey }
+        database.setUserConfig(userId, "forced_pool_keys", list.joinToString(","))
+        // 若移除的是活跃模型，切到池下一个
+        val active = database.getUserConfig(userId, "active_model_key", "")
+        if (active == modelKey) {
+            database.setUserConfig(userId, "active_model_key", list.firstOrNull() ?: "")
+        }
     }
 
     // ============ 参数修正 ============
@@ -198,8 +235,8 @@ class GatewayProxy(private val database: Database) {
             if (rule.targetModelKey.isNotBlank()) targetModelOverride = rule.targetModelKey
         }
 
-        // qtai-sj 解析
-        val resolvedModelId = targetModelOverride ?: resolveModelId(modelId, models)
+        // qtai-sj 解析（传入 ownerId 实现用户级活跃模型/强制池隔离）
+        val resolvedModelId = targetModelOverride ?: resolveModelId(modelId, models, ownerId)
         modelId = resolvedModelId
 
         // 构建尝试列表（用户级池优先）

@@ -73,9 +73,10 @@ loaders.dashboard = function(){
           '<div class="stat"><div class="num">'+(bal.totalRecharge||0).toFixed(2)+'</div><div class="lbl">累计充值</div></div>';
       }
     });
-    // 模型排行榜（三指标 + 全部已启用模型 + 点击加入/移出强制池）
+    // 模型排行榜（三指标 + 全部已启用模型 + 点灯=强制切换）
     var rankRows = '';
     var pool = st.forcedPool || [];
+    var active = st.forcedActive || st.activeModel || '';  // 当前活跃（含强制池首位）
     (st.pipelineSorted || []).forEach(function(key, i){
       var parts = key.split('::');
       var mid = parts.length > 1 ? parts[1] : key;
@@ -83,21 +84,24 @@ loaders.dashboard = function(){
       var h = (st.healthCache || []).find(function(x){ return x.key === key; });
       var ok = h ? h.isHealthy : false;
       var inPool = pool.indexOf(key) >= 0;
+      var isActive = (mid === active) || (inPool && pool[0] === key);  // 亮灯=当前强制活跃
       var lat = (h && h.isHealthy && h.totalMs > 0) ? h.totalMs + 'ms' : '—';
       var ttft = (h && h.isHealthy && h.ttftMs > 0) ? h.ttftMs + 'ms' : '—';
       var tps = (h && h.isHealthy && h.tps > 0) ? h.tps.toFixed(2) + ' tok/s' : '—';
-      var poolDot = '<span class="pool-dot ' + (inPool ? 'on' : '') + '" title="' + (inPool ? '在强制故障池' : '未在池中') + '"></span>';
+      // 池灯：点击=强制切换到此模型（点灯）
+      var poolDot = '<span class="pool-dot ' + (isActive ? 'on' : (inPool ? 'pooled' : '')) + '" title="' + (isActive ? '当前强制活跃，点击移出' : '点击强制切换到此模型') + '" onclick="forceSwitchModel(\'' + key.replace(/'/g, '') + '\')" style="cursor:pointer"></span>';
       var poolBtn = '<button class="btn-ghost ' + (inPool ? 'danger' : '') + '" style="padding:2px 8px;font-size:12px" onclick="toggleForcedModel(\'' + key.replace(/'/g, '') + '\')">' + (inPool ? '移出池' : '加入池') + '</button>';
-      rankRows += '<tr><td>' + poolDot + '</td><td>' + (i+1) + '</td><td>' + esc(mid) + '</td><td>P' + esc(pid) + '</td><td>' + ttft + '</td><td>' + tps + '</td><td>' + lat + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td><td>' + poolBtn + '</td></tr>';
+      rankRows += '<tr><td>' + poolDot + '</td><td>' + (i+1) + '</td><td>' + esc(mid) + (isActive ? ' <span class="badge cyan">▶ 当前</span>' : '') + '</td><td>P' + esc(pid) + '</td><td>' + ttft + '</td><td>' + tps + '</td><td>' + lat + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td><td>' + poolBtn + '</td></tr>';
     });
-    // 强制故障池（池灯展示）
+    // 强制故障池（池灯展示，首位=当前活跃）
     var poolHtml = '';
     if(pool.length){
       poolHtml = '<div class="card"><h3>🎯 强制故障池 (' + pool.length + ')</h3><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' +
-        pool.map(function(k){
+        pool.map(function(k, idx){
           var mid = k.split('::').length > 1 ? k.split('::')[1] : k;
-          return '<span class="badge purple">' + esc(mid) + ' <span class="pool-dot on"></span></span>';
-        }).join('') + '</div><button class="btn-ghost" onclick="clearForcedPool()">↩️ 清空</button></div>';
+          var isTop = idx === 0;
+          return '<span class="badge ' + (isTop ? 'green' : 'purple') + '" style="cursor:pointer" onclick="forceSwitchModel(\'' + k.replace(/'/g, '') + '\')" title="点击强制切换">' + (isTop ? '▶ ' : '') + esc(mid) + ' <span class="pool-dot ' + (isTop ? 'on' : '') + '"></span></span>';
+        }).join('') + '</div><span style="font-size:12px;color:var(--muted)">点灯/点击=强制切换到此模型；首位=当前活跃，qtai-sj 优先走它</span><div style="margin-top:8px"><button class="btn-ghost" onclick="clearForcedPool()">↩️ 清空</button></div></div>';
     }
     // 地址行
     var gwPort = st.gatewayPort || 18889;
@@ -231,6 +235,15 @@ window.toggleForcedModel = function(key){
       toast(r2.msg, r2.code === 0);
       loaders.dashboard();
     });
+  });
+};
+// 点灯=强制切换到此模型（对齐原APP：点池灯=强制切到该模型，qtai-sj 优先走它）
+window.forceSwitchModel = function(key){
+  api('/api/gateway/forced-pool', { method:'POST', body: { action: 'add', modelKey: key } }).then(function(r){
+    if(r.code === 0){
+      toast('⚡ 已强制切换到 ' + ((r.data && r.data.activeModel) || key), true);
+      loaders.dashboard();
+    } else toast(r.msg, false);
   });
 };
 window.clearForcedPool = function(){
