@@ -40,7 +40,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   <div class="logo">
     <div class="icon">⚡</div>
     <h1>綦桐AI网关</h1>
-    <p>Docker Server v3.18.22-17 · 后台管理</p>
+    <p>Docker Server v3.18.22-18 · 后台管理</p>
   </div>
   <div style="text-align:center;margin-bottom:14px">
     <select id="lgLang" style="background:rgba(15,23,42,.6);border:1px solid rgba(100,116,139,.3);color:#94A3B8;border-radius:8px;padding:6px 10px;font-size:12px;outline:none" onchange="saveLoginLang()">
@@ -68,7 +68,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
     <button class="btn" onclick="doRegister()">注 册</button>
   </div>
   <div id="msg" class="msg"></div>
-  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-17 Server</div>
+  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-18 Server</div>
 </div>
 <script>
 function $(id){return document.getElementById(id)}
@@ -124,7 +124,7 @@ ${adminCss()}
   <!-- 顶栏 -->
   <header class="topbar">
     <button class="burger" id="burger" onclick="toggleSidebar()">☰</button>
-    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-17</span></div>
+    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-18</span></div>
     <div class="topbar-right">
       <input id="globalSearch" class="global-search" placeholder="🔍 搜索页面..." onkeydown="if(event.key==='Enter')globalSearch()">
       <span id="onlineDot" class="dot"></span>
@@ -172,15 +172,12 @@ ${adminCss()}
     <div id="view-users" class="view"></div>
     <div id="view-about" class="view"></div>
   </main>
-  <!-- 底部导航（移动端） -->
+  <!-- 底部导航（移动端）· 精简为4个核心 -->
   <nav class="bottom-nav" id="bottomNav">
     <a data-page="dashboard" class="active"><span>🏠</span><b>首页</b></a>
     <a data-page="providers"><span>🏪</span><b>服务商</b></a>
     <a data-page="models"><span>🤖</span><b>模型</b></a>
-    <a data-page="chat"><span>💬</span><b>聊天</b></a>
-    <a data-page="tickets"><span>🎫</span><b>工单</b></a>
-    <a data-page="profile"><span>👤</span><b>我的</b></a>
-    <a data-page="settings"><span>⚙️</span><b>设置</b></a>
+    <a data-page="chat"><span>💬</span><b>内置聊天</b></a>
   </nav>
 </div>
 <!-- 弹窗 -->

@@ -777,7 +777,7 @@ window.delAnnouncement = function(id){
 // ===== 关于我们（对齐原APP AboutScreen） =====
 loaders.about = function(){
   var box = $('view-about');
-  var ver = '3.18.22-17';
+  var ver = '3.18.22-18';
   box.innerHTML = [
     '<div class="card" style="text-align:center;padding:30px">',
       '<div style="font-size:46px;margin-bottom:10px">⚡</div>',
