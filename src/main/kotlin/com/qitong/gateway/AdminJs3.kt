@@ -425,7 +425,16 @@ window.saveBrain = function(){
 window.saveLang = function(){
   var lang = $('langSel').value;
   api('/api/me/language', { method:'POST', body: { language: lang } }).then(function(r){
-    if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
+    if(r.code === 0){
+      saveLangLocal(lang);  // 立即应用本地菜单翻译
+      toast('✅ ' + r.msg, true);
+      // 刷新当前页使其内容跟随新语言
+      var cur = document.querySelector('.view.active');
+      if(cur){
+        var pg = cur.id.replace('view-','');
+        if(loaders[pg]) loaders[pg]();
+      }
+    } else toast(r.msg, false);
   });
 };
 window.saveMemoryCfg = function(){
@@ -768,7 +777,7 @@ window.delAnnouncement = function(id){
 // ===== 关于我们（对齐原APP AboutScreen） =====
 loaders.about = function(){
   var box = $('view-about');
-  var ver = '3.18.22-16';
+  var ver = '3.18.22-17';
   box.innerHTML = [
     '<div class="card" style="text-align:center;padding:30px">',
       '<div style="font-size:46px;margin-bottom:10px">⚡</div>',
@@ -794,9 +803,18 @@ loaders.about = function(){
   ].join('');
 };
 // ===== 启动 =====
+// 先加载用户语言并应用菜单翻译
+api('/api/me/language').then(function(lr){
+  if(lr && lr.code === 0 && lr.data && lr.data.language){
+    curLang = lr.data.language;
+    localStorage.setItem('qt_lang', curLang);
+    applyLang();
+  }
+});
 api('/api/auth/me').then(function(r){
   if(r.code === 0){
     var me = r.data;
+    localStorage.setItem('qt_user', me.displayName || me.username || '');
     $('userInfo').textContent = me.displayName || me.username;
     var isAdmin = me.role === 'admin';
     // 管理员功能隐藏：普通用户看不到 admin-only 菜单
@@ -805,6 +823,7 @@ api('/api/auth/me').then(function(r){
     // 工单中心：管理员看到全部工单（含管理回复）
   } else { localStorage.removeItem('qt_token'); location.href='/login'; }
 });
+applyLang();
 switchView('dashboard');
 """
 }

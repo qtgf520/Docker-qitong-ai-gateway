@@ -12,6 +12,36 @@ function toast(msg, ok){ var t=$('toast'); t.textContent=msg; t.className='toast
 function fmtBytes(b){ b=b||0; if(b<1024)return b+'B'; if(b<1048576)return(b/1024).toFixed(1)+'KB'; if(b<1073741824)return(b/1048576).toFixed(1)+'MB'; return(b/1073741824).toFixed(2)+'GB'; }
 function fmtNum(n){ n=n||0; return n.toLocaleString?n.toLocaleString():String(n); }
 function fmtUptime(s){ s=s||0; if(s<60)return s+'秒'; if(s<3600)return Math.floor(s/60)+'分钟'; if(s<86400)return Math.floor(s/3600)+'小时'; return Math.floor(s/86400)+'天'; }
+// ===== 🌐 i18n 多语言引擎（15语言全界面翻译） =====
+var I18N = {
+  zh: { home:'首页', providers:'服务商', models:'模型', speedtest:'测速排行', chat:'内置聊天', keys:'API密钥', rules:'路由规则', usage:'用量统计', tickets:'工单中心', profile:'个人中心', settings:'网关设置', logs:'操作日志', announcements:'公告管理', users:'用户管理', about:'关于我们', search:'搜索', online:'在线', offline:'离线', save:'保存', cancel:'取消', delete:'删除', edit:'编辑', add:'添加', confirm:'确定', loading:'加载中...', none:'暂无数据' },
+  'zh-tw': { home:'首頁', providers:'服務商', models:'模型', speedtest:'測速排行', chat:'內置聊天', keys:'API密鑰', rules:'路由規則', usage:'用量統計', tickets:'工單中心', profile:'個人中心', settings:'網關設置', logs:'操作日誌', announcements:'公告管理', users:'用戶管理', about:'關於我們', search:'搜索', online:'在線', offline:'離線', save:'保存', cancel:'取消', delete:'刪除', edit:'編輯', add:'添加', confirm:'確定', loading:'加載中...', none:'暫無數據' },
+  en: { home:'Home', providers:'Providers', models:'Models', speedtest:'Speed Test', chat:'Chat', keys:'API Keys', rules:'Routing', usage:'Usage', tickets:'Tickets', profile:'Profile', settings:'Settings', logs:'Logs', announcements:'Announcements', users:'Users', about:'About', search:'Search', online:'Online', offline:'Offline', save:'Save', cancel:'Cancel', delete:'Delete', edit:'Edit', add:'Add', confirm:'OK', loading:'Loading...', none:'No data' },
+  ja: { home:'ホーム', providers:'プロバイダー', models:'モデル', speedtest:'速度テスト', chat:'チャット', keys:'APIキー', rules:'ルーティング', usage:'使用量', tickets:'チケット', profile:'プロフィール', settings:'設定', logs:'ログ', announcements:'お知らせ', users:'ユーザー', about:'情報', search:'検索', online:'オンライン', offline:'オフライン', save:'保存', cancel:'キャンセル', delete:'削除', edit:'編集', add:'追加', confirm:'OK', loading:'読み込み中...', none:'データなし' },
+  ko: { home:'홈', providers:'제공자', models:'모델', speedtest:'속도 테스트', chat:'채팅', keys:'API 키', rules:'라우팅', usage:'사용량', tickets:'티켓', profile:'프로필', settings:'설정', logs:'로그', announcements:'공지', users:'사용자', about:'정보', search:'검색', online:'온라인', offline:'오프라인', save:'저장', cancel:'취소', delete:'삭제', edit:'편집', add:'추가', confirm:'확인', loading:'로딩 중...', none:'데이터 없음' },
+  es: { home:'Inicio', providers:'Proveedores', models:'Modelos', speedtest:'Test Velocidad', chat:'Chat', keys:'Claves API', rules:'Rutas', usage:'Uso', tickets:'Tickets', profile:'Perfil', settings:'Ajustes', logs:'Registros', announcements:'Anuncios', users:'Usuarios', about:'Acerca', search:'Buscar', online:'En línea', offline:'Fuera', save:'Guardar', cancel:'Cancelar', delete:'Eliminar', edit:'Editar', add:'Añadir', confirm:'OK', loading:'Cargando...', none:'Sin datos' },
+  fr: { home:'Accueil', providers:'Fournisseurs', models:'Modèles', speedtest:'Test Vitesse', chat:'Chat', keys:'Clés API', rules:'Routage', usage:'Usage', tickets:'Tickets', profile:'Profil', settings:'Paramètres', logs:'Journaux', announcements:'Annonces', users:'Utilisateurs', about:'À propos', search:'Rechercher', online:'En ligne', offline:'Hors ligne', save:'Enregistrer', cancel:'Annuler', delete:'Supprimer', edit:'Modifier', add:'Ajouter', confirm:'OK', loading:'Chargement...', none:'Aucune donnée' },
+  de: { home:'Start', providers:'Anbieter', models:'Modelle', speedtest:'Geschwindigkeit', chat:'Chat', keys:'API-Schlüssel', rules:'Routing', usage:'Nutzung', tickets:'Tickets', profile:'Profil', settings:'Einstellungen', logs:'Protokolle', announcements:'Ankündigungen', users:'Benutzer', about:'Über', search:'Suchen', online:'Online', offline:'Offline', save:'Speichern', cancel:'Abbrechen', delete:'Löschen', edit:'Bearbeiten', add:'Hinzufügen', confirm:'OK', loading:'Laden...', none:'Keine Daten' },
+  ru: { home:'Главная', providers:'Провайдеры', models:'Модели', speedtest:'Тест скорости', chat:'Чат', keys:'API-ключи', rules:'Маршруты', usage:'Использование', tickets:'Тикеты', profile:'Профиль', settings:'Настройки', logs:'Журналы', announcements:'Объявления', users:'Пользователи', about:'О нас', search:'Поиск', online:'В сети', offline:'Офлайн', save:'Сохранить', cancel:'Отмена', delete:'Удалить', edit:'Изменить', add:'Добавить', confirm:'ОК', loading:'Загрузка...', none:'Нет данных' },
+  pt: { home:'Início', providers:'Provedores', models:'Modelos', speedtest:'Teste Velocidade', chat:'Chat', keys:'Chaves API', rules:'Rotas', usage:'Uso', tickets:'Tickets', profile:'Perfil', settings:'Configurações', logs:'Registros', announcements:'Anúncios', users:'Usuários', about:'Sobre', search:'Buscar', online:'Online', offline:'Offline', save:'Salvar', cancel:'Cancelar', delete:'Excluir', edit:'Editar', add:'Adicionar', confirm:'OK', loading:'Carregando...', none:'Sem dados' },
+  vi: { home:'Trang chủ', providers:'Nhà cung cấp', models:'Mô hình', speedtest:'Kiểm tra tốc độ', chat:'Trò chuyện', keys:'Khóa API', rules:'Định tuyến', usage:'Sử dụng', tickets:'Ticket', profile:'Hồ sơ', settings:'Cài đặt', logs:'Nhật ký', announcements:'Thông báo', users:'Người dùng', about:'Giới thiệu', search:'Tìm kiếm', online:'Trực tuyến', offline:'Ngoại tuyến', save:'Lưu', cancel:'Hủy', delete:'Xóa', edit:'Sửa', add:'Thêm', confirm:'OK', loading:'Đang tải...', none:'Không có dữ liệu' },
+  th: { home:'หน้าแรก', providers:'ผู้ให้บริการ', models:'โมเดล', speedtest:'ทดสอบความเร็ว', chat:'แชท', keys:'คีย์ API', rules:'เส้นทาง', usage:'การใช้งาน', tickets:'ตั๋ว', profile:'โปรไฟล์', settings:'ตั้งค่า', logs:'บันทึก', announcements:'ประกาศ', users:'ผู้ใช้', about:'เกี่ยวกับ', search:'ค้นหา', online:'ออนไลน์', offline:'ออฟไลน์', save:'บันทึก', cancel:'ยกเลิก', delete:'ลบ', edit:'แก้ไข', add:'เพิ่ม', confirm:'ตกลง', loading:'กำลังโหลด...', none:'ไม่มีข้อมูล' },
+  ar: { home:'الرئيسية', providers:'الموفرون', models:'النماذج', speedtest:'اختبار السرعة', chat:'الدردشة', keys:'مفاتيح API', rules:'التوجيه', usage:'الاستخدام', tickets:'التذاكر', profile:'الملف', settings:'الإعدادات', logs:'السجلات', announcements:'الإعلانات', users:'المستخدمون', about:'حول', search:'بحث', online:'متصل', offline:'غير متصل', save:'حفظ', cancel:'إلغاء', delete:'حذف', edit:'تعديل', add:'إضافة', confirm:'موافق', loading:'جار التحميل...', none:'لا توجد بيانات' },
+  hi: { home:'होम', providers:'प्रदाता', models:'मॉडल', speedtest:'स्पीड टेस्ट', chat:'चैट', keys:'API कुंजी', rules:'रूटिंग', usage:'उपयोग', tickets:'टिकट', profile:'प्रोफ़ाइल', settings:'सेटिंग्स', logs:'लॉग', announcements:'घोषणाएँ', users:'उपयोगकर्ता', about:'परिचय', search:'खोज', online:'ऑनलाइन', offline:'ऑफ़लाइन', save:'सहेजें', cancel:'रद्द करें', delete:'हटाएँ', edit:'संपादित करें', add:'जोड़ें', confirm:'ठीक', loading:'लोड हो रहा...', none:'कोई डेटा नहीं' },
+  id: { home:'Beranda', providers:'Penyedia', models:'Model', speedtest:'Tes Kecepatan', chat:'Chat', keys:'Kunci API', rules:'Routing', usage:'Penggunaan', tickets:'Tiket', profile:'Profil', settings:'Pengaturan', logs:'Log', announcements:'Pengumuman', users:'Pengguna', about:'Tentang', search:'Cari', online:'Daring', offline:'Luring', save:'Simpan', cancel:'Batal', delete:'Hapus', edit:'Ubah', add:'Tambah', confirm:'OK', loading:'Memuat...', none:'Tidak ada data' }
+};
+var curLang = localStorage.getItem('qt_lang') || 'zh';
+function t(key){ var d = I18N[curLang] || I18N.zh; return d[key] !== undefined ? d[key] : (I18N.zh[key] !== undefined ? I18N.zh[key] : key); }
+// 应用语言：翻译菜单/底部导航/顶栏（页面数据由 loaders 重渲染）
+function applyLang(){
+  var map = { dashboard:'home', providers:'providers', models:'models', speedtest:'speedtest', chat:'chat', keys:'keys', rules:'rules', usage:'usage', tickets:'tickets', profile:'profile', settings:'settings', logs:'logs', announcements:'announcements', users:'users', about:'about' };
+  document.querySelectorAll('.sidebar nav a[data-page], .bottom-nav a[data-page]').forEach(function(a){
+    var key = map[a.getAttribute('data-page')];
+    if(key) a.querySelector('b').textContent = t(key);
+  });
+  $('userInfo').textContent = localStorage.getItem('qt_user') || '';
+}
+function saveLangLocal(lang){ curLang = lang; localStorage.setItem('qt_lang', lang); applyLang(); }
 function openModal(title, html, onSave){
   $('modalTitle').textContent = title;
   $('modalBody').innerHTML = html + '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn" onclick="modalSave()">保存</button><button class="btn-ghost" onclick="closeModal()">取消</button></div>';
@@ -56,6 +86,25 @@ document.addEventListener('click', function(e){
   if(a){ e.preventDefault(); switchView(a.getAttribute('data-page')); }
 });
 function doLogout(){ localStorage.removeItem('qt_token'); location.href='/login'; }
+// 全局搜索：模糊匹配页面并跳转
+function globalSearch(){
+  var q = ($('globalSearch') ? $('globalSearch').value : '').trim().toLowerCase();
+  if(!q) return;
+  var map = [
+    ['首页','dashboard'],['服务商','providers'],['模型','models'],['测速','speedtest'],
+    ['聊天','chat'],['密钥','keys'],['路由','rules'],['用量','usage'],
+    ['工单','tickets'],['个人','profile'],['设置','settings'],['日志','logs'],
+    ['公告','announcements'],['用户','users'],['关于','about']
+  ];
+  // 加上英文/拼音匹配
+  map.push(['home','dashboard'],['provider','providers'],['model','models'],['speed','speedtest'],
+    ['chat','chat'],['key','keys'],['rule','rules'],['usage','usage'],
+    ['ticket','tickets'],['profile','profile'],['setting','settings'],['log','logs'],
+    ['announce','announcements'],['user','users'],['about','about']);
+  var hit = map.filter(function(m){ return m[0].toLowerCase().indexOf(q) >= 0 || q.indexOf(m[0].toLowerCase()) >= 0; });
+  if(hit.length){ switchView(hit[0][1]); if($('globalSearch')) $('globalSearch').value=''; }
+  else toast('未找到页面: ' + q, false);
+}
 // ===== 首页（完整功能：启停/地址/自动测速/强制选择模型/三指标排行榜/池灯） =====
 loaders.dashboard = function(){
   var box = $('view-dashboard');
@@ -112,6 +161,12 @@ loaders.dashboard = function(){
     box.innerHTML = [
       '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥0.00</div><div class="lbl">我的余额</div></div></div></div>',
       '<div class="card" id="announceCard"><h3>📢 公告</h3><div style="color:var(--muted);padding:8px;font-size:13px">加载中...</div></div>',
+      '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr)">' +
+        '<div class="stat"><div class="num" style="font-size:20px">' + fmtUptime(st.uptime || 0) + '</div><div class="lbl">运行时长</div></div>' +
+        '<div class="stat"><div class="num" style="font-size:20px">' + (st.pipelineSorted||[]).length + '</div><div class="lbl">可用模型</div></div>' +
+        '<div class="stat"><div class="num" style="font-size:20px;color:' + ((st.healthCache||[]).filter(function(x){return x.isHealthy;}).length / Math.max((st.healthCache||[]).length,1) * 100 > 50 ? 'var(--green)' : 'var(--amber)') + '">' + Math.round((st.healthCache||[]).filter(function(x){return x.isHealthy;}).length / Math.max((st.healthCache||[]).length,1) * 100) + '%</div><div class="lbl">健康率</div></div>' +
+        '<div class="stat"><div class="num" style="font-size:20px">' + (st.autoFailover ? '🟢' : '⚪') + '</div><div class="lbl">故障转移</div></div>' +
+      '</div>',
       '<div class="grid grid-2">',
         '<div class="card" id="gwCtrlCard"><h3>⚡ 网关控制</h3><div style="display:flex;gap:10px;align-items:center">' +
           '<span id="gwDot" class="dot ' + (st.running ? '' : 'off') + '"></span>' +

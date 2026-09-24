@@ -134,13 +134,28 @@ window.runSpeedTest = function(){
   if(!rows.length){ toast('暂无待测模型', false); speedTestActive = false; if(btn) btn.innerHTML = '⚡ 开始批量测速'; return; }
   var idx = 0;
   var passed = 0, failed = 0;
+  // 进度条容器
+  var progBar = document.createElement('div');
+  progBar.style.cssText = 'margin-bottom:12px;background:rgba(15,23,42,.5);border-radius:8px;height:8px;overflow:hidden;position:relative';
+  progBar.innerHTML = '<div id="stProgFill" style="width:0%;height:100%;background:linear-gradient(90deg,#4F46E5,#06B6D4);transition:width .4s"></div><div id="stProgText" style="position:absolute;top:-18px;right:0;font-size:11px;color:var(--muted)"></div>';
+  var stCard = $('stCard');
+  stCard.parentNode.insertBefore(progBar, stCard);
+  function updateProg(){
+    var pct = Math.round(idx / rows.length * 100);
+    var fill = $('stProgFill'); var txt = $('stProgText');
+    if(fill) fill.style.width = pct + '%';
+    if(txt) txt.textContent = pct + '% (' + idx + '/' + rows.length + ')';
+  }
   function next(){
     if(idx >= rows.length){
       speedTestActive = false;
       if(btn) btn.innerHTML = '⚡ 开始批量测速';
+      var fill = $('stProgFill'); if(fill) fill.style.width = '100%';
+      if(progBar.parentNode) progBar.parentNode.removeChild(progBar);
       toast('✅ 测速完成：' + passed + '/' + rows.length + ' 正常', true);
       return;
     }
+    updateProg();
     var row = rows[idx];
     var key = row.getAttribute('data-key');
     var cells = row.querySelectorAll('td');
@@ -217,9 +232,19 @@ window.sendChat = function(){
   api('/api/chat', { method:'POST', body: { conversationId: convId, content: content, model: model } }).then(function(r){
     var wb = $('waitBubble');
     if(r.code === 0){
-      if(wb) wb.textContent = r.data.reply || '(无响应)';
-      msgs.scrollTop = msgs.scrollHeight;
-      if(convId === 0){ state.currentChatConv = r.data.conversationId; loaders.chat(); }
+      var reply = r.data.reply || '(无响应)';
+      // 打字机逐字显示效果
+      var full = reply;
+      var i = 0;
+      var tick = setInterval(function(){
+        i += 2;  // 每次2字，流畅
+        if(wb){
+          wb.textContent = full.slice(0, i) + (i < full.length ? '▍' : '');
+          msgs.scrollTop = msgs.scrollHeight;
+        }
+        if(i >= full.length){ clearInterval(tick); if(wb) wb.textContent = full; msgs.scrollTop = msgs.scrollHeight; }
+      }, 16);
+      if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, full.length * 2 + 200); }
     } else {
       if(wb) wb.textContent = '❌ ' + (r.msg || '失败');
     }

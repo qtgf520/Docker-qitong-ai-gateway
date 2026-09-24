@@ -40,7 +40,16 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   <div class="logo">
     <div class="icon">⚡</div>
     <h1>綦桐AI网关</h1>
-    <p>Docker Server v3.18.22-16 · 后台管理</p>
+    <p>Docker Server v3.18.22-17 · 后台管理</p>
+  </div>
+  <div style="text-align:center;margin-bottom:14px">
+    <select id="lgLang" style="background:rgba(15,23,42,.6);border:1px solid rgba(100,116,139,.3);color:#94A3B8;border-radius:8px;padding:6px 10px;font-size:12px;outline:none" onchange="saveLoginLang()">
+      <option value="zh">简体中文</option><option value="zh-tw">繁體中文</option><option value="en">English</option>
+      <option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option>
+      <option value="fr">Français</option><option value="de">Deutsch</option><option value="ru">Русский</option>
+      <option value="pt">Português</option><option value="vi">Tiếng Việt</option><option value="th">ภาษาไทย</option>
+      <option value="ar">العربية</option><option value="hi">हिन्दी</option><option value="id">Bahasa Indonesia</option>
+    </select>
   </div>
   <div class="tabs">
     <button id="tabL" class="active" onclick="switchTab('L')">登录</button>
@@ -59,10 +68,13 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
     <button class="btn" onclick="doRegister()">注 册</button>
   </div>
   <div id="msg" class="msg"></div>
-  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-16 Server</div>
+  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-17 Server</div>
 </div>
 <script>
 function $(id){return document.getElementById(id)}
+function saveLoginLang(){ localStorage.setItem('qt_lang', $('lgLang').value); }
+// 恢复上次语言
+(function(){ var l = localStorage.getItem('qt_lang'); if(l && $('lgLang')) $('lgLang').value = l; })();
 function switchTab(t){
   $('tabL').className = t==='L' ? 'active' : '';
   $('tabR').className = t==='R' ? 'active' : '';
@@ -112,8 +124,9 @@ ${adminCss()}
   <!-- 顶栏 -->
   <header class="topbar">
     <button class="burger" id="burger" onclick="toggleSidebar()">☰</button>
-    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-16</span></div>
+    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-17</span></div>
     <div class="topbar-right">
+      <input id="globalSearch" class="global-search" placeholder="🔍 搜索页面..." onkeydown="if(event.key==='Enter')globalSearch()">
       <span id="onlineDot" class="dot"></span>
       <span id="userInfo" class="user-name">未登录</span>
       <button class="logout-btn" onclick="doLogout()">退出</button>
@@ -202,6 +215,8 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
 .user-name{font-size:13px;color:var(--muted)}
 .logout-btn{padding:5px 14px;border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:8px;cursor:pointer;font-size:12px;transition:.2s}
 .logout-btn:hover{border-color:var(--red);color:var(--red)}
+.global-search{width:180px;padding:6px 12px;background:rgba(15,23,42,.6);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;outline:none;transition:.2s}
+.global-search:focus{border-color:var(--primary2);box-shadow:0 0 0 3px rgba(99,102,241,.12);width:220px}
 /* ===== 遮罩 ===== */
 .mask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:900}
 .mask.show{display:block}
@@ -217,14 +232,27 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
 .view{display:none}
 .view.active{display:block}
 /* ===== 卡片 ===== */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:14px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:14px;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease}
+.card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.35);border-color:rgba(99,102,241,.35)}
 .card h3{font-size:14px;margin-bottom:12px;color:var(--cyan)}
 .grid{display:grid;gap:14px}
 .grid-3{grid-template-columns:repeat(3,1fr)}
+.grid-4{grid-template-columns:repeat(4,1fr)}
 .grid-2{grid-template-columns:repeat(2,1fr)}
-.stat{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;transition:transform .2s,box-shadow .2s}
+.stat:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.3)}
 .stat .num{font-size:26px;font-weight:700;background:linear-gradient(90deg,#818CF8,#22D3EE);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .stat .lbl{font-size:12px;color:var(--muted);margin-top:4px}
+/* 页面切换动画 */
+.view.active{animation:fadeIn .3s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+/* 骨架屏 */
+.skel{background:linear-gradient(90deg,var(--surface) 25%,#334155 37%,var(--surface) 63%);background-size:400% 100%;animation:skel 1.4s ease infinite;border-radius:8px}
+@keyframes skel{0%{background-position:100% 0}100%{background-position:-100% 0}}
+/* 顶栏在线呼吸灯 */
+.dot{animation:dotPulse 2s ease-in-out infinite}
+@keyframes dotPulse{0%,100%{opacity:1}50%{opacity:.5}}
+.dot.off{animation:none}
 /* ===== 表格 ===== */
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:10px}
 table{width:100%;border-collapse:collapse;font-size:13px}
