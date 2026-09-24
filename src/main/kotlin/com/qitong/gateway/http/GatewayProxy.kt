@@ -249,12 +249,14 @@ class GatewayProxy(private val database: Database) {
 
         var lastError: String? = null
         var lastStatusCode = 502
+        val attemptedModels = mutableListOf<String>()
 
-        // ★ 故障转移循环：按池顺序逐个尝试 ★
+        // ★ 故障转移循环：按池顺序逐个尝试（所有模型都支持，不只qtai-sj） ★
         for ((idx, targetModel) in attemptModels.withIndex()) {
             val provider = database.getProviderById(targetModel.providerId)
             if (provider == null || !provider.isEnabled) continue
 
+            attemptedModels.add(targetModel.modelId)
             try {
                 val success = forwardToUpstream(call, provider, targetModel, bodyStr, body, modelId, stream, path, ownerUser)
                 if (success) {
@@ -272,9 +274,10 @@ class GatewayProxy(private val database: Database) {
             }
         }
 
-        // 全部失败
-        val errMsg = lastError?.let { "All upstreams failed: $it" } ?: "All upstreams failed"
-        respondJson(call, openAIError(502, errMsg, "server_error"), lastStatusCode)
+        // 全部失败：返回中文友好提示（含尝试过的模型），绝不空白
+        val triedList = attemptedModels.distinct().joinToString("、")
+        val hint = "所有上游模型均不可用，已自动尝试：${triedList.ifBlank { "无可用模型" }}。请稍后重试或检查服务商配置。"
+        respondJson(call, openAIError(502, hint, "server_error"), lastStatusCode)
     }
 
     /** 转发单个上游（含流式/非流式处理），返回是否成功 */

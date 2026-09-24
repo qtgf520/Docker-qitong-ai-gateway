@@ -136,7 +136,9 @@ data class User(
     val totalRecharge: Double = 0.0,    // 累计充值（元）
     val inviterId: Long = 0,            // 邀请人ID（分销）
     val inviteCode: String = "",        // 我的邀请码
-    val commissionRate: Double = 0.1    // 分销佣金比例（默认10%）
+    val commissionRate: Double = 0.1,   // 分销佣金比例（默认10%）
+    val email: String = "",             // 绑定邮箱（个人中心，后期提醒用）
+    val notifyEnabled: Boolean = false  // 是否开启邮件提醒
 )
 
 /** 人格配置（对齐原APP人设系统） */
@@ -182,7 +184,7 @@ data class GatewayConfig(
 data class GatewayStatus(
     val status: String = "ok",
     val service: String = "qitong-ai-gateway-docker",
-    val version: String = "3.18.22-15",
+    val version: String = "3.18.22-16",
     val running: Boolean = true,
     val port: Int,
     val failover: Boolean,

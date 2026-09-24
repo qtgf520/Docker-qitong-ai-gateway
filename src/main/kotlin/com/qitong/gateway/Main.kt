@@ -32,7 +32,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-15
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-16
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +44,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-15    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-16    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +113,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-15"))
+                put("version", JsonPrimitive("3.18.22-16"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -559,6 +559,36 @@ fun Application.moduleWeb(database: Database) {
                 "quotaUsed" to u.quotaUsed
             ), "ok")
         }
+        // 个人中心：我的资料（邮箱/昵称/通知开关）
+        get("/api/me/profile") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, mapOf(
+                "id" to u.id,
+                "username" to u.username,
+                "displayName" to u.displayName,
+                "role" to u.role,
+                "email" to u.email,
+                "notifyEnabled" to u.notifyEnabled,
+                "balance" to u.balance,
+                "totalRecharge" to u.totalRecharge,
+                "inviteCode" to u.inviteCode,
+                "createdAt" to u.createdAt
+            ), "ok")
+        }
+        // 个人中心：更新邮箱/昵称/通知开关
+        post("/api/me/profile") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val email = body["email"]?.jsonPrimitive?.content ?: u.email
+            val displayName = body["displayName"]?.jsonPrimitive?.content ?: u.displayName
+            val notifyEnabled = body["notifyEnabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: u.notifyEnabled
+            // 简单邮箱校验
+            if (email.isNotBlank() && !email.contains("@")) { AdminApi.fail(call, "邮箱格式不正确", 400); return@post }
+            database.updateUserEmail(u.id, email.trim(), notifyEnabled)
+            database.updateUserDisplayName(u.id, displayName.trim())
+            database.addOpLog(u.id, u.username, "更新个人中心", "邮箱/昵称", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "个人资料已更新")
+        }
         // 人格配置：读取/保存
         get("/api/persona") {
             val user = call.requireAuth(database) ?: return@get
@@ -592,7 +622,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-15"))
+                put("version", JsonPrimitive("3.18.22-16"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -1164,7 +1194,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-15"))
+                    put("version", JsonPrimitive("3.18.22-16"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))

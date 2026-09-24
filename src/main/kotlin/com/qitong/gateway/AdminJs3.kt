@@ -148,6 +148,41 @@ loaders.usage = function(){
     });
   });
 };
+// ===== 个人中心（用户+管理员各有自己的） =====
+loaders.profile = function(){
+  var box = $('view-profile');
+  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
+  api('/api/me/profile').then(function(r){
+    if(r.code !== 0){ toast(r.msg, false); return; }
+    var p = r.data || {};
+    var isAdmin = p.role === 'admin';
+    box.innerHTML = [
+      '<div class="card" style="text-align:center;padding:26px">',
+        '<div style="font-size:46px;margin-bottom:8px">' + (isAdmin ? '👑' : '👤') + '</div>',
+        '<h2 style="color:var(--text);font-size:18px">' + esc(p.displayName || p.username) + '</h2>',
+        '<div><span class="badge ' + (isAdmin ? 'purple' : 'blue') + '">' + (isAdmin ? '管理员' : '普通用户') + '</span> <span style="color:var(--muted);font-size:12px">@' + esc(p.username) + '</span></div>',
+      '</div>',
+      '<div class="card"><h3>📋 我的信息</h3>',
+        '<div class="form-row"><label>用户名</label><div class="input" style="background:rgba(15,23,42,.4)">' + esc(p.username) + '</div></div>',
+        '<div class="form-row"><label>昵称</label><input id="pfName" class="input" value="' + esc(p.displayName || '') + '"></div>',
+        '<div class="form-row"><label>绑定邮箱（用于提醒通知）</label><input id="pfEmail" class="input" value="' + esc(p.email || '') + '" placeholder="example@qq.com"></div>',
+        '<div class="form-row"><label><input type="checkbox" id="pfNotify"' + (p.notifyEnabled ? ' checked' : '') + '> 开启邮件提醒</label><small style="color:var(--muted);display:block;margin-top:4px">余额变动 / 工单回复等发送邮件通知</small></div>',
+        '<button class="btn" onclick="saveProfile()">保存个人资料</button>',
+      '</div>',
+      '<div class="grid grid-2">',
+        '<div class="card"><h3>💰 账户</h3><div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div><div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div></div>',
+        '<div class="card"><h3>🎁 邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag">📋</span></div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
+      '</div>'
+    ].join('');
+  });
+};
+window.saveProfile = function(){
+  var email = $('pfEmail').value.trim();
+  if(email && email.indexOf('@') < 0){ toast('邮箱格式不正确', false); return; }
+  api('/api/me/profile', { method:'POST', body: { email: email, displayName: $('pfName').value.trim(), notifyEnabled: $('pfNotify').checked ? 'true' : 'false' } }).then(function(r){
+    if(r.code === 0){ toast('✅ ' + r.msg, true); loaders.profile(); } else toast(r.msg, false);
+  });
+};
 // ===== 设置 =====
 loaders.settings = function(){
   var box = $('view-settings');
@@ -533,11 +568,11 @@ loaders.users = function(){
       var permTxt = (u.permissions && u.permissions.length) ? u.permissions.map(function(p){ return '<span class="badge purple">'+esc(p)+'</span>'; }).join(' ') : '<span style="color:var(--muted)">仅私有</span>';
       if(u.role === 'admin') permTxt = '<span class="badge green">全部权限</span>';
       var balTxt = '<span style="color:var(--green);font-weight:700">¥'+(u.balance||0).toFixed(2)+'</span>';
-      return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td><span class="badge '+(u.role==='admin'?'purple':'blue')+'">'+(u.role==='admin'?'管理员':'用户')+'</span></td><td>'+balTxt+' <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="rechargeUser('+u.id+',\''+esc(u.username)+'\')">充值</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="deductUser('+u.id+',\''+esc(u.username)+'\')">扣款</button></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
+      return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td><span class="badge '+(u.role==='admin'?'purple':'blue')+'">'+(u.role==='admin'?'管理员':'用户')+'</span></td><td>'+balTxt+' <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="rechargeUser('+u.id+',\''+esc(u.username)+'\')">充值</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="deductUser('+u.id+',\''+esc(u.username)+'\')">扣款</button></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td style="font-size:11px;color:var(--muted)">'+(u.email?esc(u.email):'—')+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
     }).join('');
     box.innerHTML = [
-      '<div class="card"><h3>👥 用户管理</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>操作</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (users.length ? '' : '暂无用户') + '</td></tr>' +
+      '<div class="card"><h3>👥 用户管理</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>邮箱</th><th>操作</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (users.length ? '' : '暂无用户') + '</td></tr>' +
       '</tbody></table></div><div style="margin-top:10px;color:var(--muted);font-size:12px">注册页开放注册；可编辑用户角色 / 额度 / 绑定模型 / 系统权限；余额用于按模型价格扣费</div></div>'
     ].join('');
   });
@@ -733,7 +768,7 @@ window.delAnnouncement = function(id){
 // ===== 关于我们（对齐原APP AboutScreen） =====
 loaders.about = function(){
   var box = $('view-about');
-  var ver = '3.18.22-15';
+  var ver = '3.18.22-16';
   box.innerHTML = [
     '<div class="card" style="text-align:center;padding:30px">',
       '<div style="font-size:46px;margin-bottom:10px">⚡</div>',

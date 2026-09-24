@@ -655,7 +655,8 @@ private fun providerToMap(p: Provider) = mapOf(
             "displayName" to it.displayName, "createdAt" to it.createdAt, "lastLoginAt" to it.lastLoginAt,
             "quotaLimit" to it.quotaLimit, "quotaUsed" to it.quotaUsed, "bindModels" to it.bindModels,
             "permissions" to it.permissions, "balance" to it.balance, "totalRecharge" to it.totalRecharge,
-            "inviteCode" to it.inviteCode, "inviterId" to it.inviterId, "commissionRate" to it.commissionRate
+            "inviteCode" to it.inviteCode, "inviterId" to it.inviterId, "commissionRate" to it.commissionRate,
+            "email" to it.email, "notifyEnabled" to it.notifyEnabled
         )
     }
 

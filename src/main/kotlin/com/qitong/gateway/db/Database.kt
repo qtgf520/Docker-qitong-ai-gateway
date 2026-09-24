@@ -175,6 +175,8 @@ class Database(private val dbPath: String) {
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN inviter_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN invite_code TEXT NOT NULL DEFAULT ''") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN commission_rate REAL NOT NULL DEFAULT 0.1") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN notify_enabled INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN cost REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
             // 人格配置表（对齐原APP人设系统）
@@ -669,8 +671,19 @@ class Database(private val dbPath: String) {
         totalRecharge = (it["total_recharge"] as? Number)?.toDouble() ?: 0.0,
         inviterId = (it["inviter_id"] as? Number)?.toLong() ?: 0,
         inviteCode = it["invite_code"] as? String ?: "",
-        commissionRate = (it["commission_rate"] as? Number)?.toDouble() ?: 0.1
+        commissionRate = (it["commission_rate"] as? Number)?.toDouble() ?: 0.1,
+        email = it["email"] as? String ?: "",
+        notifyEnabled = (it["notify_enabled"] as? Number)?.toInt() == 1
     )
+
+    /** 更新用户绑定邮箱 + 通知开关（个人中心） */
+    fun updateUserEmail(userId: Long, email: String, notifyEnabled: Boolean) {
+        stmt("UPDATE users SET email=?, notify_enabled=? WHERE id=?", email, if (notifyEnabled) 1 else 0, userId)
+    }
+
+    fun updateUserDisplayName(userId: Long, displayName: String) {
+        stmt("UPDATE users SET display_name=? WHERE id=?", displayName, userId)
+    }
 
     fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = "", inviterId: Long = 0): Long {
         // 生成邀请码
