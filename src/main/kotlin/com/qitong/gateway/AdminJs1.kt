@@ -161,12 +161,12 @@ loaders.dashboard = function(){
     box.innerHTML = [
       '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥0.00</div><div class="lbl">我的余额</div></div></div></div>',
       '<div class="card" id="announceCard"><h3>📢 公告</h3><div style="color:var(--muted);padding:8px;font-size:13px">加载中...</div></div>',
-      '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr)">' +
+      '<div class="card"><div class="grid grid-4" style="grid-template-columns:repeat(4,1fr);margin:0">' +
         '<div class="stat"><div class="num" style="font-size:20px">' + fmtUptime(st.uptime || 0) + '</div><div class="lbl">运行时长</div></div>' +
         '<div class="stat"><div class="num" style="font-size:20px">' + (st.pipelineSorted||[]).length + '</div><div class="lbl">可用模型</div></div>' +
         '<div class="stat"><div class="num" style="font-size:20px;color:' + ((st.healthCache||[]).filter(function(x){return x.isHealthy;}).length / Math.max((st.healthCache||[]).length,1) * 100 > 50 ? 'var(--green)' : 'var(--amber)') + '">' + Math.round((st.healthCache||[]).filter(function(x){return x.isHealthy;}).length / Math.max((st.healthCache||[]).length,1) * 100) + '%</div><div class="lbl">健康率</div></div>' +
         '<div class="stat"><div class="num" style="font-size:20px">' + (st.autoFailover ? '🟢' : '⚪') + '</div><div class="lbl">故障转移</div></div>' +
-      '</div>',
+      '</div></div>',
       '<div class="grid grid-2">',
         '<div class="card" id="gwCtrlCard"><h3>⚡ 网关控制</h3><div style="display:flex;gap:10px;align-items:center">' +
           '<span id="gwDot" class="dot ' + (st.running ? '' : 'off') + '"></span>' +

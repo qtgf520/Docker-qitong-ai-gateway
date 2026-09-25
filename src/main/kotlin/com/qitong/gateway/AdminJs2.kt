@@ -89,13 +89,25 @@ window.delModel = function(id){
   api('/api/models/' + id, { method:'DELETE' }).then(function(r){
     if(r.code === 0){ toast('✅ 已删除', true); loaders.models(); } else toast(r.msg, false);
   });
-};
-// ===== 测速（对齐原APP：默认显示全部待测模型 + 逐个测速逐个显示 + 倒计时） =====
+// ===== 测速（对齐原APP：默认显示全部待测模型 + 后台逐个测速 + 进度条，离开页面也在跑） =====
 var speedTestActive = false;
+var speedPollTimer = null;
 loaders.speedtest = function(){
-  $('view-speedtest').innerHTML = '<div class="action-bar"><button class="btn" onclick="runSpeedTest()">⚡ 开始批量测速</button><button class="btn-ghost" onclick="loadSpeedModels()">🔄 刷新列表</button><span style="color:var(--muted);font-size:13px">原APP方式：先显示全部已启用模型，再一个一个往下测速</span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">加载模型列表...</div></div>';
+  $('view-speedtest').innerHTML = '<div class="action-bar"><button class="btn" onclick="runSpeedTest()">⚡ 开始批量测速</button><button class="btn-ghost" onclick="loadSpeedModels()">🔄 刷新列表</button><span style="color:var(--muted);font-size:13px">后台逐模型测速：离开页面也继续跑，回来看进度/结果</span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">加载模型列表...</div></div><div style="text-align:center;color:var(--muted);font-size:12px" id="stCountdown"></div>';
+  // 先渲染待测列表，再检查是否有后台任务在跑 → 有则继续轮询
   loadSpeedModels();
+  checkSpeedTask();
 };
+// 检查后台测速任务（离开页面回来也能接续）
+function checkSpeedTask(){
+  api('/api/speedtest/progress').then(function(r){
+    if(r.code === 0 && r.data){
+      var s = r.data;
+      if(s.running){ speedTestActive = true; pollSpeedProgress(); }
+      else if((s.results||[]).length){ renderSpeedResults(s); }
+    }
+  });
+}
 // 加载待测模型列表（默认全部显示为"待测速"）
 function loadSpeedModels(){
   api('/api/speedtest/models').then(function(r){
@@ -107,82 +119,89 @@ function loadSpeedModels(){
     }).join('');
     $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>显示名</th><th>模型ID</th><th>服务商</th><th>状态</th><th>测试状态</th><th>TTFT</th><th>TPS</th><th>总耗时</th></tr></thead><tbody>' +
       rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (models.length ? '' : '暂无已启用模型，请先在模型页启用或添加') + '</td></tr>' +
-      '</tbody></table></div><div style="text-align:center;color:var(--muted);font-size:12px" id="stCountdown"></div>';
+      '</tbody></table></div>';
   });
 }
-// 5分钟倒计时
-var speedCountdownTimer = null;
-function startSpeedCountdown(seconds){
-  if(speedCountdownTimer) clearInterval(speedCountdownTimer);
-  var left = seconds;
-  var el = $('stCountdown');
-  if(!el) return;
-  speedCountdownTimer = setInterval(function(){
-    left--;
-    if(left <= 0){ clearInterval(speedCountdownTimer); el.textContent = '⏳ 下次测速：已到时间'; return; }
-    var m = Math.floor(left/60), s = left%60;
-    el.textContent = '⏳ 下次自动测速：' + m + '分' + (s<10?'0':'') + s + '秒';
-  }, 1000);
-}
-window.runSpeedTest = function(){
-  if(speedTestActive){ toast('测速进行中，请等待完成', false); return; }
-  speedTestActive = true;
-  var btn = $('view-speedtest').querySelector('.action-bar .btn');
-  if(btn) btn.innerHTML = '⏳ 测速中...';
-  // 收集当前表格中的待测行（按顺序）
-  var rows = Array.prototype.slice.call(document.querySelectorAll('#stCard tbody tr[data-key]'));
-  if(!rows.length){ toast('暂无待测模型', false); speedTestActive = false; if(btn) btn.innerHTML = '⚡ 开始批量测速'; return; }
-  var idx = 0;
-  var passed = 0, failed = 0;
-  // 进度条容器
-  var progBar = document.createElement('div');
-  progBar.style.cssText = 'margin-bottom:12px;background:rgba(15,23,42,.5);border-radius:8px;height:8px;overflow:hidden;position:relative';
-  progBar.innerHTML = '<div id="stProgFill" style="width:0%;height:100%;background:linear-gradient(90deg,#4F46E5,#06B6D4);transition:width .4s"></div><div id="stProgText" style="position:absolute;top:-18px;right:0;font-size:11px;color:var(--muted)"></div>';
-  var stCard = $('stCard');
-  stCard.parentNode.insertBefore(progBar, stCard);
-  function updateProg(){
-    var pct = Math.round(idx / rows.length * 100);
-    var fill = $('stProgFill'); var txt = $('stProgText');
-    if(fill) fill.style.width = pct + '%';
-    if(txt) txt.textContent = pct + '% (' + idx + '/' + rows.length + ')';
-  }
-  function next(){
-    if(idx >= rows.length){
-      speedTestActive = false;
-      if(btn) btn.innerHTML = '⚡ 开始批量测速';
-      var fill = $('stProgFill'); if(fill) fill.style.width = '100%';
-      if(progBar.parentNode) progBar.parentNode.removeChild(progBar);
-      toast('✅ 测速完成：' + passed + '/' + rows.length + ' 正常', true);
-      return;
+// 渲染进度条 + 轮询后台任务结果
+function pollSpeedProgress(){
+  if(speedPollTimer) clearInterval(speedPollTimer);
+  // 确保有进度条容器
+  if(!$('stProgWrap')){
+    var stCard = $('stCard');
+    if(stCard){
+      var progBar = document.createElement('div');
+      progBar.id = 'stProgWrap';
+      progBar.style.cssText = 'margin-bottom:12px;background:rgba(15,23,42,.5);border-radius:8px;height:8px;overflow:hidden;position:relative';
+      progBar.innerHTML = '<div id="stProgFill" style="width:0%;height:100%;background:linear-gradient(90deg,#4F46E5,#06B6D4);transition:width .4s"></div><div id="stProgText" style="position:absolute;top:-18px;right:0;font-size:11px;color:var(--muted)"></div>';
+      stCard.parentNode.insertBefore(progBar, stCard);
     }
-    updateProg();
-    var row = rows[idx];
-    var key = row.getAttribute('data-key');
-    var cells = row.querySelectorAll('td');
-    var stateCell = cells[4];
-    stateCell.textContent = '⏳ 测速中...';
-    stateCell.style.color = 'var(--cyan)';
-    var parts = key.split('::');
-    api('/api/speedtest/one', { method:'POST', body: { providerId: parts[0], modelId: parts[1] } }).then(function(h){
-      if(h.code === 0 && h.data){
-        var d = h.data;
-        var ok = d.isHealthy;
-        stateCell.textContent = ok ? '✅ 完成' : '❌ 失败';
-        stateCell.style.color = ok ? 'var(--green)' : 'var(--red)';
-        cells[5].textContent = ok && d.ttftMs > 0 ? d.ttftMs + 'ms' : '—';
-        cells[6].textContent = ok && d.tps > 0 ? d.tps.toFixed(2) + ' tok/s' : '—';
-        cells[7].textContent = ok && d.totalMs > 0 ? d.totalMs + 'ms' : '—';
-        if(ok) passed++; else failed++;
-      } else {
-        stateCell.textContent = '❌ 失败';
-        stateCell.style.color = 'var(--red)';
-        failed++;
+  }
+  function tick(){
+    api('/api/speedtest/progress').then(function(r){
+      if(r.code === 0 && r.data){
+        var s = r.data;
+        var pct = s.progress || 0;
+        var fill = $('stProgFill'); var txt = $('stProgText');
+        if(fill) fill.style.width = pct + '%';
+        if(txt) txt.textContent = pct + '% (' + (s.done||0) + '/' + (s.total||0) + ')';
+        // 当前在测的模型高亮
+        if(s.currentKey){
+          var row = document.getElementById('stRow-' + esc(s.currentKey));
+          if(row){
+            var cells = row.querySelectorAll('td');
+            var st = cells[4];
+            if(st){ st.textContent = '⏳ 测速中...'; st.style.color = 'var(--cyan)'; }
+          }
+        }
+        // 已完成的渲染结果
+        renderSpeedResults(s);
+        if(s.running){
+          setTimeout(tick, 1200);
+        } else {
+          speedTestActive = false;
+          var btn = $('view-speedtest').querySelector('.action-bar .btn');
+          if(btn) btn.innerHTML = '⚡ 开始批量测速';
+          var wrap = $('stProgWrap');
+          if(wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+          if(s.error) toast('⚠️ ' + s.error, false);
+          else toast('✅ 测速完成：' + (s.passed||0) + '/' + (s.total||0) + ' 正常', true);
+        }
       }
-      idx++;
-      setTimeout(next, 200);
     });
   }
-  next();
+  tick();
+}
+// 渲染测速结果到表格行（按 data-key 匹配）
+function renderSpeedResults(s){
+  var results = s.results || [];
+  results.forEach(function(d){
+    var key = d.providerId + '::' + d.modelId;
+    var row = document.getElementById('stRow-' + esc(key));
+    if(!row) return;
+    var cells = row.querySelectorAll('td');
+    var ok = d.isHealthy;
+    var st = cells[4]; if(st){ st.textContent = ok ? '✅ 完成' : '❌ 失败'; st.style.color = ok ? 'var(--green)' : 'var(--red)'; }
+    if(cells[5]) cells[5].textContent = ok && d.ttftMs > 0 ? d.ttftMs + 'ms' : '—';
+    if(cells[6]) cells[6].textContent = ok && d.tps > 0 ? d.tps.toFixed(2) + ' tok/s' : '—';
+    if(cells[7]) cells[7].textContent = ok && d.totalMs > 0 ? d.totalMs + 'ms' : '—';
+  });
+}
+// 启动后台批量测速（前端只发一次，其余交给后端 + 轮询）
+window.runSpeedTest = function(){
+  if(speedTestActive){ toast('测速进行中，请等待完成', false); return; }
+  var btn = $('view-speedtest').querySelector('.action-bar .btn');
+  if(btn) btn.innerHTML = '⏳ 启动中...';
+  api('/api/speedtest/start', { method:'POST', body: {} }).then(function(r){
+    if(r.code === 0){
+      speedTestActive = true;
+      if(btn) btn.innerHTML = '⏳ 测速中...';
+      pollSpeedProgress();
+    } else {
+      if(btn) btn.innerHTML = '⚡ 开始批量测速';
+      toast(r.msg || '启动失败', false);
+    }
+  });
+};
 };
 // ===== 聊天 =====
 loaders.chat = function(){

@@ -584,6 +584,32 @@ class Database(private val dbPath: String) {
             )
         }
 
+    /** 当前用户自己的传输明细（普通用户用量隔离） */
+    fun getTokenUsageRecentByUser(userId: Long, limit: Int = 200): List<TokenUsage> =
+        query("SELECT * FROM token_usage WHERE user_id=? ORDER BY id DESC LIMIT $limit", userId).map {
+            TokenUsage(
+                id = (it["id"] as Number).toLong(),
+                modelKey = it["model_key"] as? String ?: "",
+                modelName = it["model_name"] as? String ?: "",
+                providerId = (it["provider_id"] as? Number)?.toLong() ?: 0,
+                promptTokens = (it["prompt_tokens"] as? Number)?.toLong() ?: 0,
+                completionTokens = (it["completion_tokens"] as? Number)?.toLong() ?: 0,
+                totalTokens = (it["total_tokens"] as? Number)?.toLong() ?: 0,
+                uploadBytes = (it["upload_bytes"] as? Number)?.toLong() ?: 0,
+                downloadBytes = (it["download_bytes"] as? Number)?.toLong() ?: 0,
+                apiKeyLabel = it["api_key_label"] as? String ?: "",
+                createdAt = (it["created_at"] as? Number)?.toLong() ?: 0
+            )
+        }
+
+    /** 按 API Key 分组的用量（对齐原APP StatsScreen apiKeyUsageRows） */
+    fun getTokenUsageByApiKey(): List<Map<String, Any?>> =
+        query("SELECT api_key_label, COUNT(*) as calls, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(upload_bytes) as upload_bytes, SUM(download_bytes) as download_bytes, SUM(cost) as cost FROM token_usage WHERE api_key_label != '' GROUP BY api_key_label ORDER BY total_tokens DESC")
+
+    /** 当前用户按 API Key 分组的用量（用户隔离） */
+    fun getTokenUsageByApiKeyForUser(userId: Long): List<Map<String, Any?>> =
+        query("SELECT api_key_label, COUNT(*) as calls, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(upload_bytes) as upload_bytes, SUM(download_bytes) as download_bytes, SUM(cost) as cost FROM token_usage WHERE api_key_label != '' AND user_id=? GROUP BY api_key_label ORDER BY total_tokens DESC", userId)
+
     fun clearTokenUsage() {
         stmt("DELETE FROM token_usage")
     }

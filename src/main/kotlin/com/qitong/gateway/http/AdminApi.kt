@@ -423,9 +423,13 @@ private fun providerToMap(p: Provider) = mapOf(
         )
     }
 
-    /** 待测速模型列表（当前全部已启用模型，用于测速页默认渲染"待测速"状态） */
-    fun getSpeedTestModels(database: Database): List<Map<String, Any?>> =
-        database.getEnabledModels().map { m ->
+    /** 待测速模型列表（当前已启用且对当前用户可见的模型：admin=全部；普通用户=公用+自己的，用于测速页默认渲染"待测速"状态） */
+    fun getSpeedTestModels(database: Database, user: com.qitong.gateway.model.User?): List<Map<String, Any?>> {
+        val all = database.getEnabledModels()
+        val visible = if (user?.role == "admin") all
+        else if (user != null) all.filter { m -> m.isPublic || m.ownerId == user.id }
+        else all.filter { it.isPublic }
+        return visible.map { m ->
             val p = database.getProviderById(m.providerId)
             mapOf(
                 "id" to m.id,
@@ -437,10 +441,14 @@ private fun providerToMap(p: Provider) = mapOf(
                 "customAlias" to m.customAlias
             )
         }
+    }
 
-    /** 传输明细（对齐原APP TokenUsage：每一次调用一条，含上传/下载字节与 token） */
-    fun getUsageRecent(database: Database, limit: Int = 200): List<Map<String, Any?>> =
-        database.getTokenUsageRecent(limit).map { t ->
+    /** 传输明细（对齐原APP TokenUsage：每一次调用一条，含上传/下载字节与 token；admin=全部，普通用户=自己） */
+    fun getUsageRecent(database: Database, user: com.qitong.gateway.model.User?, limit: Int = 200): List<Map<String, Any?>> {
+        val list = if (user?.role == "admin") database.getTokenUsageRecent(limit)
+        else if (user != null) database.getTokenUsageRecentByUser(user.id, limit)
+        else database.getTokenUsageRecent(limit)
+        return list.map { t ->
             mapOf(
                 "id" to t.id,
                 "modelKey" to t.modelKey,
@@ -457,6 +465,7 @@ private fun providerToMap(p: Provider) = mapOf(
                 "createdAt" to t.createdAt
             )
         }
+    }
 
     /**
      * 批量测速（对齐原APP batchTestAllModels）：
@@ -519,10 +528,11 @@ private fun providerToMap(p: Provider) = mapOf(
 
     // ============ 统计 ============
 
-    fun getStats(database: Database): JsonObject = buildJsonObject {
-        val usageSummary = database.getTokenUsageSummary()
-        val providers = database.getProviders()
-        val models = database.getModels()
+    fun getStats(database: Database, user: com.qitong.gateway.model.User? = null): JsonObject = buildJsonObject {
+        val usageSummary = if (user != null && user.role != "admin") database.getTokenUsageByUser(user.id)
+            else database.getTokenUsageSummary()
+        val providers = if (user != null && user.role != "admin") database.getVisibleProviders(user.id) else database.getProviders()
+        val models = if (user != null && user.role != "admin") database.getVisibleModels(user.id) else database.getModels()
 
         put("providers", JsonPrimitive(providers.size))
         put("models", JsonPrimitive(models.size))
@@ -538,6 +548,14 @@ private fun providerToMap(p: Provider) = mapOf(
         put("totalDownload", JsonPrimitive(GatewayProxy.totalDownloadBytes))
         put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
         put("pipelineSorted", JsonArray(GatewayScheduler.pipelineSortedModelKeys.map { JsonPrimitive(it) }))
+        // 按 API Key 分组的用量（对齐原APP apiKeyUsageRows；admin=全部，普通用户=自己）
+        val apiKeyUsage = if (user != null && user.role != "admin") database.getTokenUsageByApiKeyForUser(user.id)
+            else database.getTokenUsageByApiKey()
+        put("apiKeyUsage", JsonArray(apiKeyUsage.map { row ->
+            buildJsonObject {
+                row.forEach { (k, v) -> put(k, encodeElement(v)) }
+            }
+        }))
     }
 
     // ============ 密钥（多租户） ============

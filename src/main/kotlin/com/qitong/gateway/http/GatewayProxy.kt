@@ -285,10 +285,73 @@ class GatewayProxy(private val database: Database) {
             }
         }
 
-        // 全部失败：返回中文友好提示（含尝试过的模型），绝不空白
+        // 全部失败：返回中文友好提示（含尝试过的模型），格式像正常AI回答（HTTP 200 + chat completion），绝不报错/空白
         val triedList = attemptedModels.distinct().joinToString("、")
         val hint = "所有上游模型均不可用，已自动尝试：${triedList.ifBlank { "无可用模型" }}。请稍后重试或检查服务商配置。"
-        respondJson(call, openAIError(502, hint, "server_error"), lastStatusCode)
+        // 判断客户端请求路径类型，返回对应格式的"正常回答"
+        val isChatPath = path.endsWith("chat/completions") || path.endsWith("completions")
+        if (stream) {
+            // 流式：以 SSE 格式返回一段友好提示（客户端正常显示）
+            call.response.headers.append("Content-Type", "text/event-stream; charset=utf-8")
+            call.response.headers.append("Cache-Control", "no-cache")
+            call.response.headers.append("Connection", "keep-alive")
+            try {
+                call.respondBytesWriter(ContentType.Text.EventStream, HttpStatusCode.OK) {
+                    val chunk = buildJsonObject {
+                        put("id", JsonPrimitive("chatcmpl-fallback-" + System.currentTimeMillis()))
+                        put("object", JsonPrimitive("chat.completion.chunk"))
+                        put("created", JsonPrimitive(System.currentTimeMillis() / 1000))
+                        put("model", JsonPrimitive(modelId))
+                        put("choices", JsonArray(listOf(buildJsonObject {
+                            put("index", JsonPrimitive(0))
+                            put("delta", buildJsonObject { put("content", JsonPrimitive(hint)) })
+                            put("finish_reason", JsonNull)
+                        })))
+                    }.toString()
+                    writeFully(chunk.toByteArray(Charsets.UTF_8))
+                    writeFully("\n\n".toByteArray(Charsets.UTF_8))
+                    flush()
+                    val done = "data: [DONE]\n\n"
+                    writeFully(done.toByteArray(Charsets.UTF_8))
+                    flush()
+                }
+            } catch (_: Exception) {}
+        } else {
+            val fallbackBody = if (isChatPath) {
+                buildJsonObject {
+                    put("id", JsonPrimitive("chatcmpl-fallback-" + System.currentTimeMillis()))
+                    put("object", JsonPrimitive("chat.completion"))
+                    put("created", JsonPrimitive(System.currentTimeMillis() / 1000))
+                    put("model", JsonPrimitive(modelId))
+                    put("choices", JsonArray(listOf(buildJsonObject {
+                        put("index", JsonPrimitive(0))
+                        put("message", buildJsonObject {
+                            put("role", JsonPrimitive("assistant"))
+                            put("content", JsonPrimitive(hint))
+                        })
+                        put("finish_reason", JsonPrimitive("stop"))
+                    })))
+                    put("usage", buildJsonObject {
+                        put("prompt_tokens", JsonPrimitive(0))
+                        put("completion_tokens", JsonPrimitive(hint.length))
+                        put("total_tokens", JsonPrimitive(hint.length))
+                    })
+                }
+            } else {
+                buildJsonObject {
+                    put("id", JsonPrimitive("cmpl-fallback-" + System.currentTimeMillis()))
+                    put("object", JsonPrimitive("text_completion"))
+                    put("created", JsonPrimitive(System.currentTimeMillis() / 1000))
+                    put("model", JsonPrimitive(modelId))
+                    put("choices", JsonArray(listOf(buildJsonObject {
+                        put("index", JsonPrimitive(0))
+                        put("text", JsonPrimitive(hint))
+                        put("finish_reason", JsonPrimitive("stop"))
+                    })))
+                }
+            }
+            respondJson(call, fallbackBody.toString(), HttpStatusCode.OK.value)
+        }
     }
 
     /** 转发单个上游（含流式/非流式处理），返回是否成功 */

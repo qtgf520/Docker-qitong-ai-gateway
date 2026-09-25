@@ -132,6 +132,10 @@ loaders.usage = function(){
         var up = u.uploadBytes || 0, down = u.downloadBytes || 0, tt = u.totalTokens || 0;
         return '<tr><td>'+esc(u.modelKey||u.modelName||'')+'</td><td>'+fmtNum(u.promptTokens||0)+'</td><td>'+fmtNum(u.completionTokens||0)+'</td><td>'+fmtNum(tt)+'</td><td>'+fmtBytes(up)+'</td><td>'+fmtBytes(down)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td><td>'+esc(u.apiKeyLabel||'本地')+'</td><td style="font-size:12px;color:var(--muted)">'+fmtTime(u.createdAt)+'</td></tr>';
       }).join('');
+    // 按密钥分组（对齐原APP apiKeyUsageRows）
+      var keyRows = (s.apiKeyUsage || []).map(function(u,i){
+        return '<tr><td>'+(i+1)+'</td><td>'+esc(u.api_key_label)+'</td><td>'+(u.calls||0)+'</td><td>'+fmtNum(u.total_tokens||0)+'</td><td>'+fmtBytes(u.upload_bytes||0)+'</td><td>'+fmtBytes(u.download_bytes||0)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td></tr>';
+      }).join('');
       box.innerHTML = [
         '<div class="grid grid-3">',
           '<div class="stat"><div class="num">'+fmtBytes(s.totalUpload)+'</div><div class="lbl">总上行</div></div>',
@@ -140,6 +144,9 @@ loaders.usage = function(){
         '</div>',
         '<div class="card" style="margin-top:14px"><h3>按模型用量汇总</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>模型Key</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th><th>费用</th></tr></thead><tbody>' +
         rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + ((s.usage||[]).length ? '' : '暂无用量') + '</td></tr>' +
+        '</tbody></table></div></div>',
+        '<div class="card" style="margin-top:14px"><h3>🔑 按API密钥用量 <span style="font-size:12px;color:var(--muted)">对齐原APP，每个Key的调用汇总</span></h3><div class="table-wrap"><table><thead><tr><th>#</th><th>密钥Label</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th><th>费用</th></tr></thead><tbody>' +
+        keyRows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + ((s.apiKeyUsage||[]).length ? '' : '暂无密钥用量，发起API调用后显示') + '</td></tr>' +
         '</tbody></table></div></div>',
         '<div class="card" style="margin-top:14px"><h3>📋 传输明细（每次调用）<span style="font-size:12px;color:var(--muted)">对齐原APP TokenUsage，每条=一次API传输</span></h3><div class="table-wrap"><table><thead><tr><th>模型</th><th>Prompt</th><th>输出</th><th>总Token</th><th>上行</th><th>下行</th><th>费用</th><th>密钥</th><th>时间</th></tr></thead><tbody>' +
         rrows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (recent.length ? '' : '暂无传输记录，发起API调用后显示') + '</td></tr>' +
@@ -798,7 +805,7 @@ window.delAnnouncement = function(id){
 // ===== 关于我们（对齐原APP AboutScreen） =====
 loaders.about = function(){
   var box = $('view-about');
-  var ver = '3.18.22-20';
+  var ver = '3.18.22-21';
   box.innerHTML = [
     '<div class="card" style="text-align:center;padding:30px">',
       '<div style="font-size:46px;margin-bottom:10px">⚡</div>',

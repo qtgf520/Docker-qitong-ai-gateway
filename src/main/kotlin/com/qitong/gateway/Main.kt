@@ -27,6 +27,7 @@ import io.ktor.server.routing.options
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.http.content.staticResources
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 import java.io.File
@@ -35,7 +36,70 @@ import java.io.File
 private val loginFailCount = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-20
+ * 全局测速任务（测速页离开后仍在后台跑，回来看结果）
+ * 状态保存在内存，前端轮询 /api/speedtest/progress
+ */
+object SpeedTaskRunner {
+    data class TaskState(
+        var running: Boolean = false,
+        var total: Int = 0,
+        var current: Int = 0,
+        var currentKey: String = "",
+        var currentName: String = "",
+        var done: Int = 0,
+        var passed: Int = 0,
+        var failed: Int = 0,
+        var results: MutableList<Map<String, Any?>> = mutableListOf(),
+        var startedAt: Long = 0,
+        var finishedAt: Long = 0,
+        var error: String = ""
+    )
+    @Volatile var state = TaskState()
+    private val lock = Any()
+
+    fun snapshot(): Map<String, Any?> = synchronized(lock) {
+        val s = state
+        mapOf(
+            "running" to s.running,
+            "total" to s.total,
+            "current" to s.current,
+            "currentKey" to s.currentKey,
+            "currentName" to s.currentName,
+            "done" to s.done,
+            "passed" to s.passed,
+            "failed" to s.failed,
+            "results" to s.results.toList(),
+            "startedAt" to s.startedAt,
+            "finishedAt" to s.finishedAt,
+            "progress" to (if (s.total > 0) (s.done * 100 / s.total) else 0),
+            "error" to s.error
+        )
+    }
+
+    fun start(total: Int) = synchronized(lock) {
+        state = TaskState(running = true, total = total, startedAt = System.currentTimeMillis())
+    }
+
+    fun markCurrent(idx: Int, key: String, name: String) = synchronized(lock) {
+        state.current = idx; state.currentKey = key; state.currentName = name
+    }
+
+    fun addResult(r: Map<String, Any?>) = synchronized(lock) {
+        state.results.add(r); state.done = state.results.size
+        if ((r["isHealthy"] as? Boolean) == true) state.passed++ else state.failed++
+    }
+
+    fun finish() = synchronized(lock) {
+        state.running = false; state.finishedAt = System.currentTimeMillis()
+    }
+
+    fun fail(msg: String) = synchronized(lock) {
+        state.running = false; state.error = msg; state.finishedAt = System.currentTimeMillis()
+    }
+}
+
+/**
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-21
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -47,7 +111,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-20    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-21    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -116,7 +180,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-20"))
+                put("version", JsonPrimitive("3.18.22-21"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -415,25 +479,59 @@ fun Application.moduleWeb(database: Database) {
             if (!AdminApi.hasPerm(u, AdminApi.Perm.SYS_SPEED)) { AdminApi.fail(call, "无权限执行全局测速", 403); return@post }
             AdminApi.ok(call, AdminApi.speedTest(database), "测速完成")
         }
-        // 待测速模型列表（测速页默认渲染全部已启用模型为"待测速"）
+        // 待测速模型列表（测速页默认渲染当前用户可见的已启用模型为"待测速"）
         get("/api/speedtest/models") {
             val u = call.requireAuth(database) ?: return@get
-            AdminApi.ok(call, AdminApi.getSpeedTestModels(database), "ok")
+            AdminApi.ok(call, AdminApi.getSpeedTestModels(database, u), "ok")
         }
         // 单模型测速（前端逐个调用，测一个显示一个，对齐原APP缓冲流式刷新）
         post("/api/speedtest/one") {
             val u = call.requireAuth(database) ?: return@post
-            if (!AdminApi.hasPerm(u, AdminApi.Perm.SYS_SPEED)) { AdminApi.fail(call, "无权限执行测速", 403); return@post }
             val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
             val providerId = body["providerId"]?.jsonPrimitive?.content?.toLongOrNull() ?: -1
             val modelId = body["modelId"]?.jsonPrimitive?.content ?: ""
+            // 权限：管理员可测全部；普通用户只能测自己可见的模型（公用+自己的）
+            val model = database.getModelByKey(providerId, modelId)
+            if (model == null) { AdminApi.fail(call, "模型不存在", 404); return@post }
+            val visible = if (u.role == "admin") true else (model.isPublic || model.ownerId == u.id)
+            if (!visible) { AdminApi.fail(call, "无权限测速该模型", 403); return@post }
             AdminApi.ok(call, AdminApi.speedTestOneModel(database, providerId, modelId), "ok")
         }
-        // 传输明细（每次调用一条：上传/下载/token，对齐原APP TokenUsage）
+        // 启动后台批量测速（离开页面也在跑，回来看进度/结果）
+        post("/api/speedtest/start") {
+            val u = call.requireAuth(database) ?: return@post
+            if (SpeedTaskRunner.state.running) { AdminApi.ok(call, SpeedTaskRunner.snapshot(), "测速已在运行中"); return@post }
+            val models = AdminApi.getSpeedTestModels(database, u)
+            if (models.isEmpty()) { AdminApi.fail(call, "暂无待测速的模型", 400); return@post }
+            SpeedTaskRunner.start(models.size)
+            // 后台协程逐个测速（不阻塞请求，前端轮询进度）
+            kotlinx.coroutines.GlobalScope.launch {
+                try {
+                    for ((i, m) in models.withIndex()) {
+                        SpeedTaskRunner.markCurrent(i, "${m["providerId"]}::${m["modelId"]}", (m["displayName"] as? String) ?: "")
+                        val providerId = (m["providerId"] as? Number)?.toLong() ?: -1
+                        val modelId = m["modelId"] as? String ?: ""
+                        val r = AdminApi.speedTestOneModel(database, providerId, modelId)
+                        SpeedTaskRunner.addResult(r)
+                        kotlinx.coroutines.delay(150) // 轻微间隔，避免上游风暴
+                    }
+                    SpeedTaskRunner.finish()
+                } catch (e: Exception) {
+                    SpeedTaskRunner.fail("测速异常: ${e.message}")
+                }
+            }
+            AdminApi.ok(call, SpeedTaskRunner.snapshot(), "后台测速已启动")
+        }
+        // 轮询测速进度（离开页面后回来也能看到结果）
+        get("/api/speedtest/progress") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, SpeedTaskRunner.snapshot(), "ok")
+        }
+        // 传输明细（每次调用一条：上传/下载/token，对齐原APP TokenUsage；admin=全部，普通用户=自己）
         get("/api/usage/recent") {
             val u = call.requireAuth(database) ?: return@get
             val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 200
-            AdminApi.ok(call, AdminApi.getUsageRecent(database, limit), "ok")
+            AdminApi.ok(call, AdminApi.getUsageRecent(database, u, limit), "ok")
         }
 
         // 配置
@@ -447,12 +545,12 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, "已保存")
         }
 
-        // 统计
+        // 统计（admin=全量，普通用户=自己）
         get("/api/stats") {
             val u = call.requireAuth(database) ?: return@get
             AdminApi.respondJson(call, buildJsonObject {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
-                put("data", AdminApi.getStats(database))
+                put("data", AdminApi.getStats(database, u))
             }, 200)
         }
 
@@ -663,7 +761,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-20"))
+                put("version", JsonPrimitive("3.18.22-21"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -1235,7 +1333,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-20"))
+                    put("version", JsonPrimitive("3.18.22-21"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))

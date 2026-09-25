@@ -40,7 +40,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   <div class="logo">
     <div class="icon">⚡</div>
     <h1>綦桐AI网关</h1>
-    <p>Docker Server v3.18.22-20 · 后台管理</p>
+    <p>Docker Server v3.18.22-21 · 后台管理</p>
   </div>
   <div style="text-align:center;margin-bottom:14px">
     <select id="lgLang" style="background:rgba(15,23,42,.6);border:1px solid rgba(100,116,139,.3);color:#94A3B8;border-radius:8px;padding:6px 10px;font-size:12px;outline:none" onchange="saveLoginLang()">
@@ -68,7 +68,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
     <button class="btn" onclick="doRegister()">注 册</button>
   </div>
   <div id="msg" class="msg"></div>
-  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-20 Server</div>
+  <div class="tip">⚡ Kotlin→Docker 转换版 · v3.18.22-21 Server</div>
 </div>
 <script>
 function $(id){return document.getElementById(id)}
@@ -124,7 +124,7 @@ ${adminCss()}
   <!-- 顶栏 -->
   <header class="topbar">
     <button class="burger" id="burger" onclick="toggleSidebar()">☰</button>
-    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-20</span></div>
+    <div class="topbar-title">⚡ 綦桐AI网关 <span class="ver">v3.18.22-21</span></div>
     <div class="topbar-right">
       <input id="globalSearch" class="global-search" placeholder="🔍 搜索页面..." onkeydown="if(event.key==='Enter')globalSearch()">
       <span id="onlineDot" class="dot"></span>
@@ -314,13 +314,13 @@ select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xml
 /* ===== 底部导航（移动端） ===== */
 .bottom-nav{display:none}
 /* ===== 响应式 ===== */
-@media(max-width:1200px){.grid-3{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:1200px){.grid-3{grid-template-columns:repeat(2,1fr)}.grid-4{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:768px){
   .burger{display:block}
   .sidebar{transform:translateX(-100%)}
   .sidebar.open{transform:translateX(0)}
   .content{margin-left:0;padding:68px 12px 76px}
-  .grid-3,.grid-2{grid-template-columns:1fr}
+  .grid-3,.grid-2,.grid-4{grid-template-columns:1fr}
   .bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:rgba(15,23,42,.96);backdrop-filter:blur(12px);border-top:1px solid var(--border);z-index:1000}
   .bottom-nav a{flex:1;display:flex;flex-direction:column;align-items:center;padding:8px 2px;color:var(--muted);text-decoration:none;font-size:10px;gap:2px}
   .bottom-nav a span{font-size:18px}
