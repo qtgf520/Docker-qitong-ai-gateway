@@ -89,6 +89,7 @@ window.delModel = function(id){
   api('/api/models/' + id, { method:'DELETE' }).then(function(r){
     if(r.code === 0){ toast('✅ 已删除', true); loaders.models(); } else toast(r.msg, false);
   });
+};
 // ===== 测速（对齐原APP：默认显示全部待测模型 + 后台逐个测速 + 进度条，离开页面也在跑） =====
 var speedTestActive = false;
 var speedPollTimer = null;
@@ -201,7 +202,6 @@ window.runSpeedTest = function(){
       toast(r.msg || '启动失败', false);
     }
   });
-};
 };
 // ===== 聊天 =====
 loaders.chat = function(){
