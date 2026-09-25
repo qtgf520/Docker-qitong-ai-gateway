@@ -172,8 +172,29 @@ loaders.profile = function(){
       '<div class="grid grid-2">',
         '<div class="card"><h3>💰 账户</h3><div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div><div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div></div>',
         '<div class="card"><h3>🎁 邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag">📋</span></div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
-      '</div>'
+      '</div>',
+      '<div class="card"><h3>🛡️ 限流设置</h3><small style="color:var(--muted);display:block;margin-bottom:10px">防止 API 被滥用：超出限制返回 429（管理员不受限）</small>' +
+        '<div class="form-row"><label>每秒最大请求数 QPS（0=不限）</label><input id="pfQps" class="input" type="number" min="0" value="60"></div>' +
+        '<div class="form-row"><label>每日最大请求数（0=不限）</label><input id="pfDaily" class="input" type="number" min="0" value="10000"></div>' +
+        '<button class="btn" onclick="saveRateCfg()">保存限流配置</button></div>'
     ].join('');
+    // 加载限流配置
+    api('/api/me/rate').then(function(rr){
+      if(rr && rr.code === 0 && rr.data){
+        var rt = rr.data;
+        var qpsEl = $('pfQps'); var dailyEl = $('pfDaily');
+        if(qpsEl) qpsEl.value = rt.qps || 60;
+        if(dailyEl) dailyEl.value = rt.daily || 10000;
+      }
+    });
+  });
+};
+window.saveRateCfg = function(){
+  var qps = parseInt($('pfQps').value) || 0;
+  var daily = parseInt($('pfDaily').value) || 0;
+  if(qps < 0 || daily < 0){ toast('不能为负数', false); return; }
+  api('/api/me/rate', { method:'POST', body: { qps: qps, daily: daily } }).then(function(r){
+    if(r.code === 0){ toast('✅ ' + r.msg, true); } else toast(r.msg, false);
   });
 };
 window.saveProfile = function(){
@@ -777,7 +798,7 @@ window.delAnnouncement = function(id){
 // ===== 关于我们（对齐原APP AboutScreen） =====
 loaders.about = function(){
   var box = $('view-about');
-  var ver = '3.18.22-18';
+  var ver = '3.18.22-20';
   box.innerHTML = [
     '<div class="card" style="text-align:center;padding:30px">',
       '<div style="font-size:46px;margin-bottom:10px">⚡</div>',

@@ -685,6 +685,24 @@ class Database(private val dbPath: String) {
         stmt("UPDATE users SET display_name=? WHERE id=?", displayName, userId)
     }
 
+    /** 生成唯一邀请码（用户ID+随机，避免老用户空码/临时码不持久化问题） */
+    private fun generateUniqueInviteCode(): String {
+        while (true) {
+            val rand = (1000 + kotlin.random.Random.nextInt(9000)).toString()
+            val code = "QT" + rand + (System.currentTimeMillis() % 100000L).toString().padStart(5, '0')
+            if (getUserByInviteCode(code) == null) return code
+        }
+    }
+
+    /** 确保用户有持久化邀请码：空码时生成并写回（老用户迁移 + 分销中心/个人中心统一） */
+    fun ensureInviteCode(userId: Long): String {
+        val user = getUserById(userId) ?: return ""
+        if (user.inviteCode.isNotBlank()) return user.inviteCode
+        val code = generateUniqueInviteCode()
+        stmt("UPDATE users SET invite_code=? WHERE id=?", code, userId)
+        return code
+    }
+
     fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = "", inviterId: Long = 0): Long {
         // 生成邀请码
         val code = "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0')
@@ -942,7 +960,8 @@ class Database(private val dbPath: String) {
                     try { kotlinx.serialization.json.Json.decodeFromString<List<String>>(s) } catch (_: Exception) { emptyList() }
                 },
                 qtaiSjAccess = (it["qtai_sj_access"] as? Number)?.toInt() == 1,
-                createdAt = (it["created_at"] as? Number)?.toLong() ?: 0
+                createdAt = (it["created_at"] as? Number)?.toLong() ?: 0,
+                ownerId = (it["owner_id"] as? Number)?.toLong() ?: 0
             )
         }
 

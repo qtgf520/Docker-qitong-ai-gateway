@@ -31,8 +31,11 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 import java.io.File
 
+/** 登录失败计数（按IP，暴力破解告警用） */
+private val loginFailCount = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-18
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-20
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -44,7 +47,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-18    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-20    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -113,7 +116,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-18"))
+                put("version", JsonPrimitive("3.18.22-20"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -288,6 +291,23 @@ fun Application.moduleWeb(database: Database) {
                     "user" to (user?.let { mapOf("id" to it.id, "username" to it.username, "role" to it.role, "displayName" to it.displayName) })
                 ), "登录成功")
             } else {
+                // ★ P1 暴力破解告警：同 IP 5 次失败触发钉钉/邮箱
+                val failIp = call.request.local.remoteHost
+                val failCount = loginFailCount.computeIfAbsent(failIp) { 0 }.let { c ->
+                    loginFailCount[failIp] = c + 1; c + 1
+                }
+                if (failCount == 5) {
+                    Thread {
+                        try { kotlinx.coroutines.runBlocking {
+                            com.qitong.gateway.notify.NotificationManager.notify(
+                                database, "🚨 疑似暴力破解",
+                                "IP ${failIp} 连续 5 次登录失败，请检查是否有人尝试破解后台"
+                            )
+                        } } catch (_: Exception) {}
+                    }.start()
+                } else if (failCount > 20) {
+                    loginFailCount.remove(failIp)  // 计数重置，避免无限告警
+                }
                 AdminApi.fail(call, result.exceptionOrNull()?.message ?: "登录失败", 401)
             }
         }
@@ -537,12 +557,13 @@ fun Application.moduleWeb(database: Database) {
                 AdminApi.ok(call, mapOf("balance" to bal), "已扣款 ¥$amount，当前余额 ¥$bal")
             } else AdminApi.fail(call, "扣款失败", 400)
         }
-        // 我的分销信息（邀请码/邀请人数/累计佣金）
+        // 我的分销信息（邀请码/邀请人数/累计佣金）——空码自动生成并持久化
         get("/api/me/distribution") {
             val u = call.requireAuth(database) ?: return@get
             val inviteCount = database.getInvitedCount(u.id)
+            val inviteCode = database.ensureInviteCode(u.id)
             AdminApi.ok(call, mapOf(
-                "inviteCode" to (u.inviteCode.ifBlank { "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0') }),
+                "inviteCode" to inviteCode,
                 "inviteCount" to inviteCount,
                 "commissionRate" to (u.commissionRate * 100),
                 "balance" to u.balance,
@@ -562,6 +583,7 @@ fun Application.moduleWeb(database: Database) {
         // 个人中心：我的资料（邮箱/昵称/通知开关）
         get("/api/me/profile") {
             val u = call.requireAuth(database) ?: return@get
+            val inviteCode = database.ensureInviteCode(u.id)  // 空码自动生成持久化
             AdminApi.ok(call, mapOf(
                 "id" to u.id,
                 "username" to u.username,
@@ -571,7 +593,7 @@ fun Application.moduleWeb(database: Database) {
                 "notifyEnabled" to u.notifyEnabled,
                 "balance" to u.balance,
                 "totalRecharge" to u.totalRecharge,
-                "inviteCode" to u.inviteCode,
+                "inviteCode" to inviteCode,
                 "createdAt" to u.createdAt
             ), "ok")
         }
@@ -588,6 +610,25 @@ fun Application.moduleWeb(database: Database) {
             database.updateUserDisplayName(u.id, displayName.trim())
             database.addOpLog(u.id, u.username, "更新个人中心", "邮箱/昵称", call.request.local.remoteHost)
             AdminApi.ok(call, null, "个人资料已更新")
+        }
+        // 限流配置：读取（QPS/每日配额，0=不限）
+        get("/api/me/rate") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, mapOf(
+                "qps" to database.getUserConfig(u.id, "rate_qps", "60"),
+                "daily" to database.getUserConfig(u.id, "rate_daily", "10000")
+            ), "ok")
+        }
+        // 限流配置：保存
+        post("/api/me/rate") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val qps = body["qps"]?.jsonPrimitive?.content?.toIntOrNull() ?: 60
+            val daily = body["daily"]?.jsonPrimitive?.content?.toIntOrNull() ?: 10000
+            if (qps < 0 || daily < 0) { AdminApi.fail(call, "限流值不能为负数", 400); return@post }
+            database.setUserConfig(u.id, "rate_qps", qps.toString())
+            database.setUserConfig(u.id, "rate_daily", daily.toString())
+            AdminApi.ok(call, null, "限流配置已保存（0=不限流）")
         }
         // 人格配置：读取/保存
         get("/api/persona") {
@@ -622,7 +663,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-18"))
+                put("version", JsonPrimitive("3.18.22-20"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -1194,7 +1235,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-18"))
+                    put("version", JsonPrimitive("3.18.22-20"))
                     put("running", JsonPrimitive(GatewayProxy.running))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))

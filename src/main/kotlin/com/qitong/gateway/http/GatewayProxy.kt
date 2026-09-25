@@ -208,6 +208,17 @@ class GatewayProxy(private val database: Database) {
             }
         }
 
+        // ★ P1 限流防刷：QPS + 每日配额（按 Key + 用户隔离，管理员/本地不限）
+        if (ownerId > 0) {
+            val apiKey = try { call.attributes[ApiKeyEntryKey] } catch (_: Exception) { "" }
+            val isAdmin = ownerUser?.role == "admin"
+            val rateMsg = com.qitong.gateway.rate.RateLimiter.check(database, apiKey, ownerId, isAdmin)
+            if (rateMsg != null) {
+                respondJson(call, openAIError(429, rateMsg, "rate_limited"), 429)
+                return
+            }
+        }
+
         // 路由规则匹配（route/block）
         val rule = RoutingRuleManager.matchRule(database, path, call.request.headers["Authorization"] ?: "", call.request.queryParameters["model"] ?: "")
         if (rule != null && rule.action == "block") {
