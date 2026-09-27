@@ -743,14 +743,17 @@ function fmtLogTime(ts){
 loaders.logs = function(){
  var box = $('view-logs');
  box.innerHTML = '<div class="action-bar"><button class="btn-ghost" style="color:var(--red)" onclick="clearLoginLogs()">清空登录日志</button><button class="btn-ghost" style="color:var(--red)" onclick="clearLogs()">清空操作日志</button><span style="color:var(--muted);font-size:13px">登录日志：登录IP/成功失败/时间；操作日志：登录/公告/工单/余额变动等</span></div>' +
-  '<div class="tabs"><button class="on" id="logTabLogin" onclick="switchLogTab(\'login\')">🔐 登录日志</button><button id="logTabOp" onclick="switchLogTab(\'op\')">📜 操作日志</button></div>' +
+  '<div style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--border)">' +
+   '<button class="log-tab on" id="logTabLogin" onclick="switchLogTab(\'login\')">🔐 登录日志</button>' +
+   '<button class="log-tab" id="logTabOp" onclick="switchLogTab(\'op\')">📜 操作日志</button>' +
+  '</div>' +
   '<div class="card" id="logsCard"><div style="text-align:center;color:var(--muted);padding:30px">加载中...</div></div>';
  loadLoginLogs();
 };
 window.switchLogTab = function(t){
  var lt = $('logTabLogin'), ot = $('logTabOp');
- if(lt) lt.className = t === 'login' ? 'on' : '';
- if(ot) ot.className = t === 'op' ? 'on' : '';
+ if(lt) lt.className = 'log-tab' + (t === 'login' ? ' on' : '');
+ if(ot) ot.className = 'log-tab' + (t === 'op' ? ' on' : '');
  if(t === 'login') loadLoginLogs(); else loadOpLogs();
 };
 function loadLoginLogs(){

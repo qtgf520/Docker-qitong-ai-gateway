@@ -303,6 +303,10 @@ th .sort-ind{color:var(--primary);font-size:10px;margin-left:3px}
 .btn-ghost{padding:5px 11px;border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:6px;cursor:pointer;font-size:12px;transition:.15s}
 .btn-ghost:hover{border-color:var(--muted);color:var(--text)}
 .action-bar{margin-bottom:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* ===== 日志中心 Tab ===== */
+.log-tab{flex:1;background:none;border:0;color:var(--muted);font-size:14px;padding:10px 0;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
+.log-tab:hover{color:var(--text)}
+.log-tab.on{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
 /* ===== 表单 ===== */
 .form-row{margin-bottom:12px}
 .form-row label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
