@@ -87,11 +87,9 @@ class GatewayProxy(private val database: Database) {
         providerId: Long? = null,
         userId: Long = 0L
     ): List<AiModel> {
-        // 强制故障池：用户自己的池优先；无则用全局池
+        // 强制故障池：用户自己的池优先；用户无池时**不回退全局池**（qtai-sj 按用户独立，不跑全部）
         val forcedPool = if (userId > 0) {
-            database.getUserConfig(userId, "forced_pool_keys", "").ifBlank {
-                database.getConfig("forced_pool_keys", "")
-            }
+            database.getUserConfig(userId, "forced_pool_keys", "")
         } else {
             database.getConfig("forced_pool_keys", "")
         }
@@ -100,7 +98,17 @@ class GatewayProxy(private val database: Database) {
             .map { it.trim() }
             .filter { it.isNotBlank() }
 
-        val available = models.filter { it.isEnabled }
+        var available = models.filter { it.isEnabled }
+        // ★ 余额不足的用户：只保留免费模型（price=0），付费模型全过滤（避免免费模型故障转移跳到付费模型）
+        if (userId > 0) {
+            val owner = database.getUserById(userId)
+            if (owner != null && owner.role != "admin" && owner.quotaLimit <= 0) {
+                val bal = database.getUserBalance(userId)
+                if (bal <= 0) {
+                    available = available.filter { m -> m.price <= 0 }
+                }
+            }
+        }
 
         if (forcedList.isNotEmpty()) {
             val forced = forcedList.mapNotNull { rk ->
@@ -236,7 +244,13 @@ class GatewayProxy(private val database: Database) {
         var modelId = body["model"]?.jsonPrimitive?.content ?: body["prompt"]?.let { "text-completion" } ?: ""
         val stream = body["stream"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
 
-        val models = database.getEnabledModels()
+        // 模型列表：管理员=全部；普通用户=公用+自己的（qtai-sj 用户独立，不跑全部）
+        val allEnabled = database.getEnabledModels()
+        val models = if (ownerId > 0) {
+            val owner = database.getUserById(ownerId)
+            if (owner?.role == "admin") allEnabled
+            else allEnabled.filter { m -> m.isPublic || m.ownerId == ownerId }
+        } else allEnabled
 
         // 路由规则转发目标
         var targetProviderOverride: Long? = null
@@ -256,6 +270,63 @@ class GatewayProxy(private val database: Database) {
         if (attemptModels.isEmpty()) {
             respondJson(call, openAIError(404, "No available model", "not_found"), 404)
             return
+        }
+
+        // ★ 余额检查：用户显式请求的模型为付费（price>0）且余额不足 → 拒绝使用（像AI回答提示）；免费模型不检查
+        if (ownerUser != null && ownerUser.role != "admin") {
+            // 查找请求模型的真实价格（按 modelId 匹配任意 provider）
+            val requestedModel = models.firstOrNull { it.modelId == modelId }
+            val requestedPaid = requestedModel?.price?.let { it > 0 } ?: false
+            if (requestedPaid && ownerUser.quotaLimit <= 0) {
+                val bal = database.getUserBalance(ownerUser.id)
+                val estCost = 0.001 * (requestedModel?.price ?: 0.0) * com.qitong.gateway.http.PricingTable.OUTPUT_MULTIPLIER
+                if (bal < estCost) {
+                    val hint = "您的余额不足（当前 ¥${"%.2f".format(bal)}），请先充值后再使用。模型 ${requestedModel!!.modelId} 为付费模型，需要余额才能调用。"
+                    if (stream) {
+                        call.response.headers.append("Content-Type", "text/event-stream; charset=utf-8")
+                        call.response.headers.append("Cache-Control", "no-cache")
+                        try {
+                            call.respondBytesWriter(ContentType.Text.EventStream, HttpStatusCode.OK) {
+                                val chunk = buildJsonObject {
+                                    put("id", JsonPrimitive("chatcmpl-balance-" + System.currentTimeMillis()))
+                                    put("object", JsonPrimitive("chat.completion.chunk"))
+                                    put("created", JsonPrimitive(System.currentTimeMillis() / 1000))
+                                    put("model", JsonPrimitive(modelId))
+                                    put("choices", JsonArray(listOf(buildJsonObject {
+                                        put("index", JsonPrimitive(0))
+                                        put("delta", buildJsonObject { put("content", JsonPrimitive(hint)) })
+                                        put("finish_reason", JsonNull)
+                                    })))
+                                }.toString()
+                                writeFully(chunk.toByteArray(Charsets.UTF_8)); writeFully("\n\n".toByteArray(Charsets.UTF_8)); flush()
+                                writeFully("data: [DONE]\n\n".toByteArray(Charsets.UTF_8)); flush()
+                            }
+                        } catch (_: Exception) {}
+                    } else {
+                        val fallbackBody = buildJsonObject {
+                            put("id", JsonPrimitive("chatcmpl-balance-" + System.currentTimeMillis()))
+                            put("object", JsonPrimitive("chat.completion"))
+                            put("created", JsonPrimitive(System.currentTimeMillis() / 1000))
+                            put("model", JsonPrimitive(modelId))
+                            put("choices", JsonArray(listOf(buildJsonObject {
+                                put("index", JsonPrimitive(0))
+                                put("message", buildJsonObject {
+                                    put("role", JsonPrimitive("assistant"))
+                                    put("content", JsonPrimitive(hint))
+                                })
+                                put("finish_reason", JsonPrimitive("stop"))
+                            })))
+                            put("usage", buildJsonObject {
+                                put("prompt_tokens", JsonPrimitive(0))
+                                put("completion_tokens", JsonPrimitive(hint.length))
+                                put("total_tokens", JsonPrimitive(hint.length))
+                            })
+                        }
+                        respondJson(call, fallbackBody.toString(), HttpStatusCode.OK.value)
+                    }
+                    return
+                }
+            }
         }
 
         var lastError: String? = null
@@ -494,23 +565,37 @@ class GatewayProxy(private val database: Database) {
             // token 缺省时按字节估算（兼容无 usage 字段的上游）
             val estTokens = if (totalTokens > 0) totalTokens.toLong()
                 else ((downloadBytes + uploadBytes) / 4).coerceAtLeast(1)
-            // 计算成本：优先模型自定义价，其次默认价格表；price=0 表示免费模型（不扣费）
-            val price = if (model.price > 0) model.price else {
-                // 模型显式 price=0 且默认价表也为 0 才算免费；否则用默认价
-                val defaultP = PricingTable.priceOf(model.modelId)
-                if (model.price == 0.0 && defaultP == 0.0) 0.0 else if (model.price == 0.0) defaultP else model.price
-            }
+            // 计算成本：模型自定义价 price>0 才扣费；price=0（含默认0）→ 免费模型不扣
+            val price = if (model.price > 0) model.price else 0.0
             val cost = if (price > 0) estTokens / 1_000_000.0 * price * PricingTable.OUTPUT_MULTIPLIER else 0.0
             val userId = ownerUser?.id ?: 0
 
-            // 商业化扣款：付费模型扣自己余额（精确到分，余额0也扣=透支）；免费模型不扣
+            // 商业化扣款：付费模型扣自己余额（精确到分，余额不足则不扣不产生负数）；免费模型不扣
             if (ownerUser != null) {
                 if (ownerUser.quotaLimit > 0) {
                     // 有额度上限：扣额度
                     database.consumeQuota(ownerUser.id, estTokens)
                 } else if (cost > 0) {
-                    // 余额体制：付费模型扣余额（精确 BigDecimal）
-                    database.deductBalance(ownerUser.id, cost)
+                    // 余额体制：付费模型扣余额（精确 BigDecimal；余额不足则跳过，不产生负数）
+                    if (!database.deductBalance(ownerUser.id, cost)) {
+                        // 余额不足：本次不扣费（调用已成功返回，但记录cost=0）
+                        database.addTokenUsage(
+                            TokenUsage(
+                                modelKey = "${model.providerId}::${model.modelId}",
+                                modelName = model.displayName,
+                                providerId = model.providerId,
+                                promptTokens = promptTokens.toLong(),
+                                completionTokens = completionTokens.toLong(),
+                                totalTokens = totalTokens.toLong(),
+                                uploadBytes = uploadBytes,
+                                downloadBytes = downloadBytes,
+                                apiKeyLabel = currentApiKeyLabel,
+                                userId = userId,
+                                cost = 0.0
+                            )
+                        )
+                        return
+                    }
                 }
                 // cost == 0 → 免费模型，不扣费
             }

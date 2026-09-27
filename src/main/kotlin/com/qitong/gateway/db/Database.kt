@@ -818,13 +818,14 @@ class Database(private val dbPath: String) {
         return true
     }
 
-    /** 扣费：从余额扣款（精确到分；余额不足也扣，允许透支负数，返回成功） */
+    /** 扣费：从余额扣款（精确到分；余额不足返回 false，不允许出现负数） */
     fun deductBalance(userId: Long, amount: Double): Boolean {
         if (amount <= 0) return true
         val user = getUserById(userId) ?: return false
-        // 用 BigDecimal 精确扣费，避免 0.0000000000 尾数误差
+        // 用 BigDecimal 精确计算；余额不足则拒绝（不允许负数）
         val bal = BigDecimal(user.balance)
         val amt = BigDecimal(amount)
+        if (bal.compareTo(amt) < 0) return false  // 余额不足
         val newBal = bal.subtract(amt)
         stmt("UPDATE users SET balance = ? WHERE id=?", newBal.toDouble(), userId)
         return true
