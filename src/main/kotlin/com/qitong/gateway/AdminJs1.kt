@@ -154,12 +154,15 @@ loaders.dashboard = function(){
      return '<span class="badge ' + (isTop ? 'green' : 'purple') + '" style="cursor:pointer" onclick="forceSwitchModel(\'' + k.replace(/'/g, '') + '\')" title="点击强制切换">' + '' + esc(mid) + ' <span class="pool-dot ' + (isTop ? 'on' : '') + '"></span></span>';
     }).join('') + '</div><span style="font-size:12px;color:var(--muted)">点灯/点击=强制切换到此模型；首位=当前活跃，qtai-sj 优先走它</span><div style="margin-top:8px"><button class="btn-ghost" onclick="clearForcedPool()">清空</button></div></div>';
   }
-  // 地址行
+  // 地址行（本地 + IP + 当前访问域名）
   var gwPort = st.gatewayPort || 18889;
   var ip = st.serverIp || '127.0.0.1';
+  var domainAddr = st.domainAddr || '';
+  var domainLine = domainAddr ? '<div class="form-row"><label>域名地址（当前访问）</label><div class="addr-line" onclick="copyAddr(this)">' + esc(domainAddr) + ' <span class="copy-tag">复制</span></div></div>' : '';
   var addrHtml = '<div class="card"><h3>网关地址</h3>' +
    '<div class="form-row"><label>本地地址</label><div class="addr-line" onclick="copyAddr(this)">http://localhost:' + gwPort + '/v1 <span class="copy-tag">复制</span></div></div>' +
-   '<div class="form-row"><label>服务器地址（对外）</label><div class="addr-line" onclick="copyAddr(this)">http://' + esc(ip) + ':' + gwPort + '/v1 <span class="copy-tag">复制</span></div></div></div>';
+   '<div class="form-row"><label>服务器地址（IP）</label><div class="addr-line" onclick="copyAddr(this)">http://' + esc(ip) + ':' + gwPort + '/v1 <span class="copy-tag">复制</span></div></div>' +
+   domainLine + '</div>';
   box.innerHTML = [
    '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥0.00</div><div class="lbl">我的余额</div></div></div></div>',
    '<div class="card" id="announceCard"><h3>公告</h3><div style="color:var(--muted);padding:8px;font-size:13px">加载中...</div></div>',

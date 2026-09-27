@@ -140,6 +140,65 @@ java -jar qitong-gateway.jar
 └── start.sh
 ```
 
+## 🔀 域名反向代理配置（Nginx）
+
+> 通过域名访问綦桐AI网关（含 HTTPS），推荐用 Nginx 反代。配置后将自动在首页显示当前访问域名地址。
+
+### 配置要点
+- **Web 后台** → `http://127.0.0.1:18080`（管理页面）
+- **网关 API** → `http://127.0.0.1:18889`（OpenAI 兼容接口，/v1/* 开头）
+
+### Nginx 配置示例（宝塔面板 / 通用）
+
+```nginx
+server {
+    listen 80;
+    server_name ai.yourdomain.com;   # 换成你的域名
+
+    # 网关 API（/v1 等 OpenAI/Claude/Gemini 接口）→ 18889
+    location ^~ /v1 {
+        proxy_pass http://127.0.0.1:18889;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;              # 流式 SSE 必须关闭缓冲
+        proxy_read_timeout 300s;
+    }
+
+    # 健康检查 → 18889
+    location = /health {
+        proxy_pass http://127.0.0.1:18889;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # 其余（Web 后台/登录/静态资源）→ 18080
+    location / {
+        proxy_pass http://127.0.0.1:18080;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+
+# HTTPS 配置（certbot 或宝塔 SSL 申请证书后自动生成）
+server {
+    listen 443 ssl http2;
+    server_name ai.yourdomain.com;
+    # ... ssl_certificate 等由证书工具自动配置
+    # 转发规则同上（/v1 → 18889，/ → 18080）
+}
+```
+
+### ⚠️ 关键提醒
+1. **`proxy_buffering off` 必须开**：网关的流式 SSE（打字机效果）依赖实时传输，关闭缓冲才能正常推送
+2. **`X-Forwarded-For` 必须传递**：网关用它识别真实客户端 IP（限流/登录日志/暴力破解告警依赖）
+3. **HTTPS 建议开启**：公网运营建议用 `https://` 访问，否则 API Key 明文传输有风险
+4. **配置后刷新首页**：首页"网关地址"卡片会自动显示 `https://ai.yourdomain.com/v1`（匹配当前访问域名）
+5. 宝塔面板：在"网站 → 添加站点"填域名，然后修改 Nginx 配置加入上面的 `location` 块
+
 ## 🛡️ 安全注意
 
 - 首次登录后**立即修改默认管理员密码**

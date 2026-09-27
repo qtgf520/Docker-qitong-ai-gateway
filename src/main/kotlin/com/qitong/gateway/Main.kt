@@ -1394,6 +1394,11 @@ fun Application.moduleWeb(database: Database) {
                     put("gatewayPort", JsonPrimitive(database.getConfig("gateway_port", "18889")))
                     put("serverIp", JsonPrimitive(serverIp()))
                     put("localAddr", JsonPrimitive("http://" + serverIp() + ":" + database.getConfig("gateway_port", "18889") + "/v1"))
+                    // 当前访问域名（匹配反代域名，如 ai.jili5.cn；无域名则为空）
+                    val reqHost = call.request.headers["Host"] ?: ""
+                    val domain = reqHost.substringBefore(":").trim().takeIf { it.isNotBlank() && !it.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+")) && it != "localhost" } ?: ""
+                    put("serverDomain", JsonPrimitive(domain))
+                    put("domainAddr", JsonPrimitive(if (domain.isNotBlank()) "https://$domain/v1" else ""))
                     // 强制故障池：管理员=全局池；用户=自己的池
                     val forcedPoolStr = if (isAdmin) {
                         database.getConfig("forced_pool_keys", "")
