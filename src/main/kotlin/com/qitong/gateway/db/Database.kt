@@ -293,7 +293,7 @@ class Database(private val dbPath: String) {
                     FOREIGN KEY(ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
                 )"""
             )
-            // 操作日志（管理员查看，用户不可见）
+            // 操作日志（管理员查看全部，用户看自己的）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS op_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -302,6 +302,18 @@ class Database(private val dbPath: String) {
                     action TEXT NOT NULL DEFAULT '',
                     detail TEXT NOT NULL DEFAULT '',
                     ip TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            // 登录日志（宝塔风格：登录IP/成功失败/时间，所有用户独立可见）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS login_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL DEFAULT 0,
+                    username TEXT NOT NULL DEFAULT '',
+                    success INTEGER NOT NULL DEFAULT 1,
+                    ip TEXT NOT NULL DEFAULT '',
+                    detail TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL
                 )"""
             )
@@ -1130,8 +1142,42 @@ class Database(private val dbPath: String) {
         } catch (_: Exception) {}
     }
 
-    fun getOpLogs(limit: Int = 200): List<Map<String, Any?>> =
-        query("SELECT * FROM op_logs ORDER BY id DESC LIMIT $limit").map {
+    /** 登录日志（宝塔风格：成功/失败 + IP + 详情） */
+    fun addLoginLog(userId: Long, username: String, success: Boolean, ip: String, detail: String = "") {
+        try {
+            stmt("INSERT INTO login_logs (user_id,username,success,ip,detail,created_at) VALUES (?,?,?,?,?,?)",
+                userId, username, if (success) 1 else 0, ip, detail, System.currentTimeMillis())
+        } catch (_: Exception) {}
+    }
+
+    /** 登录日志查询：管理员=全部；普通用户=自己的 */
+    fun getLoginLogs(userId: Long? = null, limit: Int = 200): List<Map<String, Any?>> {
+        val list = if (userId != null && userId > 0) {
+            query("SELECT * FROM login_logs WHERE user_id=? ORDER BY id DESC LIMIT $limit", userId)
+        } else {
+            query("SELECT * FROM login_logs ORDER BY id DESC LIMIT $limit")
+        }
+        return list.map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "userId" to ((it["user_id"] as? Number)?.toLong() ?: 0),
+                "username" to (it["username"] as? String ?: ""),
+                "success" to ((it["success"] as? Number)?.toInt() == 1),
+                "ip" to (it["ip"] as? String ?: ""),
+                "detail" to (it["detail"] as? String ?: ""),
+                "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    }
+
+    /** 操作日志查询：管理员=全部；普通用户=自己的（用户独立） */
+    fun getOpLogs(userId: Long? = null, limit: Int = 200): List<Map<String, Any?>> {
+        val list = if (userId != null && userId > 0) {
+            query("SELECT * FROM op_logs WHERE user_id=? ORDER BY id DESC LIMIT $limit", userId)
+        } else {
+            query("SELECT * FROM op_logs ORDER BY id DESC LIMIT $limit")
+        }
+        return list.map {
             mapOf(
                 "id" to ((it["id"] as Number).toLong()),
                 "userId" to ((it["user_id"] as? Number)?.toLong() ?: 0),
@@ -1142,8 +1188,13 @@ class Database(private val dbPath: String) {
                 "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0)
             )
         }
+    }
 
     fun clearOpLogs() {
         stmt("DELETE FROM op_logs")
+    }
+
+    fun clearLoginLogs() {
+        stmt("DELETE FROM login_logs")
     }
 }

@@ -150,7 +150,7 @@ ${adminCss()}
       <div class="nav-group">系统</div>
       <a data-page="settings"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><b>网关设置</b></a>
       <a data-page="profile"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><b>个人中心</b></a>
-      <a data-page="logs" class="admin-only"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><b>全部操作日志</b></a>
+      <a data-page="logs"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><b>日志中心</b></a>
       <a data-page="announcements" class="admin-only"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><b>公告管理</b></a>
       <a data-page="users" class="admin-only"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><b>用户管理</b></a>
       <a data-page="about"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><b>关于我们</b></a>
@@ -256,7 +256,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .sidebar nav a:hover{background:var(--surface2);color:var(--text)}
 .sidebar nav a.active{background:var(--surface2);color:var(--primary);border-left-color:var(--primary);font-weight:600}
 /* ===== 内容区 ===== */
-.content{margin-left:212px;padding:68px 20px 24px;flex:1;min-height:100vh}
+.content{margin-left:212px;padding:68px 24px 24px;flex:1;min-height:100vh;max-width:calc(100vw - 212px)}
 .view{display:none}
 .view.active{display:block}
 /* ===== 卡片 ===== */
@@ -361,7 +361,7 @@ input[type=range]{accent-color:var(--primary)}
   .burger{display:block}
   .sidebar{transform:translateX(-100%)}
   .sidebar.open{transform:translateX(0)}
-  .content{margin-left:0;padding:64px 12px 76px}
+  .content{margin-left:0;padding:64px 14px 76px;max-width:100%}
   .grid-3,.grid-2,.grid-4{grid-template-columns:1fr}
   .bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:1000}
   .bottom-nav a{flex:1;display:flex;flex-direction:column;align-items:center;padding:7px 2px;color:var(--muted);text-decoration:none;font-size:10px;gap:2px}

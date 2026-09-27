@@ -734,24 +734,60 @@ window.delTicket = function(id){
   if(r.code === 0){ toast('工单已删除', true); loaders.tickets(); } else toast(r.msg, false);
  });
 };
-// ===== 全部操作日志（仅管理员） =====
+// ===== 日志中心（登录日志 + 操作日志；管理员=全部，普通用户=自己的，独立可见） =====
+function fmtLogTime(ts){
+ if(!ts) return '—';
+ var d = new Date(ts);
+ return d.toLocaleString('zh-CN',{hour12:false});
+}
 loaders.logs = function(){
  var box = $('view-logs');
- box.innerHTML = '<div class="action-bar"><button class="btn-ghost" style="color:var(--red)" onclick="clearLogs()">清空日志</button><span style="color:var(--muted);font-size:13px">记录所有用户的关键操作（登录/发布公告/提交工单等）</span></div><div class="card" id="logsCard"><div style="text-align:center;color:var(--muted);padding:30px">加载中...</div></div>';
+ box.innerHTML = '<div class="action-bar"><button class="btn-ghost" style="color:var(--red)" onclick="clearLoginLogs()">清空登录日志</button><button class="btn-ghost" style="color:var(--red)" onclick="clearLogs()">清空操作日志</button><span style="color:var(--muted);font-size:13px">登录日志：登录IP/成功失败/时间；操作日志：登录/公告/工单/余额变动等</span></div>' +
+  '<div class="tabs"><button class="on" id="logTabLogin" onclick="switchLogTab(\'login\')">🔐 登录日志</button><button id="logTabOp" onclick="switchLogTab(\'op\')">📜 操作日志</button></div>' +
+  '<div class="card" id="logsCard"><div style="text-align:center;color:var(--muted);padding:30px">加载中...</div></div>';
+ loadLoginLogs();
+};
+window.switchLogTab = function(t){
+ var lt = $('logTabLogin'), ot = $('logTabOp');
+ if(lt) lt.className = t === 'login' ? 'on' : '';
+ if(ot) ot.className = t === 'op' ? 'on' : '';
+ if(t === 'login') loadLoginLogs(); else loadOpLogs();
+};
+function loadLoginLogs(){
+ api('/api/logs/login').then(function(r){
+  if(r.code !== 0){ toast(r.msg, false); return; }
+  var list = r.data || [];
+  var rows = list.map(function(l){
+   var st = l.success ? '<span class="badge green">成功</span>' : '<span class="badge red">失败</span>';
+   return '<tr><td>'+esc(l.username||'-')+'</td><td>'+st+'</td><td style="font-size:12px;color:var(--muted)">'+esc(l.ip||'')+'</td><td>'+esc(l.detail||'')+'</td><td style="font-size:12px;color:var(--muted)">'+fmtLogTime(l.createdAt)+'</td></tr>';
+  }).join('');
+  var card = $('logsCard'); if(!card) return;
+  card.innerHTML = '<h3>🔐 登录日志</h3><div class="table-wrap"><table><thead><tr><th>用户</th><th>状态</th><th>IP</th><th>详情</th><th>时间</th></tr></thead><tbody>' +
+   rows + '<tr><td colspan="5" style="text-align:center;color:var(--muted)">' + (list.length ? '' : '暂无登录日志') + '</td></tr></tbody></table></div>';
+ });
+}
+function loadOpLogs(){
  api('/api/logs').then(function(r){
   if(r.code !== 0){ toast(r.msg, false); return; }
   var list = r.data || [];
   var rows = list.map(function(l){
-   return '<tr><td>'+esc(l.username||'-')+'</td><td><span class="badge blue">'+esc(l.action)+'</span></td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.detail||'')+'</td><td style="font-size:12px;color:var(--muted)">'+esc(l.ip||'')+'</td><td style="font-size:12px;color:var(--muted)">'+new Date(l.createdAt).toLocaleString('zh-CN',{hour12:false})+'</td></tr>';
+   return '<tr><td>'+esc(l.username||'-')+'</td><td><span class="badge blue">'+esc(l.action)+'</span></td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.detail||'')+'</td><td style="font-size:12px;color:var(--muted)">'+esc(l.ip||'')+'</td><td style="font-size:12px;color:var(--muted)">'+fmtLogTime(l.createdAt)+'</td></tr>';
   }).join('');
-  $('logsCard').innerHTML = '<h3>全部操作日志</h3><div class="table-wrap"><table><thead><tr><th>用户</th><th>操作</th><th>详情</th><th>IP</th><th>时间</th></tr></thead><tbody>' +
+  var card = $('logsCard'); if(!card) return;
+  card.innerHTML = '<h3>📜 操作日志</h3><div class="table-wrap"><table><thead><tr><th>用户</th><th>操作</th><th>详情</th><th>IP</th><th>时间</th></tr></thead><tbody>' +
    rows + '<tr><td colspan="5" style="text-align:center;color:var(--muted)">' + (list.length ? '' : '暂无日志') + '</td></tr></tbody></table></div>';
  });
-};
+}
 window.clearLogs = function(){
  if(!confirm('清空全部操作日志？')) return;
  api('/api/logs/clear', { method:'POST' }).then(function(r){
-  if(r.code === 0){ toast('已清空', true); loaders.logs(); } else toast(r.msg, false);
+  if(r.code === 0){ toast('已清空', true); loadOpLogs(); } else toast(r.msg, false);
+ });
+};
+window.clearLoginLogs = function(){
+ if(!confirm('清空全部登录日志？')) return;
+ api('/api/logs/login/clear', { method:'POST' }).then(function(r){
+  if(r.code === 0){ toast('已清空', true); loadLoginLogs(); } else toast(r.msg, false);
  });
 };
 // ===== 公告管理（仅管理员） =====

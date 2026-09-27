@@ -349,14 +349,24 @@ fun Application.moduleWeb(database: Database) {
             )
             if (result.isSuccess) {
                 val user = AuthManager.getUserByToken(database, result.getOrNull())
-                if (user != null) database.addOpLog(user.id, user.username, "登录", "后台登录成功", call.request.local.remoteHost)
+                val loginIp = call.request.local.remoteHost
+                if (user != null) {
+                    database.addOpLog(user.id, user.username, "登录", "后台登录成功", loginIp)
+                    database.addLoginLog(user.id, user.username, true, loginIp, "登录成功")
+                }
                 AdminApi.ok(call, mapOf(
                     "token" to result.getOrNull(),
                     "user" to (user?.let { mapOf("id" to it.id, "username" to it.username, "role" to it.role, "displayName" to it.displayName) })
                 ), "登录成功")
             } else {
-                // ★ P1 暴力破解告警：同 IP 5 次失败触发钉钉/邮箱
+                // 记录失败登录日志（宝塔风格：失败 + IP + 原因）
                 val failIp = call.request.local.remoteHost
+                val failUser = body["username"]?.jsonPrimitive?.content ?: ""
+                // 尝试匹配用户名对应的用户ID
+                val failUserId = database.getUserByUsername(failUser)?.id ?: 0L
+                database.addLoginLog(failUserId, failUser, false, failIp, "密码错误或用户不存在")
+                database.addOpLog(failUserId, failUser, "登录失败", "密码错误或用户不存在", failIp)
+                // ★ P1 暴力破解告警：同 IP 5 次失败触发钉钉/邮箱
                 val failCount = loginFailCount.computeIfAbsent(failIp) { 0 }.let { c ->
                     loginFailCount[failIp] = c + 1; c + 1
                 }
@@ -639,6 +649,8 @@ fun Application.moduleWeb(database: Database) {
             if (amount <= 0) { AdminApi.fail(call, "金额必须大于0", 400); return@post }
             if (database.rechargeBalance(userId, amount)) {
                 val bal = database.getUserBalance(userId)
+                val target = database.getUserById(userId)
+                database.addOpLog(u.id, u.username, "用户充值", "给 ${target?.username ?: "用户$userId"} 充值 ¥$amount（当前余额 ¥$bal）", call.request.local.remoteHost)
                 AdminApi.ok(call, mapOf("balance" to bal), "充值成功，当前余额 ¥$bal")
             } else AdminApi.fail(call, "充值失败", 400)
         }
@@ -652,6 +664,8 @@ fun Application.moduleWeb(database: Database) {
             if (amount <= 0) { AdminApi.fail(call, "金额必须大于0", 400); return@post }
             if (database.deductBalanceAdmin(userId, amount)) {
                 val bal = database.getUserBalance(userId)
+                val target = database.getUserById(userId)
+                database.addOpLog(u.id, u.username, "用户扣款", "给 ${target?.username ?: "用户$userId"} 扣款 ¥$amount（当前余额 ¥$bal）", call.request.local.remoteHost)
                 AdminApi.ok(call, mapOf("balance" to bal), "已扣款 ¥$amount，当前余额 ¥$bal")
             } else AdminApi.fail(call, "扣款失败", 400)
         }
@@ -1165,17 +1179,32 @@ fun Application.moduleWeb(database: Database) {
             database.deleteTicket(id)
             AdminApi.ok(call, null, "工单已删除")
         }
-        // ===== 操作日志（仅管理员） =====
+        // ===== 操作日志（管理员=全部；普通用户=自己的，独立可见） =====
         get("/api/logs") {
             val user = call.requireAuth(database) ?: return@get
-            if (user.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
-            AdminApi.ok(call, database.getOpLogs(), "ok")
+            // 普通用户只看自己的操作日志，管理员看全部
+            val logs = if (user.role == "admin") database.getOpLogs()
+                else database.getOpLogs(user.id)
+            AdminApi.ok(call, logs, "ok")
+        }
+        // 登录日志（宝塔风格：登录IP/成功失败/时间；管理员=全部，普通用户=自己的）
+        get("/api/logs/login") {
+            val user = call.requireAuth(database) ?: return@get
+            val logs = if (user.role == "admin") database.getLoginLogs()
+                else database.getLoginLogs(user.id)
+            AdminApi.ok(call, logs, "ok")
         }
         post("/api/logs/clear") {
             val user = call.requireAuth(database) ?: return@post
             if (user.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
             database.clearOpLogs()
             AdminApi.ok(call, null, "日志已清空")
+        }
+        post("/api/logs/login/clear") {
+            val user = call.requireAuth(database) ?: return@post
+            if (user.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            database.clearLoginLogs()
+            AdminApi.ok(call, null, "登录日志已清空")
         }
         // ===== 通知设置（钉钉Webhook + 邮箱SMTP，仅管理员） =====
         get("/api/notify/config") {
