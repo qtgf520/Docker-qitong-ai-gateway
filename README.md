@@ -224,6 +224,11 @@ Copyright 2026 綦桐 (qtgf520)
 
 ## 📝 更新日志（CHANGELOG）
 
+### v3.18.22-25（2026-09-28）· 首页网关地址显示当前域名 + 反代理文档
+- 🌐 **首页网关地址三地址显示**：本地地址 / 服务器 IP 地址 / **当前访问域名地址**（自动匹配反代域名，如 https://ai.jili5.cn/v1，无域名则不显示域名行）
+- 📖 **README 新增《域名反向代理 Nginx 配置教程》**：宝塔/通用 nginx 配置，/v1 → 18889、/ → 18080，`proxy_buffering off` 保流式 SSE、`X-Forwarded-For` 保限流/日志识别真实 IP、HTTPS 建议
+- 🐛 **修复 gradle 缓存导致前端改动未进 jar**：`--rerun-tasks` 强制重编译，确保 AdminJs 改动打包生效
+
 ### v3.18.22-22-glass（2026-09-27）· 合并群友玻璃拟态UI v2.0.2
 - 🎨 **控制台风 UI**：中性灰阶 + 单一强调色（#3E7BFA），类 Grafana/Cloudflare Dashboard 观感，无渐变堆砌、无 emoji（改用 SVG 图标导航）
 - 🪟 **玻璃拟态**：backdrop-filter blur 毛玻璃卡片，登录页 + 后台全适配
