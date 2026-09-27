@@ -494,20 +494,25 @@ class GatewayProxy(private val database: Database) {
             // token 缺省时按字节估算（兼容无 usage 字段的上游）
             val estTokens = if (totalTokens > 0) totalTokens.toLong()
                 else ((downloadBytes + uploadBytes) / 4).coerceAtLeast(1)
-            // 计算成本：优先模型自定义价，其次默认价格表
-            val price = if (model.price > 0) model.price else PricingTable.priceOf(model.modelId)
-            val cost = estTokens / 1_000_000.0 * price * PricingTable.OUTPUT_MULTIPLIER
+            // 计算成本：优先模型自定义价，其次默认价格表；price=0 表示免费模型（不扣费）
+            val price = if (model.price > 0) model.price else {
+                // 模型显式 price=0 且默认价表也为 0 才算免费；否则用默认价
+                val defaultP = PricingTable.priceOf(model.modelId)
+                if (model.price == 0.0 && defaultP == 0.0) 0.0 else if (model.price == 0.0) defaultP else model.price
+            }
+            val cost = if (price > 0) estTokens / 1_000_000.0 * price * PricingTable.OUTPUT_MULTIPLIER else 0.0
             val userId = ownerUser?.id ?: 0
 
-            // 商业化扣款（余额不足则拒绝记录并标记，但不阻塞已成功的转发）
+            // 商业化扣款：付费模型扣自己余额（精确到分，余额0也扣=透支）；免费模型不扣
             if (ownerUser != null) {
                 if (ownerUser.quotaLimit > 0) {
                     // 有额度上限：扣额度
                     database.consumeQuota(ownerUser.id, estTokens)
-                } else {
-                    // 余额体制：扣余额（不足则记录0成本）
+                } else if (cost > 0) {
+                    // 余额体制：付费模型扣余额（精确 BigDecimal）
                     database.deductBalance(ownerUser.id, cost)
                 }
+                // cost == 0 → 免费模型，不扣费
             }
 
             database.addTokenUsage(

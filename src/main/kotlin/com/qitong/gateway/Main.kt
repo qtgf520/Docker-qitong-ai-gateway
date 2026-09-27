@@ -595,19 +595,32 @@ fun Application.moduleWeb(database: Database) {
             else AdminApi.fail(call, "无权限删除该规则", 403)
         }
 
-        // 用户（admin 或 users.manage 权限）
+        // 用户（admin=全部；代理=自己的下级用户；普通用户无权限）
         get("/api/users") {
             val u = call.requireAuth(database) ?: return@get
-            if (!AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) AdminApi.fail(call, "无权限", 403)
-            else AdminApi.ok(call, AdminApi.getUsers(database))
+            // 代理自动拥有管理自己下级的权限（即使未显式配置 users.manage）
+            val isAgentOrAdmin = u.role == "admin" || u.role == "agent"
+            if (!isAgentOrAdmin && !AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) AdminApi.fail(call, "无权限", 403)
+            else {
+                // 代理：只看自己的下级；管理员：看全部
+                val users = if (u.role == "admin") AdminApi.getUsers(database)
+                    else if (u.role == "agent") AdminApi.getUsersByInviter(database, u.id)
+                    else emptyList()
+                AdminApi.ok(call, users, "ok")
+            }
         }
-        // 编辑用户（昵称/角色/额度/绑定模型/权限/重置密码）
+        // 编辑用户（昵称/角色/额度/绑定模型/权限/重置密码；管理员=全部，代理=自己的下级）
         post("/api/users/update") {
             val u = call.requireAuth(database) ?: return@post
-            if (!AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
+            if (u.role != "admin" && u.role != "agent" && !AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
             val body = call.receive<JsonObject>()
             val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: return@post
             val user = database.getUserById(userId) ?: run { AdminApi.fail(call, "用户不存在", 404); return@post }
+            // 代理只能管理自己的下级
+            if (u.role != "admin" && !database.isSubordinate(u.id, userId)) { AdminApi.fail(call, "只能管理自己的下级用户", 403); return@post }
+            // 代理不能把下级改成代理/管理员（权限隔离）
+            val newRole = body["role"]?.jsonPrimitive?.content ?: user.role
+            if (u.role != "admin" && (newRole == "admin" || newRole == "agent")) { AdminApi.fail(call, "无权变更角色", 403); return@post }
             val updated = user.copy(
                 displayName = body["displayName"]?.jsonPrimitive?.content ?: user.displayName,
                 role = body["role"]?.jsonPrimitive?.content ?: user.role,
@@ -629,22 +642,26 @@ fun Application.moduleWeb(database: Database) {
             }
             AdminApi.ok(call, null, "用户已更新")
         }
-        // 删除用户
+        // 删除用户（管理员=全部；代理=自己的下级）
         post("/api/users/delete") {
             val u = call.requireAuth(database) ?: return@post
-            if (!AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
+            if (u.role != "admin" && u.role != "agent" && !AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
             val body = call.receive<JsonObject>()
             val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: return@post
             if (userId == u.id) { AdminApi.fail(call, "不能删除自己", 400); return@post }
+            // 代理只能删自己的下级
+            if (u.role != "admin" && !database.isSubordinate(u.id, userId)) { AdminApi.fail(call, "只能管理自己的下级用户", 403); return@post }
             database.deleteUser(userId)
             AdminApi.ok(call, null, "用户已删除")
         }
-        // 用户充值（admin / users.manage）
+        // 用户充值（admin / 代理自己的下级）
         post("/api/users/recharge") {
             val u = call.requireAuth(database) ?: return@post
-            if (!AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
+            if (u.role != "admin" && u.role != "agent" && !AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
             val body = call.receive<JsonObject>()
             val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "用户ID无效", 400); return@post }
+            // 代理只能给自己的下级充值
+            if (u.role != "admin" && !database.isSubordinate(u.id, userId)) { AdminApi.fail(call, "只能管理自己的下级用户", 403); return@post }
             val amount = body["amount"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: run { AdminApi.fail(call, "金额无效", 400); return@post }
             if (amount <= 0) { AdminApi.fail(call, "金额必须大于0", 400); return@post }
             if (database.rechargeBalance(userId, amount)) {
@@ -654,12 +671,14 @@ fun Application.moduleWeb(database: Database) {
                 AdminApi.ok(call, mapOf("balance" to bal), "充值成功，当前余额 ¥$bal")
             } else AdminApi.fail(call, "充值失败", 400)
         }
-        // 管理员手动扣款
+        // 管理员手动扣款（admin / 代理自己的下级）
         post("/api/users/deduct") {
             val u = call.requireAuth(database) ?: return@post
-            if (!AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
+            if (u.role != "admin" && u.role != "agent" && !AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
             val body = call.receive<JsonObject>()
             val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "用户ID无效", 400); return@post }
+            // 代理只能给自己的下级扣款
+            if (u.role != "admin" && !database.isSubordinate(u.id, userId)) { AdminApi.fail(call, "只能管理自己的下级用户", 403); return@post }
             val amount = body["amount"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: run { AdminApi.fail(call, "金额无效", 400); return@post }
             if (amount <= 0) { AdminApi.fail(call, "金额必须大于0", 400); return@post }
             if (database.deductBalanceAdmin(userId, amount)) {

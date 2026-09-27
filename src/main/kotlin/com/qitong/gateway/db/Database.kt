@@ -1,6 +1,7 @@
 package com.qitong.gateway.db
 
 import com.qitong.gateway.model.*
+import java.math.BigDecimal
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.ResultSet
@@ -688,6 +689,14 @@ class Database(private val dbPath: String) {
     fun getUsers(): List<User> =
         query("SELECT * FROM users ORDER BY id").map { rowToUser(it) }
 
+    /** 代理的下级用户（自己开的号/邀请的号，按 inviter_id 归属） */
+    fun getUsersByInviter(inviterId: Long): List<User> =
+        query("SELECT * FROM users WHERE inviter_id=? ORDER BY id", inviterId).map { rowToUser(it) }
+
+    /** 判断某用户是否是当前用户的下级（代理管理校验） */
+    fun isSubordinate(parentId: Long, childId: Long): Boolean =
+        queryOne("SELECT COUNT(*) FROM users WHERE id=? AND inviter_id=?", childId, parentId)?.let { it > 0 } ?: false
+
     /** 行转User（含额度/绑定模型/权限/余额） */
     private fun rowToUser(it: Map<String, Any?>): User = User(
         id = (it["id"] as Number).toLong(),
@@ -809,12 +818,15 @@ class Database(private val dbPath: String) {
         return true
     }
 
-    /** 扣费：从余额扣款，返回是否成功（余额不足返回 false） */
+    /** 扣费：从余额扣款（精确到分；余额不足也扣，允许透支负数，返回成功） */
     fun deductBalance(userId: Long, amount: Double): Boolean {
         if (amount <= 0) return true
         val user = getUserById(userId) ?: return false
-        if (user.balance + 1e-9 < amount) return false  // 余额不足
-        stmt("UPDATE users SET balance = balance - ? WHERE id=?", amount, userId)
+        // 用 BigDecimal 精确扣费，避免 0.0000000000 尾数误差
+        val bal = BigDecimal(user.balance)
+        val amt = BigDecimal(amount)
+        val newBal = bal.subtract(amt)
+        stmt("UPDATE users SET balance = ? WHERE id=?", newBal.toDouble(), userId)
         return true
     }
 

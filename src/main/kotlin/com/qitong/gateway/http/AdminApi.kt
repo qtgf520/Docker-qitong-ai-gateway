@@ -678,6 +678,18 @@ private fun providerToMap(p: Provider) = mapOf(
         )
     }
 
+    /** 代理的下级用户列表（自己开的号/邀请的号） */
+    fun getUsersByInviter(database: Database, inviterId: Long): List<Map<String, Any?>> = database.getUsersByInviter(inviterId).map {
+        mapOf(
+            "id" to it.id, "username" to it.username, "role" to it.role,
+            "displayName" to it.displayName, "createdAt" to it.createdAt, "lastLoginAt" to it.lastLoginAt,
+            "quotaLimit" to it.quotaLimit, "quotaUsed" to it.quotaUsed, "bindModels" to it.bindModels,
+            "permissions" to it.permissions, "balance" to it.balance, "totalRecharge" to it.totalRecharge,
+            "inviteCode" to it.inviteCode, "inviterId" to it.inviterId, "commissionRate" to it.commissionRate,
+            "email" to it.email, "notifyEnabled" to it.notifyEnabled
+        )
+    }
+
     // ============ 聊天 ============
 
     fun getConversations(database: Database): List<Map<String, Any?>> = database.getConversations().map {
