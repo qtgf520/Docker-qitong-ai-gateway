@@ -648,8 +648,12 @@ fun Application.moduleWeb(database: Database) {
             if (!requireAdminQQ(u)) { AdminApi.fail(call, "仅管理员可管理QQ机器人", 403); return@post }
             val body = call.receive<JsonObject>()
             val appid = body["appid"]?.jsonPrimitive?.content?.trim().orEmpty()
-            val token = body["token"]?.jsonPrimitive?.content?.trim().orEmpty()
-            if (appid.isBlank() || token.isBlank()) { AdminApi.fail(call, "AppID 和 Token 不能为空", 400); return@post }
+            var token = body["token"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (appid.isBlank()) { AdminApi.fail(call, "AppID 不能为空", 400); return@post }
+            // 编辑已有机器人时，Token 留空则沿用原 Token
+            val existingToken = if (token.isBlank()) database.getQqBotByAppid(appid)?.get("token") as? String else null
+            if (token.isBlank()) token = existingToken.orEmpty()
+            if (token.isBlank()) { AdminApi.fail(call, "AppID 和 Token 不能为空", 400); return@post }
             val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
             val enabled = body["enabled"]?.jsonPrimitive?.content?.toBoolean() ?: true
             val aiModel = body["aiModel"]?.jsonPrimitive?.content?.trim()?.ifBlank { "qtai-sj" } ?: "qtai-sj"
@@ -720,6 +724,9 @@ fun Application.moduleWeb(database: Database) {
             val bots = database.getQqBots().map { b ->
                 val st = com.qitong.gateway.qq.QqBotManager.statusOf(b["id"] as Long)
                 mapOf("id" to b["id"], "name" to b["name"], "appid" to b["appid"],
+                    "aiModel" to (b["aiModel"] ?: "qtai-sj"),
+                    "systemPrompt" to (b["systemPrompt"] ?: ""),
+                    "welcome" to (b["welcome"] ?: ""),
                     "online" to (st.status == com.qitong.gateway.qq.QqBotStatus.ONLINE),
                     "messagesHandled" to st.messagesHandled, "lastError" to st.lastError)
             }

@@ -48,10 +48,16 @@ function qqLoadOverview(){
   var botRows=(d.bots||[]).map(function(b){
    return '<tr><td><b>'+esc(b.name||'未命名')+'</b></td><td><code style="font-size:11px">'+esc(b.appid)+'</code></td>'+
     '<td>'+(b.online?'<span class="badge green">在线</span>':'<span class="badge gray">离线</span>')+'</td>'+
-    '<td>'+(b.messagesHandled||0)+'</td><td style="font-size:11px;color:var(--red)">'+esc(b.lastError||'')+'</td></tr>';
-  }).join('') || '<tr><td colspan="5" style="color:var(--muted)">还没有机器人</td></tr>';
-  var botsTable='<div class="card" style="box-shadow:none;border:1px solid var(--border)"><h3>机器人状态</h3>'+
-   '<div class="table-wrap"><table><thead><tr><th>名称</th><th>AppID</th><th>状态</th><th>已处理</th><th>异常</th></tr></thead><tbody>'+botRows+'</tbody></table></div></div>';
+    '<td>'+(b.messagesHandled||0)+'</td><td style="font-size:11px;color:var(--red)">'+esc(b.lastError||'')+'</td>'+
+    '<td style="white-space:nowrap">'+
+    '<button class="btn-ghost btn-sm" onclick="qqOpenForm('+JSON.stringify(b).replace(/"/g,'&quot;')+')">编辑</button> '+
+    '<button class="btn-ghost btn-sm" onclick="qqToggle('+b.id+')">'+(b.online?'停用':'启用')+'</button> '+
+    '<button class="btn-ghost btn-sm" onclick="qqRestart('+b.id+')">重连</button> '+
+    '<button class="btn-ghost btn-sm danger" onclick="qqDel('+b.id+')">删</button></td></tr>';
+  }).join('') || '<tr><td colspan="6" style="color:var(--muted)">还没有机器人，点上方「添加机器人」接入第一个。</td></tr>';
+  var botsTable='<div class="card" style="box-shadow:none;border:1px solid var(--border)"><div class="action-bar"><h3 style="margin:0">机器人状态</h3>'+
+   '<button class="btn" onclick="qqOpenForm()">+ 添加机器人</button></div>'+
+   '<div class="table-wrap"><table><thead><tr><th>名称</th><th>AppID</th><th>状态</th><th>已处理</th><th>异常</th><th>操作</th></tr></thead><tbody>'+botRows+'</tbody></table></div></div>';
   var feed=(d.recent||[]).map(function(l){
    var color = l.type==='error'?'var(--red)':(l.type==='command'?'var(--amber)':'var(--green)');
    return '<div style="display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px">'+
@@ -78,6 +84,47 @@ function qqLoadOverview(){
    }).join('');
   });
  },5000);
+}
+
+// ---- 机器人增删改启停 ----
+function qqOpenForm(b){
+ b=b||{};
+ var html =
+  '<div class="form-row"><label>机器人名称（备注）</label><input class="input" id="qbName" value="'+esc(b.name||'')+'" placeholder="例如：客服小号1"></div>'+
+  '<div class="form-row"><label>AppID（QQ开放平台机器人详情页）</label><input class="input" id="qbAppid" value="'+esc(b.appid||'')+'" '+(b.appid?'readonly':'')+'></div>'+
+  '<div class="form-row"><label>Token（机器人 Token）</label><input class="input" id="qbToken" value="" placeholder="'+(b.appid?'保存时留空则不修改':'')+'"></div>'+
+  '<div class="form-row"><label>使用模型（留空用 qtai-sj 自动选最快）</label><input class="input" id="qbModel" value="'+esc(b.aiModel||'')+'" placeholder="qtai-sj"></div>'+
+  '<div class="form-row"><label>系统人设 / System Prompt（可选）</label><textarea class="input" id="qbPrompt" rows="3" placeholder="例如：你是綦桐AI，语气活泼…">'+esc(b.systemPrompt||'')+'</textarea></div>'+
+  '<div class="form-row"><label>入群欢迎语（可选，新群首次@自动下发）</label><input class="input" id="qbWelcome" value="'+esc(b.welcome||'')+'"></div>';
+ openModal(b.appid?'编辑机器人':'添加机器人', html, function(){
+  var appid=$('qbAppid').value.trim();
+  var token=$('qbToken').value.trim();
+  if(!appid){ toast('AppID 必填', false); return; }
+  if(!token && !b.appid){ toast('Token 必填', false); return; }
+  api('/api/qq/bots',{method:'POST',body:{
+   appid:appid, token:token, name:$('qbName').value.trim(),
+   aiModel:$('qbModel').value.trim()||'qtai-sj',
+   systemPrompt:$('qbPrompt').value, welcome:$('qbWelcome').value.trim(), enabled:true
+  }}).then(function(r){
+   if(r.code===0){ toast('保存成功', true); closeModal(); qqLoadOverview(); } else toast(r.msg||'保存失败', false);
+  });
+ });
+}
+function qqToggle(id){
+ api('/api/qq/bots/'+id+'/toggle',{method:'POST'}).then(function(r){
+  toast(r.msg||'', r.code===0); if(r.code===0) qqLoadOverview();
+ });
+}
+function qqRestart(id){
+ api('/api/qq/bots/'+id+'/restart',{method:'POST'}).then(function(r){
+  toast(r.msg||'已重连', r.code===0);
+ });
+}
+function qqDel(id){
+ if(!confirm('确定删除该机器人？会断开它的连接。')) return;
+ api('/api/qq/bots/'+id,{method:'DELETE'}).then(function(r){
+  if(r.code===0){ toast('已删除', true); qqLoadOverview(); } else toast(r.msg, false);
+ });
 }
 
 // ---- 插件指令 ----
