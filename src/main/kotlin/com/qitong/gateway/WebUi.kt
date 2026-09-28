@@ -229,7 +229,7 @@ html,body{height:100%}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);overflow-x:hidden;-webkit-font-smoothing:antialiased}
 #app{min-height:100vh;display:flex;flex-direction:column}
 /* ===== 顶栏 ===== */
-.topbar{position:fixed;top:0;left:0;right:0;height:52px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 14px;z-index:1000}
+.topbar{position:fixed;top:0;left:0;right:0;height:52px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 14px;z-index:1000;max-width:100vw;overflow:hidden}
 .burger{display:none;background:none;border:0;color:var(--muted);cursor:pointer;padding:6px 8px;margin-right:4px}
 .burger svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
 .topbar-title{font-size:14px;font-weight:600;color:var(--text)}
@@ -262,7 +262,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .view{display:none}
 .view.active{display:block}
 /* ===== 卡片 ===== */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:14px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:14px;max-width:100%;box-sizing:border-box;overflow:hidden}
 .card h3{font-size:13px;margin-bottom:12px;color:var(--text);font-weight:600}
 .grid{display:grid;gap:12px}
 .grid-3{grid-template-columns:repeat(3,1fr)}
@@ -274,7 +274,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .view.active{animation:fadeIn .18s ease}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 /* ===== 表格 ===== */
-.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:6px}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:6px;max-width:100%;width:100%}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}
 th{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em;user-select:none}
@@ -309,6 +309,10 @@ th .sort-ind{color:var(--primary);font-size:10px;margin-left:3px}
 .log-tab{flex:1;background:none;border:0;color:var(--muted);font-size:14px;padding:10px 0;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
 .log-tab:hover{color:var(--text)}
 .log-tab.on{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+/* ===== QQ机器人 Tab（移动端可横滑不挤压） ===== */
+.qq-tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:14px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap;scrollbar-width:none;max-width:100%}
+.qq-tabs::-webkit-scrollbar{display:none}
+.qq-tabs .log-tab{flex:0 0 auto;white-space:nowrap;padding:10px 14px;font-size:13px;min-width:max-content}
 /* ===== 表单 ===== */
 .form-row{margin-bottom:12px}
 .form-row label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
@@ -373,6 +377,8 @@ input[type=range]{accent-color:var(--primary)}
   .bottom-nav a{flex:1;display:flex;flex-direction:column;align-items:center;padding:7px 2px;color:var(--muted);text-decoration:none;font-size:10px;gap:2px}
   .bottom-nav a svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
   .bottom-nav a.active{color:var(--primary)}
+  .topbar-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+  .topbar-right{flex-shrink:0}
   .topbar-title .ver{display:none}
   .user-name{display:none}
 }

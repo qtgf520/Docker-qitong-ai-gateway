@@ -7,7 +7,7 @@ object AdminJs5 {
 var qqTab = 'overview';
 var qqFeedTimer = null;
 function qqTabBtn(t){ qqTab=t; loaders.qqbot(); }
-loaders.qqbot = function(){
+ loaders.qqbot = function(){
  var box = $('view-qqbot');
  var tabs = [
   ['overview','动态概览'],['cmds','插件指令'],['groups','群配置'],
@@ -15,7 +15,7 @@ loaders.qqbot = function(){
  ].map(function(x){
   return '<button class="log-tab" style="'+(qqTab===x[0]?'color:var(--primary);border-bottom-color:var(--primary);font-weight:600':'')+'" onclick="qqTabBtn(\''+x[0]+'\')">'+x[1]+'</button>';
  }).join('');
- box.innerHTML = '<div class="card"><div style="display:flex;gap:14px;border-bottom:1px solid var(--border);margin-bottom:14px;flex-wrap:wrap">'+tabs+'</div>'+
+ box.innerHTML = '<div class="card"><div class="qq-tabs">'+tabs+'</div>'+
   '<div id="qqPane">'+qqTabHtml()+'</div></div>';
  if(qqTab==='overview') qqLoadOverview();
  if(qqTab==='cmds') qqLoadCmds();
@@ -23,7 +23,7 @@ loaders.qqbot = function(){
  if(qqTab==='users') qqLoadUsers();
  if(qqTab==='points') qqLoadPoints();
  if(qqTab==='logs') qqLoadLogs();
-};
+ };
 function qqTabHtml(){
  if(qqTab==='overview') return '<div id="qqOverview"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  if(qqTab==='cmds') return '<div class="action-bar"><button class="btn" onclick="qqCmdForm()">+ 新建指令插件</button><button class="btn-ghost" onclick="qqCmdHelp()">插件开发说明</button><span style="font-size:12px;color:var(--muted)">小栗子式：触发词 -> 回复/HTTP/AI，按优先级匹配，命中即停</span></div><div id="qqCmdList"></div>';
