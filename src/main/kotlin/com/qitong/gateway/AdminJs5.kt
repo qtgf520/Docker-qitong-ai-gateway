@@ -92,17 +92,21 @@ function qqOpenForm(b){
  var html =
   '<div class="form-row"><label>机器人名称（备注）</label><input class="input" id="qbName" value="'+esc(b.name||'')+'" placeholder="例如：客服小号1"></div>'+
   '<div class="form-row"><label>AppID（QQ开放平台机器人详情页）</label><input class="input" id="qbAppid" value="'+esc(b.appid||'')+'" '+(b.appid?'readonly':'')+'></div>'+
-  '<div class="form-row"><label>Token（机器人 Token）</label><input class="input" id="qbToken" value="" placeholder="'+(b.appid?'保存时留空则不修改':'')+'"></div>'+
+  '<div class="form-row"><label>AppSecret（机器人密钥，新版鉴权必需）</label><input class="input" id="qbSecret" type="password" value="" placeholder="'+(b.appSecret?'已保存，留空则不修改':'QQ开放平台 AppSecret')+'"></div>'+
+  '<div class="form-row"><label><input type="checkbox" id="qbSandbox"'+(b.useSandbox?' checked':'')+'> 沙箱环境（开发调试用，正式发布请取消勾选）</label></div>'+
   '<div class="form-row"><label>使用模型（留空用 qtai-sj 自动选最快）</label><input class="input" id="qbModel" value="'+esc(b.aiModel||'')+'" placeholder="qtai-sj"></div>'+
   '<div class="form-row"><label>系统人设 / System Prompt（可选）</label><textarea class="input" id="qbPrompt" rows="3" placeholder="例如：你是綦桐AI，语气活泼…">'+esc(b.systemPrompt||'')+'</textarea></div>'+
   '<div class="form-row"><label>入群欢迎语（可选，新群首次@自动下发）</label><input class="input" id="qbWelcome" value="'+esc(b.welcome||'')+'"></div>';
  openModal(b.appid?'编辑机器人':'添加机器人', html, function(){
   var appid=$('qbAppid').value.trim();
-  var token=$('qbToken').value.trim();
+  var token=$('qbToken') && $('qbToken').value ? $('qbToken').value.trim() : '';
+  var appSecret=$('qbSecret').value.trim();
   if(!appid){ toast('AppID 必填', false); return; }
-  if(!token && !b.appid){ toast('Token 必填', false); return; }
+  if(!appSecret && !token && !b.appid){ toast('AppSecret 必填（新版鉴权）', false); return; }
   api('/api/qq/bots',{method:'POST',body:{
-   appid:appid, token:token, name:$('qbName').value.trim(),
+   appid:appid, token:token, appSecret:appSecret,
+   useSandbox:$('qbSandbox').checked?'true':'false',
+   name:$('qbName').value.trim(),
    aiModel:$('qbModel').value.trim()||'qtai-sj',
    systemPrompt:$('qbPrompt').value, welcome:$('qbWelcome').value.trim(), enabled:true
   }}).then(function(r){

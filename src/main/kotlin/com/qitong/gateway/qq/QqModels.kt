@@ -3,6 +3,9 @@ package com.qitong.gateway.qq
 /**
  * QQ 开放平台机器人 —— 数据模型
  * 事件字段对齐 https://bot.q.qq.com/wiki/develop/api-v2/
+ * 鉴权：新版 AccessToken 机制（Token 已弃用）
+ *   POST /app/getAppAccessToken 用 appId+clientSecret 换 access_token（7200s 有效）
+ *   Authorization: QQBot {access_token}
  */
 
 /** 一个已配置的机器人（来自 qq_bots 表） */
@@ -10,14 +13,19 @@ data class QqBot(
     val id: Long,
     val appid: String,
     val token: String,
+    val appSecret: String = "",
+    val useSandbox: Boolean = false,
     val name: String,
     val enabled: Boolean,
     val aiModel: String,
     val systemPrompt: String,
     val welcome: String
 ) {
-    /** 鉴权头：Bot {appid}.{token} */
-    fun authHeader(): String = "Bot $appid.$token"
+    /** 鉴权头（新版 AccessToken 方式） */
+    fun authHeader(accessToken: String? = null): String {
+        val tok = accessToken ?: token
+        return if (tok.isBlank()) "" else "QQBot $tok"
+    }
 }
 
 /** 收到的一条群@消息 GROUP_AT_MESSAGE_CREATE */

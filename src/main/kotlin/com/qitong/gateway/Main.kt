@@ -649,24 +649,27 @@ fun Application.moduleWeb(database: Database) {
             val body = call.receive<JsonObject>()
             val appid = body["appid"]?.jsonPrimitive?.content?.trim().orEmpty()
             var token = body["token"]?.jsonPrimitive?.content?.trim().orEmpty()
+            var appSecret = body["appSecret"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val useSandbox = body["useSandbox"]?.jsonPrimitive?.content?.toBoolean() ?: false
             if (appid.isBlank()) { AdminApi.fail(call, "AppID 不能为空", 400); return@post }
-            // 编辑已有机器人时，Token 留空则沿用原 Token
-            val existingToken = if (token.isBlank()) database.getQqBotByAppid(appid)?.get("token") as? String else null
-            if (token.isBlank()) token = existingToken.orEmpty()
-            if (token.isBlank()) { AdminApi.fail(call, "AppID 和 Token 不能为空", 400); return@post }
+            // 编辑已有机器人时，Token/AppSecret 留空则沿用原值
+            val existing = database.getQqBotByAppid(appid)
+            if (token.isBlank()) token = (existing?.get("token") as? String).orEmpty()
+            if (appSecret.isBlank()) appSecret = (existing?.get("appSecret") as? String).orEmpty()
+            if (token.isBlank() && appSecret.isBlank()) { AdminApi.fail(call, "AppID、Token/AppSecret 不能同时为空", 400); return@post }
             val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
             val enabled = body["enabled"]?.jsonPrimitive?.content?.toBoolean() ?: true
             val aiModel = body["aiModel"]?.jsonPrimitive?.content?.trim()?.ifBlank { "qtai-sj" } ?: "qtai-sj"
             val systemPrompt = body["systemPrompt"]?.jsonPrimitive?.content ?: ""
             val welcome = body["welcome"]?.jsonPrimitive?.content ?: ""
-            val id = database.upsertQqBot(appid, token, name, enabled, aiModel, systemPrompt, welcome)
+            val id = database.upsertQqBot(appid, token, appSecret, useSandbox, name, enabled, aiModel, systemPrompt, welcome)
             // 保存后立即按启用状态拉起/停止
             val fresh = database.getQqBotById(id)
             if (fresh != null) {
                 if (enabled) {
                     com.qitong.gateway.qq.QqBotManager.startBot(com.qitong.gateway.qq.QqBot(
-                        id = id, appid = appid, token = token, name = name, enabled = true,
-                        aiModel = aiModel, systemPrompt = systemPrompt, welcome = welcome
+                        id = id, appid = appid, token = token, appSecret = appSecret, useSandbox = useSandbox,
+                        name = name, enabled = true, aiModel = aiModel, systemPrompt = systemPrompt, welcome = welcome
                     ))
                 } else {
                     com.qitong.gateway.qq.QqBotManager.stopBot(id)

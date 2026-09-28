@@ -42,15 +42,22 @@ class QqGatewayClient(
     @Volatile private var backoffMs = 2000L
 
     companion object {
-        private const val URL = "wss://api.sgroup.qq.com/websocket"
+        // 生产 / 沙箱 WebSocket 网关
+        private const val URL_PROD = "wss://api.sgroup.qq.com/websocket"
+        private const val URL_SANDBOX = "wss://sandbox.api.sgroup.qq.com/websocket"
         // GROUP_AND_C2C_EVENT = 1 << 25
         private const val INTENT_GROUP_C2C = 33554432L
     }
 
-    fun start() {
+    @Volatile private var accessToken: String = ""
+
+    fun start(accessToken: String) {
+        this.accessToken = accessToken
         stopped.set(false)
         connect()
     }
+
+    fun start() = start("")
 
     fun stop() {
         stopped.set(true)
@@ -63,7 +70,8 @@ class QqGatewayClient(
     private fun connect() {
         if (stopped.get()) return
         onStatusChange(QqBotStatus.CONNECTING, "连接中…")
-        val req = Request.Builder().url(URL).build()
+        val url = if (bot.useSandbox) URL_SANDBOX else URL_PROD
+        val req = Request.Builder().url(url).build()
         ws = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 System.out.println("[QQBot] ${bot.appid} WebSocket 已连接，等待 HELLO")
@@ -140,10 +148,12 @@ class QqGatewayClient(
     }
 
     private fun identify() {
+        // 新版鉴权：用 AppID+AppSecret 换来的 access_token
+        val tok = if (accessToken.isNotBlank()) "QQBot $accessToken" else bot.authHeader(accessToken)
         val payload = JSONObject()
             .put("op", 2)
             .put("d", JSONObject()
-                .put("token", bot.authHeader())
+                .put("token", tok)
                 .put("intents", INTENT_GROUP_C2C)
                 .put("shard", org.json.JSONArray("[0,1]"))
             )

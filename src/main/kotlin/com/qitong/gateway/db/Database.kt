@@ -324,6 +324,8 @@ class Database(private val dbPath: String) {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     appid TEXT NOT NULL UNIQUE,
                     token TEXT NOT NULL,
+                    app_secret TEXT NOT NULL DEFAULT '',
+                    use_sandbox INTEGER NOT NULL DEFAULT 0,
                     name TEXT NOT NULL DEFAULT '',
                     enabled INTEGER NOT NULL DEFAULT 1,
                     ai_model TEXT NOT NULL DEFAULT 'qtai-sj',
@@ -332,6 +334,9 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
+            // 旧库迁移：补 app_secret / use_sandbox 列（已存在则忽略）
+            runCatching { st.executeUpdate("ALTER TABLE qq_bots ADD COLUMN app_secret TEXT NOT NULL DEFAULT ''") }
+            runCatching { st.executeUpdate("ALTER TABLE qq_bots ADD COLUMN use_sandbox INTEGER NOT NULL DEFAULT 0") }
             // QQ 群配置（按群 openid 隔离：AI开关/欢迎语/人格覆盖）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_groups (
@@ -1327,6 +1332,9 @@ class Database(private val dbPath: String) {
             mapOf(
                 "id" to ((row["id"] as Number).toLong()),
                 "appid" to (row["appid"] as? String ?: ""),
+                "token" to (row["token"] as? String ?: ""),
+                "appSecret" to (row["app_secret"] as? String ?: ""),
+                "useSandbox" to ((row["use_sandbox"] as? Number)?.toInt() == 1),
                 "name" to (row["name"] as? String ?: ""),
                 "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
                 "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
@@ -1342,6 +1350,8 @@ class Database(private val dbPath: String) {
                 "id" to ((row["id"] as Number).toLong()),
                 "appid" to (row["appid"] as? String ?: ""),
                 "token" to (row["token"] as? String ?: ""),
+                "appSecret" to (row["app_secret"] as? String ?: ""),
+                "useSandbox" to ((row["use_sandbox"] as? Number)?.toInt() == 1),
                 "name" to (row["name"] as? String ?: ""),
                 "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
                 "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
@@ -1356,6 +1366,8 @@ class Database(private val dbPath: String) {
                 "id" to ((row["id"] as Number).toLong()),
                 "appid" to (row["appid"] as? String ?: ""),
                 "token" to (row["token"] as? String ?: ""),
+                "appSecret" to (row["app_secret"] as? String ?: ""),
+                "useSandbox" to ((row["use_sandbox"] as? Number)?.toInt() == 1),
                 "name" to (row["name"] as? String ?: ""),
                 "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
                 "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
@@ -1365,19 +1377,19 @@ class Database(private val dbPath: String) {
         }
 
     /** 新增或更新（appid 为主键）。返回 bot id。 */
-    fun upsertQqBot(appid: String, token: String, name: String, enabled: Boolean,
+    fun upsertQqBot(appid: String, token: String, appSecret: String, useSandbox: Boolean, name: String, enabled: Boolean,
                     aiModel: String, systemPrompt: String, welcome: String): Long {
         val existing = queryOne("SELECT id FROM qq_bots WHERE appid=?", appid)
         if (existing != null) {
             stmt(
-                "UPDATE qq_bots SET token=?, name=?, enabled=?, ai_model=?, system_prompt=?, welcome=? WHERE appid=?",
-                token, name, if (enabled) 1 else 0, aiModel, systemPrompt, welcome, appid
+                "UPDATE qq_bots SET token=?, app_secret=?, use_sandbox=?, name=?, enabled=?, ai_model=?, system_prompt=?, welcome=? WHERE appid=?",
+                token, appSecret, if (useSandbox) 1 else 0, name, if (enabled) 1 else 0, aiModel, systemPrompt, welcome, appid
             )
             return existing
         }
         stmt(
-            "INSERT INTO qq_bots (appid,token,name,enabled,ai_model,system_prompt,welcome,created_at) VALUES (?,?,?,?,?,?,?,?)",
-            appid, token, name, if (enabled) 1 else 0, aiModel, systemPrompt, welcome, System.currentTimeMillis()
+            "INSERT INTO qq_bots (appid,token,app_secret,use_sandbox,name,enabled,ai_model,system_prompt,welcome,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            appid, token, appSecret, if (useSandbox) 1 else 0, name, if (enabled) 1 else 0, aiModel, systemPrompt, welcome, System.currentTimeMillis()
         )
         return queryOne("SELECT id FROM qq_bots WHERE appid=?", appid) ?: 0
     }

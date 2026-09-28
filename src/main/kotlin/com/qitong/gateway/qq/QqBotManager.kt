@@ -71,6 +71,8 @@ object QqBotManager {
         id = row["id"] as Long,
         appid = row["appid"] as String,
         token = row["token"] as? String ?: "",
+        appSecret = row["appSecret"] as? String ?: "",
+        useSandbox = (row["useSandbox"] as? Boolean) ?: false,
         name = row["name"] as? String ?: "",
         enabled = (row["enabled"] as? Boolean) ?: true,
         aiModel = row["aiModel"] as? String ?: "qtai-sj",
@@ -92,7 +94,17 @@ object QqBotManager {
             }
         )
         clients[bot.id] = client
-        client.start()
+        // 新版鉴权：先换 AccessToken（AppID+AppSecret），失败则直接报错不连接
+        CoroutineScope(Dispatchers.IO).launch {
+            val at = api.getAccessToken(bot)
+            if (at.isNullOrBlank()) {
+                state.status = QqBotStatus.ERROR
+                state.lastError = "获取AccessToken失败（检查 AppID/AppSecret/沙箱开关）"
+                System.err.println("[QQBot] ${bot.appid} 获取AccessToken失败")
+                return@launch
+            }
+            client.start(at)
+        }
     }
 
     fun stopBot(id: Long) { runCatching { clients.remove(id)?.stop() } }
@@ -113,13 +125,17 @@ object QqBotManager {
         db.touchQqGroup(msg.groupOpenid, bot.appid)
         db.touchQqUser(msg.memberOpenid)
         runtime[bot.id]?.let { it.messagesHandled++; it.groupsSeen = (it.groupsSeen + 1).coerceAtLeast(1) }
-
+        // 刷新 AccessToken（7200s 有效，这里简单每次调用前获取）
+        val at = api.getAccessToken(bot) ?: run {
+            System.err.println("[QQBot] ${bot.appid} 群消息处理：获取AccessToken失败")
+            return
+        }
         // 新群首次触达：若开启欢迎且填了欢迎语，自动下发
         if (isNewGroup) {
             val cfg = db.getQqGroupConfig(msg.groupOpenid)
             if (cfg != null && (cfg["welcomeEnabled"] as Boolean)) {
                 val g = cfg["greeting"] as? String
-                if (!g.isNullOrBlank()) api.sendGroupMessage(bot, msg.groupOpenid, g, null)
+                if (!g.isNullOrBlank()) api.sendGroupMessage(bot, at, msg.groupOpenid, g, null)
             }
         }
 
@@ -129,17 +145,21 @@ object QqBotManager {
         val key = "g:${msg.groupOpenid}:${msg.memberOpenid}"
         withUserLock(key) {
             dispatch(bot, key, msg.groupOpenid, msg.memberOpenid, text, msg.msgId,
-                send = { content -> api.sendGroupMessage(bot, msg.groupOpenid, content, msg.msgId) })
+                send = { content -> api.sendGroupMessage(bot, at, msg.groupOpenid, content, msg.msgId) })
         }
     }
 
     private fun handleC2c(bot: QqBot, msg: QqC2cMessage) {
         db.touchQqUser(msg.userOpenid)
         runtime[bot.id]?.let { it.messagesHandled++ }
+        val at = api.getAccessToken(bot) ?: run {
+            System.err.println("[QQBot] ${bot.appid} 私聊消息处理：获取AccessToken失败")
+            return
+        }
         val key = "c:${msg.userOpenid}"
         withUserLock(key) {
             dispatch(bot, key, "", msg.userOpenid, msg.content.trim(), msg.msgId,
-                send = { content -> api.sendC2cMessage(bot, msg.userOpenid, content, msg.msgId) })
+                send = { content -> api.sendC2cMessage(bot, at, msg.userOpenid, content, msg.msgId) })
         }
     }
 
@@ -176,13 +196,17 @@ object QqBotManager {
                 }
                 "mute_on" -> {
                     if (groupOpenid.isBlank()) return
-                    if (api.setGroupMute(bot, groupOpenid, true)) send("已开启全员禁言") else send("全员禁言失败（需机器人是群管理员）")
+                    val at = api.getAccessToken(bot)
+                    if (at.isNullOrBlank()) { send("禁言失败（获取凭证失败）"); return }
+                    if (api.setGroupMute(bot, at, groupOpenid, true)) send("已开启全员禁言") else send("全员禁言失败（需机器人是群管理员）")
                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "全员禁言", System.currentTimeMillis() - t0)
                     return
                 }
                 "mute_off" -> {
                     if (groupOpenid.isBlank()) return
-                    if (api.setGroupMute(bot, groupOpenid, false)) send("已解除全员禁言") else send("解除失败")
+                    val at = api.getAccessToken(bot)
+                    if (at.isNullOrBlank()) { send("解除失败（获取凭证失败）"); return }
+                    if (api.setGroupMute(bot, at, groupOpenid, false)) send("已解除全员禁言") else send("解除失败")
                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "解除全员禁言", System.currentTimeMillis() - t0)
                     return
                 }
