@@ -345,6 +345,49 @@ class Database(private val dbPath: String) {
                 )"""
             )
             try { st.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_qq_groups_openid ON qq_groups(group_openid)") } catch (_: Exception) {}
+            // QQ 插件/自定义指令（小栗子风格：触发器 -> 回复/HTTP/AI）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS qq_commands (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL DEFAULT '',
+                    trigger TEXT NOT NULL DEFAULT '',
+                    match_type TEXT NOT NULL DEFAULT 'exact',
+                    action TEXT NOT NULL DEFAULT 'reply',
+                    content TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    cooldown INTEGER NOT NULL DEFAULT 5,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            // QQ 用户绑定（独立用户隔离：人设覆盖/AI开关/累计消息）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS qq_user_bindings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    qq_openid TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    persona TEXT NOT NULL DEFAULT '',
+                    ai_enabled INTEGER NOT NULL DEFAULT 1,
+                    total_messages INTEGER NOT NULL DEFAULT 0,
+                    last_active_at INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            try { st.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_qq_user_openid ON qq_user_bindings(qq_openid)") } catch (_: Exception) {}
+            // QQ 全量运行日志（动态面板数据源）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS qq_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_appid TEXT NOT NULL DEFAULT '',
+                    group_openid TEXT NOT NULL DEFAULT '',
+                    user_openid TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT 'message',
+                    content TEXT NOT NULL DEFAULT '',
+                    latency_ms INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            try { st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_qq_logs_time ON qq_logs(created_at DESC)") } catch (_: Exception) {}
         }
     }
 
@@ -1378,5 +1421,136 @@ class Database(private val dbPath: String) {
         aiEnabled?.let { stmt("UPDATE qq_groups SET ai_enabled=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
         welcomeEnabled?.let { stmt("UPDATE qq_groups SET welcome_enabled=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
         greeting?.let { stmt("UPDATE qq_groups SET greeting=? WHERE group_openid=?", it, groupOpenid) }
+    }
+
+    // ============ QQ 插件/指令 ============
+
+    fun getQqCommands(): List<Map<String, Any?>> =
+        query("SELECT * FROM qq_commands ORDER BY priority DESC, id").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "name" to (row["name"] as? String ?: ""),
+                "trigger" to (row["trigger"] as? String ?: ""),
+                "matchType" to (row["match_type"] as? String ?: "exact"),
+                "action" to (row["action"] as? String ?: "reply"),
+                "content" to (row["content"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+                "cooldown" to ((row["cooldown"] as? Number)?.toInt() ?: 5),
+                "priority" to ((row["priority"] as? Number)?.toInt() ?: 0)
+            )
+        }
+
+    /** 运行时取启用的指令（按优先级）。 */
+    fun getEnabledQqCommands(): List<Map<String, Any?>> =
+        query("SELECT * FROM qq_commands WHERE enabled=1 ORDER BY priority DESC, id").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "trigger" to (row["trigger"] as? String ?: ""),
+                "matchType" to (row["match_type"] as? String ?: "exact"),
+                "action" to (row["action"] as? String ?: "reply"),
+                "content" to (row["content"] as? String ?: ""),
+                "cooldown" to ((row["cooldown"] as? Number)?.toInt() ?: 5)
+            )
+        }
+
+    fun upsertQqCommand(id: Long?, name: String, trigger: String, matchType: String,
+                        action: String, content: String, enabled: Boolean, cooldown: Int, priority: Int): Long {
+        if (id != null && id > 0) {
+            stmt(
+                "UPDATE qq_commands SET name=?,trigger=?,match_type=?,action=?,content=?,enabled=?,cooldown=?,priority=? WHERE id=?",
+                name, trigger, matchType, action, content, if (enabled) 1 else 0, cooldown, priority, id
+            )
+            return id
+        }
+        stmt(
+            "INSERT INTO qq_commands (name,trigger,match_type,action,content,enabled,cooldown,priority,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            name, trigger, matchType, action, content, if (enabled) 1 else 0, cooldown, priority, System.currentTimeMillis()
+        )
+        return queryOne("SELECT id FROM qq_commands ORDER BY id DESC LIMIT 1") ?: 0
+    }
+
+    fun deleteQqCommand(id: Long) { stmt("DELETE FROM qq_commands WHERE id=?", id) }
+
+    // ============ QQ 用户绑定（独立隔离） ============
+
+    fun getQqUser(openid: String): Map<String, Any?>? =
+        query("SELECT * FROM qq_user_bindings WHERE qq_openid=?", openid).firstOrNull()?.let { row ->
+            mapOf(
+                "openid" to (row["qq_openid"] as? String ?: ""),
+                "displayName" to (row["display_name"] as? String ?: ""),
+                "persona" to (row["persona"] as? String ?: ""),
+                "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() == 1),
+                "totalMessages" to ((row["total_messages"] as? Number)?.toLong() ?: 0),
+                "lastActiveAt" to ((row["last_active_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+
+    /** 收到消息时登记/累计（独立用户）。 */
+    fun touchQqUser(openid: String) {
+        val exists = queryOne("SELECT COUNT(*) FROM qq_user_bindings WHERE qq_openid=?", openid) ?: 0
+        val now = System.currentTimeMillis()
+        if (exists == 0L) {
+            stmt("INSERT INTO qq_user_bindings (qq_openid,total_messages,last_active_at,created_at) VALUES (?,?,?,?)",
+                openid, 1, now, now)
+        } else {
+            stmt("UPDATE qq_user_bindings SET total_messages=total_messages+1, last_active_at=? WHERE qq_openid=?", now, openid)
+        }
+    }
+
+    fun getQqUsers(limit: Int = 200): List<Map<String, Any?>> =
+        query("SELECT * FROM qq_user_bindings ORDER BY last_active_at DESC LIMIT $limit").map { row ->
+            mapOf(
+                "openid" to (row["qq_openid"] as? String ?: ""),
+                "displayName" to (row["display_name"] as? String ?: ""),
+                "persona" to (row["persona"] as? String ?: ""),
+                "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() == 1),
+                "totalMessages" to ((row["total_messages"] as? Number)?.toLong() ?: 0),
+                "lastActiveAt" to ((row["last_active_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+
+    fun updateQqUser(openid: String, displayName: String?, persona: String?, aiEnabled: Boolean?) {
+        touchQqUser(openid)
+        displayName?.let { stmt("UPDATE qq_user_bindings SET display_name=? WHERE qq_openid=?", it, openid) }
+        persona?.let { stmt("UPDATE qq_user_bindings SET persona=? WHERE qq_openid=?", it, openid) }
+        aiEnabled?.let { stmt("UPDATE qq_user_bindings SET ai_enabled=? WHERE qq_openid=?", if (it) 1 else 0, openid) }
+    }
+
+    // ============ QQ 运行日志 ============
+
+    fun addQqLog(botAppid: String, groupOpenid: String, userOpenid: String, type: String, content: String, latencyMs: Long = 0) {
+        stmt("INSERT INTO qq_logs (bot_appid,group_openid,user_openid,type,content,latency_ms,created_at) VALUES (?,?,?,?,?,?,?)",
+            botAppid, groupOpenid, userOpenid, type, content.take(500), latencyMs, System.currentTimeMillis())
+    }
+
+    fun getQqLogs(limit: Int = 200, type: String? = null): List<Map<String, Any?>> {
+        val rows = if (type.isNullOrBlank())
+            query("SELECT * FROM qq_logs ORDER BY id DESC LIMIT $limit")
+        else
+            query("SELECT * FROM qq_logs WHERE type=? ORDER BY id DESC LIMIT $limit", type)
+        return rows.map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "botAppid" to (row["bot_appid"] as? String ?: ""),
+                "groupOpenid" to (row["group_openid"] as? String ?: ""),
+                "userOpenid" to (row["user_openid"] as? String ?: ""),
+                "type" to (row["type"] as? String ?: ""),
+                "content" to (row["content"] as? String ?: ""),
+                "latencyMs" to ((row["latency_ms"] as? Number)?.toLong() ?: 0),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    }
+
+    /** 概览统计：今日消息数 / 群数 / 用户数。 */
+    fun qqOverview(): Map<String, Any?> {
+        val dayStart = System.currentTimeMillis() / 86400000 * 86400000
+        return mapOf(
+            "todayMessages" to (queryOne("SELECT COUNT(*) FROM qq_logs WHERE created_at>=?", dayStart) ?: 0),
+            "totalGroups" to (queryOne("SELECT COUNT(*) FROM qq_groups") ?: 0),
+            "totalUsers" to (queryOne("SELECT COUNT(*) FROM qq_user_bindings") ?: 0),
+            "totalCommands" to (queryOne("SELECT COUNT(*) FROM qq_commands WHERE enabled=1") ?: 0),
+            "todayErrors" to (queryOne("SELECT COUNT(*) FROM qq_logs WHERE type='error' AND created_at>=?", dayStart) ?: 0)
+        )
     }
 }

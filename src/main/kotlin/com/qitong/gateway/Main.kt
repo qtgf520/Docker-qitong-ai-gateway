@@ -713,6 +713,77 @@ fun Application.moduleWeb(database: Database) {
             database.updateQqGroup(groupOpenid, aiEnabled, welcomeEnabled, greeting)
             AdminApi.ok(call, null, "群配置已保存")
         }
+        // QQ 动态概览（流动面板数据源）
+        get("/api/qq/overview") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val bots = database.getQqBots().map { b ->
+                val st = com.qitong.gateway.qq.QqBotManager.statusOf(b["id"] as Long)
+                mapOf("id" to b["id"], "name" to b["name"], "appid" to b["appid"],
+                    "online" to (st.status == com.qitong.gateway.qq.QqBotStatus.ONLINE),
+                    "messagesHandled" to st.messagesHandled, "lastError" to st.lastError)
+            }
+            val ov = database.qqOverview()
+            val recent = database.getQqLogs(limit = 30)
+            AdminApi.ok(call, mapOf("overview" to ov, "bots" to bots, "recent" to recent), "ok")
+        }
+        // QQ 插件指令
+        get("/api/qq/commands") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, database.getQqCommands(), "ok")
+        }
+        post("/api/qq/commands") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull()
+            val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val trigger = body["trigger"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (trigger.isBlank()) { AdminApi.fail(call, "触发词不能为空", 400); return@post }
+            val cid = database.upsertQqCommand(
+                id, name, trigger,
+                body["matchType"]?.jsonPrimitive?.content ?: "exact",
+                body["action"]?.jsonPrimitive?.content ?: "reply",
+                body["content"]?.jsonPrimitive?.content ?: "",
+                body["enabled"]?.jsonPrimitive?.content?.toBoolean() ?: true,
+                body["cooldown"]?.jsonPrimitive?.content?.toIntOrNull() ?: 5,
+                body["priority"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+            )
+            AdminApi.ok(call, mapOf("id" to cid), "已保存")
+        }
+        delete("/api/qq/commands/{id}") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            database.deleteQqCommand(id)
+            AdminApi.ok(call, null, "已删除")
+        }
+        // QQ 用户（独立隔离）
+        get("/api/qq/users") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, database.getQqUsers(), "ok")
+        }
+        post("/api/qq/users/update") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val openid = body["openid"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (openid.isBlank()) { AdminApi.fail(call, "openid 不能为空", 400); return@post }
+            database.updateQqUser(openid,
+                body["displayName"]?.jsonPrimitive?.content,
+                body["persona"]?.jsonPrimitive?.content,
+                body["aiEnabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull())
+            AdminApi.ok(call, null, "用户已更新")
+        }
+        // QQ 运行日志
+        get("/api/qq/logs") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val type = call.queryParameters["type"]
+            AdminApi.ok(call, database.getQqLogs(limit = 300, type = type), "ok")
+        }
 
         // 用户（admin=全部；代理=自己的下级用户；普通用户无权限）
         get("/api/users") {
