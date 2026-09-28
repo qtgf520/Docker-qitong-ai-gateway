@@ -129,13 +129,20 @@ loaders.usage = function(){
    var recent = (rr.data || []);
    var rrows = recent.map(function(u){
     var up = u.uploadBytes || 0, down = u.downloadBytes || 0, tt = u.totalTokens || 0;
-    return '<tr><td>'+esc(u.modelKey||u.modelName||'')+'</td><td>'+fmtNum(u.promptTokens||0)+'</td><td>'+fmtNum(u.completionTokens||0)+'</td><td>'+fmtNum(tt)+'</td><td>'+fmtBytes(up)+'</td><td>'+fmtBytes(down)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td><td>'+esc(u.apiKeyLabel||'本地')+'</td><td style="font-size:12px;color:var(--muted)">'+fmtTime(u.createdAt)+'</td></tr>';
+    return '<tr><td>'+esc(u.modelKey||u.modelName||'')+'</td><td>'+fmtNum(u.promptTokens||0)+'</td><td>'+fmtNum(u.completionTokens||0)+'</td><td>'+fmtNum(tt)+'</td><td>'+fmtBytes(up)+'</td><td>'+fmtBytes(down)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td><td>'+esc(u.apiKeyLabel||'本地')+'</td><td style="font-size:12px;color:var(--muted)">'+fmtTime(u.createdAt)+'</td><td><button class="btn btn-danger btn-sm" onclick="delUsageRow('+(u.id||0)+')">删除</button></td></tr>';
    }).join('');
   // 按密钥分组（对齐原APP apiKeyUsageRows）
   var keyRows = (s.apiKeyUsage || []).map(function(u,i){
    return '<tr><td>'+(i+1)+'</td><td>'+esc(u.api_key_label)+'</td><td>'+(u.calls||0)+'</td><td>'+fmtNum(u.total_tokens||0)+'</td><td>'+fmtBytes(u.upload_bytes||0)+'</td><td>'+fmtBytes(u.download_bytes||0)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td></tr>';
   }).join('');
+  // 模型下拉（用于按模型清理，来自汇总）
+  var modelOpts = (s.usage || []).map(function(u){ return '<option value="'+esc(u.model_key)+'">'+esc(u.model_key)+'（'+(u.calls||0)+'次）</option>'; }).join('');
    box.innerHTML = [
+    '<div class="action-bar" style="margin-top:2px">',
+     '<button class="btn btn-danger" onclick="clearUsageAll()">清理全部用量</button>',
+     '<span style="display:inline-flex;gap:6px;align-items:center;margin-left:4px"><select id="usageModelSel" class="input" style="width:200px;margin:0;padding:7px 10px">'+(modelOpts||'<option value="">暂无模型数据</option>')+'</select><button class="btn btn-ghost" onclick="clearUsageByModel()">按模型清理</button></span>',
+     '<span style="font-size:12px;color:var(--muted);margin-left:auto">仅清理当前登录用户自己的数据</span>',
+    '</div>',
     '<div class="grid grid-3">',
      '<div class="stat"><div class="num">'+fmtBytes(s.totalUpload)+'</div><div class="lbl">总上行</div></div>',
      '<div class="stat"><div class="num">'+fmtBytes(s.totalDownload)+'</div><div class="lbl">总下行</div></div>',
@@ -147,11 +154,32 @@ loaders.usage = function(){
     '<div class="card" style="margin-top:14px"><h3>按API密钥用量 <span style="font-size:12px;color:var(--muted)">每个Key的调用汇总</span></h3><div class="table-wrap"><table><thead><tr><th>#</th><th>密钥Label</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th><th>费用</th></tr></thead><tbody>' +
     keyRows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + ((s.apiKeyUsage||[]).length ? '' : '暂无密钥用量，发起API调用后显示') + '</td></tr>' +
     '</tbody></table></div></div>',
-    '<div class="card" style="margin-top:14px"><h3>传输明细（每次调用）<span style="font-size:12px;color:var(--muted)">对齐原APP TokenUsage，每条=一次API传输</span></h3><div class="table-wrap"><table><thead><tr><th>模型</th><th>Prompt</th><th>输出</th><th>总Token</th><th>上行</th><th>下行</th><th>费用</th><th>密钥</th><th>时间</th></tr></thead><tbody>' +
-    rrows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (recent.length ? '' : '暂无传输记录，发起API调用后显示') + '</td></tr>' +
+    '<div class="card" style="margin-top:14px"><h3>传输明细（每次调用）<span style="font-size:12px;color:var(--muted)">对齐原APP TokenUsage，每条=一次API传输</span></h3><div class="table-wrap"><table><thead><tr><th>模型</th><th>Prompt</th><th>输出</th><th>总Token</th><th>上行</th><th>下行</th><th>费用</th><th>密钥</th><th>时间</th><th>操作</th></tr></thead><tbody>' +
+    rrows + '<tr><td colspan="10" style="text-align:center;color:var(--muted)">' + (recent.length ? '' : '暂无传输记录，发起API调用后显示') + '</td></tr>' +
     '</tbody></table></div></div>'
    ].join('');
   });
+ });
+};
+// ===== 用量清理 / 删除（用户独立管理，管理员=全部） =====
+window.clearUsageAll = function(){
+ if(!confirm('确定清理全部用量记录？\n普通用户只清自己的，管理员清全部。')) return;
+ api('/api/usage/clear', { method:'POST' }).then(function(r){
+  if(r.code === 0){ toast('已清理', true); loaders.usage(); } else toast(r.msg, false);
+ });
+};
+window.delUsageRow = function(id){
+ if(!id){ toast('记录ID无效', false); return; }
+ if(!confirm('确定删除这条用量记录？')) return;
+ api('/api/usage/delete', { method:'POST', body: { id: id } }).then(function(r){
+  if(r.code === 0){ toast('已删除', true); loaders.usage(); } else toast(r.msg, false);
+ });
+};
+window.clearUsageByModel = function(){
+ var sel = $('usageModelSel'); if(!sel || !sel.value){ toast('请选择模型', false); return; }
+ if(!confirm('确定清理该模型的全部用量记录？')) return;
+ api('/api/usage/clear-model', { method:'POST', body: { modelKey: sel.value } }).then(function(r){
+  if(r.code === 0){ toast('已清理 ' + (r.data && r.data.deleted != null ? r.data.deleted : '') + ' 条', true); loaders.usage(); } else toast(r.msg, false);
  });
 };
 // ===== 个人中心（用户+管理员各有自己的） =====

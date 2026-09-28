@@ -627,6 +627,35 @@ class Database(private val dbPath: String) {
         stmt("DELETE FROM token_usage")
     }
 
+    /** 当前用户清空自己的用量（用户独立清理） */
+    fun clearTokenUsageByUser(userId: Long) {
+        stmt("DELETE FROM token_usage WHERE user_id=?", userId)
+    }
+
+    /** 删除单条用量记录（校验属主：管理员可删任何，普通用户只能删自己的） */
+    fun deleteTokenUsage(id: Long, userId: Long? = null): Boolean {
+        val sql = if (userId != null && userId > 0) "DELETE FROM token_usage WHERE id=? AND user_id=?" else "DELETE FROM token_usage WHERE id=?"
+        return try {
+            conn.prepareStatement(sql).use { ps ->
+                ps.setObject(1, id)
+                if (userId != null && userId > 0) ps.setObject(2, userId)
+                ps.executeUpdate() > 0
+            }
+        } catch (_: Exception) { false }
+    }
+
+    /** 按模型删除用量（当前用户可见范围；管理员可删任意模型） */
+    fun deleteTokenUsageByModel(modelKey: String, userId: Long? = null): Int {
+        val sql = if (userId != null && userId > 0) "DELETE FROM token_usage WHERE model_key=? AND user_id=?" else "DELETE FROM token_usage WHERE model_key=?"
+        return try {
+            conn.prepareStatement(sql).use { ps ->
+                ps.setObject(1, modelKey)
+                if (userId != null && userId > 0) ps.setObject(2, userId)
+                ps.executeUpdate()
+            }
+        } catch (_: Exception) { 0 }
+    }
+
     // ============ 测速历史 ============
 
     fun addSpeedHistory(s: SpeedHistory) {

@@ -99,7 +99,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-24
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-25
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -111,7 +111,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-24    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-25    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -180,7 +180,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-24"))
+                put("version", JsonPrimitive("3.18.22-25"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -543,6 +543,32 @@ fun Application.moduleWeb(database: Database) {
             val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 200
             AdminApi.ok(call, AdminApi.getUsageRecent(database, u, limit), "ok")
         }
+        // 清理用量：普通用户清自己的；管理员清全部（用户独立管理）
+        post("/api/usage/clear") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role == "admin") database.clearTokenUsage()
+            else database.clearTokenUsageByUser(u.id)
+            AdminApi.ok(call, null, "用量已清理")
+        }
+        // 删除单条用量记录：普通用户只能删自己的；管理员可删任何
+        post("/api/usage/delete") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "记录ID无效", 400); return@post }
+            val ok = if (u.role == "admin") database.deleteTokenUsage(id)
+                else database.deleteTokenUsage(id, u.id)
+            if (ok) AdminApi.ok(call, null, "记录已删除")
+            else AdminApi.fail(call, "删除失败（只能删自己的记录）", 403)
+        }
+        // 按模型清理用量：普通用户删自己该模型；管理员删任意
+        post("/api/usage/clear-model") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val modelKey = body["modelKey"]?.jsonPrimitive?.content ?: run { AdminApi.fail(call, "模型Key无效", 400); return@post }
+            val n = if (u.role == "admin") database.deleteTokenUsageByModel(modelKey)
+                else database.deleteTokenUsageByModel(modelKey, u.id)
+            AdminApi.ok(call, mapOf("deleted" to n), "已清理 $n 条记录")
+        }
 
         // 配置
         get("/api/config") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getAllConfig(database)) }
@@ -794,7 +820,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-24"))
+                put("version", JsonPrimitive("3.18.22-25"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -1381,7 +1407,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-24"))
+                    put("version", JsonPrimitive("3.18.22-25"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()
