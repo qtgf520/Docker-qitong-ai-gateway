@@ -1556,9 +1556,12 @@ fun Application.moduleWeb(database: Database) {
                     val modelKey = body["modelKey"]?.jsonPrimitive?.content ?: ""
                     val current = database.getUserConfig(user.id, "forced_pool_keys", "").split(",").filter { it.isNotBlank() }.toMutableList()
                     if (modelKey.isNotBlank()) {
-                        if (modelKey in current) current.remove(modelKey) else current.add(modelKey)
+                        // 点灯=强制切换：无论是否已在池中，都移到首位
+                        current.remove(modelKey)
+                        current.add(0, modelKey)
                         database.setUserConfig(user.id, "forced_pool_keys", current.joinToString(","))
-                        AdminApi.ok(call, mapOf("forcedPool" to current), "强制池已更新")
+                        database.setUserConfig(user.id, "active_model_key", modelKey)
+                        AdminApi.ok(call, mapOf("forcedPool" to current), "已强制切换到 $modelKey")
                     } else {
                         database.setUserConfig(user.id, "forced_pool_keys", "")
                         AdminApi.ok(call, mapOf("forcedPool" to emptyList<String>()), "强制池已清空")
@@ -1789,8 +1792,12 @@ fun Application.moduleWeb(database: Database) {
             val current = database.getConfig(key, "").split(",").filter { it.isNotBlank() }.toMutableList()
             when (action) {
                 "add" -> {
-                    if (modelKey.isNotBlank() && modelKey !in current) current.add(0, modelKey) // 点灯=置首位
-                    if (modelKey.isNotBlank()) database.setConfig("active_model_key", modelKey)
+                    // 点灯=强制切换：无论是否已在池中，都移到首位（对齐原APP点灯语义）
+                    if (modelKey.isNotBlank()) {
+                        current.remove(modelKey)
+                        current.add(0, modelKey)
+                        database.setConfig("active_model_key", modelKey)
+                    }
                 }
                 "remove" -> current.remove(modelKey)
                 "clear" -> current.clear()
