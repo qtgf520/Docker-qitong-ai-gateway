@@ -264,7 +264,12 @@ object QqBotManager {
             bot.systemPrompt.isNotBlank() -> bot.systemPrompt
             else -> ""
         }
-        if (sys.isNotBlank()) msgs.put(JSONObject().put("role", "system").put("content", sys))
+        // 长期大脑记忆：把该用户最近的记忆注入 system，跨天记得对方
+        val mems = db.getQqBrainMemories(userOpenid, limit = 6)
+        val sysFull = if (mems.isNotEmpty()) {
+            sys + "\n\n【你对这位用户的长期记忆】\n" + mems.reversed().joinToString("\n") { "- " + it }
+        } else sys
+        if (sysFull.isNotBlank()) msgs.put(JSONObject().put("role", "system").put("content", sysFull))
         hist.forEach { (role, content) -> msgs.put(JSONObject().put("role", role).put("content", content)) }
         msgs.put(JSONObject().put("role", "user").put("content", userText))
 
@@ -297,6 +302,10 @@ object QqBotManager {
                 hist.add("user" to userText)
                 hist.add("assistant" to content)
                 while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                // 长期记忆：把用户这次说的话存一条（截断，防止刷爆）
+                if (userText.length >= 4) {
+                    runCatching { db.saveQqBrainMemory(userOpenid, userText.take(200)) }
+                }
                 content
             }
         } catch (e: Exception) {

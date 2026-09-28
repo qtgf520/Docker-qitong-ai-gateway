@@ -800,6 +800,21 @@ fun Application.moduleWeb(database: Database) {
             database.adjustQqPoints(openid, delta)
             AdminApi.ok(call, null, "已调整 $delta 积分")
         }
+        // QQ 用户长期记忆
+        get("/api/qq/users/memory") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val openid = call.queryParameters["openid"].orEmpty()
+            AdminApi.ok(call, database.getQqBrainMemories(openid, limit = 50), "ok")
+        }
+        post("/api/qq/users/memory/clear") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val openid = body["openid"]?.jsonPrimitive?.content?.trim().orEmpty()
+            database.clearQqBrainMemories(openid)
+            AdminApi.ok(call, null, "记忆已清空")
+        }
 
         // 用户（admin=全部；代理=自己的下级用户；普通用户无权限）
         get("/api/users") {

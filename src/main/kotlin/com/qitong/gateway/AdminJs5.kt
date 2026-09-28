@@ -26,7 +26,7 @@ loaders.qqbot = function(){
 };
 function qqTabHtml(){
  if(qqTab==='overview') return '<div id="qqOverview"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
- if(qqTab==='cmds') return '<div class="action-bar"><button class="btn" onclick="qqCmdForm()">+ 新建指令插件</button><span style="font-size:12px;color:var(--muted)">小栗子式：触发词 -> 回复/HTTP/AI，按优先级匹配，命中即停</span></div><div id="qqCmdList"></div>';
+ if(qqTab==='cmds') return '<div class="action-bar"><button class="btn" onclick="qqCmdForm()">+ 新建指令插件</button><button class="btn-ghost" onclick="qqCmdHelp()">插件开发说明</button><span style="font-size:12px;color:var(--muted)">小栗子式：触发词 -> 回复/HTTP/AI，按优先级匹配，命中即停</span></div><div id="qqCmdList"></div>';
  if(qqTab==='groups') return '<div id="qqGroupList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  if(qqTab==='users') return '<div id="qqUserList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  if(qqTab==='points') return '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">群里发「签到」每日得 5-20 积分，「我的积分」查询。此处可查看排行并手动调整。</div><div id="qqPointsList"></div>';
@@ -126,6 +126,18 @@ function qqCmdForm(c){
 }
 function qqCmdDel(id){ if(!confirm('删除该指令？'))return;
  api('/api/qq/commands/'+id,{method:'DELETE'}).then(function(r){ if(r.code===0){toast('已删除',true);qqLoadCmds();}else toast(r.msg,false); }); }
+function qqCmdHelp(){
+ var html = '<div style="font-size:13px;line-height:1.8;color:var(--text)">'+
+  '<p><b>三种动作：</b></p>'+
+  '<p>1. <b>回复固定文案</b>：触发后把「内容」原样发到群里。例：触发词=帮助，内容="发任意问题@我即可聊天"</p>'+
+  '<p>2. <b>HTTP 插件</b>：触发后 GET 你填的 URL，把返回文本（前500字）发到群里。例：接一个天气/签到/机器人接口。</p>'+
+  '<p>3. <b>AI 角色扮演</b>：把「内容」当人设前缀，拼上用户原话交给大模型。例：内容="你是一个毒舌吐槽王，请简短吐槽："</p>'+
+  '<p style="margin-top:8px"><b>匹配方式：</b>完全等于 / 包含关键词 / 正则表达式。</p>'+
+  '<p><b>内置指令</b>（无需配置）：签到、我的积分、全员禁言、解除全员禁言。</p>'+
+  '<div class="code-block" style="margin-top:8px">HTTP 插件示例 URL：<br>https://你的接口/api/qq?msg=用户原话<br>要求返回纯文本，会原样发到群里</div>'+
+  '</div>';
+ openModal('插件开发说明', html, null, {hideFooter:true});
+}
 
 // ---- 群配置 ----
 function qqLoadGroups(){
@@ -175,11 +187,29 @@ function qqUserEdit(u){
  var html='<div class="form-row"><label>openid</label><input class="input" value="'+esc(u.openid)+'" readonly></div>'+
   '<div class="form-row"><label>昵称备注</label><input class="input" id="uuName" value="'+esc(u.displayName||'')+'"></div>'+
   '<div class="form-row"><label>独立人设（覆盖该用户的 system prompt，留空用机器人默认）</label><textarea class="input" id="uuPersona" rows="3">'+esc(u.persona||'')+'</textarea></div>'+
-  '<div class="form-row"><label><input type="checkbox" id="uuAi" '+(u.aiEnabled?'checked':'')+'> 允许此用户使用 AI</label></div>';
+  '<div class="form-row"><label><input type="checkbox" id="uuAi" '+(u.aiEnabled?'checked':'')+'> 允许此用户使用 AI</label></div>'+
+  '<div class="form-row" style="display:flex;gap:8px;margin-top:6px">'+
+   '<button class="btn-ghost btn-sm" onclick="qqUserMemory(\''+esc(u.openid)+'\')">查看长期记忆</button>'+
+   '<button class="btn-ghost btn-sm danger" onclick="qqUserMemoryClear(\''+esc(u.openid)+'\')">清空记忆</button></div>';
  openModal('用户独立配置', html, function(){
   api('/api/qq/users/update',{method:'POST',body:{openid:u.openid,
    displayName:$('uuName').value, persona:$('uuPersona').value, aiEnabled:$('uuAi').checked}})
   .then(function(r){ if(r.code===0){toast('已保存',true);closeModal();qqLoadUsers();}else toast(r.msg,false); });
+ });
+}
+function qqUserMemory(openid){
+ api('/api/qq/users/memory?openid='+encodeURIComponent(openid)).then(function(r){
+  var list=(r&&r.data)||[];
+  var body = list.length
+   ? list.map(function(m,i){return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">'+(i+1)+'. '+esc(m)+'</div>'}).join('')
+   : '<div style="color:var(--muted);padding:12px">该用户还没有长期记忆。</div>';
+  openModal('长期记忆 · '+openid.substring(0,12), body, null, {hideFooter:true});
+ });
+}
+function qqUserMemoryClear(openid){
+ if(!confirm('确认清空该用户的全部长期记忆？'))return;
+ api('/api/qq/users/memory/clear',{method:'POST',body:{openid:openid}}).then(function(r){
+  toast(r.msg||'已清空', r.code===0);
  });
 }
 

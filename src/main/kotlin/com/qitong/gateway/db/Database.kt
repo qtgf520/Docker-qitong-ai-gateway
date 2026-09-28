@@ -1610,4 +1610,28 @@ class Database(private val dbPath: String) {
             stmt("UPDATE qq_points SET points=points+?, updated_at=? WHERE openid=?", delta, System.currentTimeMillis(), openid)
         }
     }
+
+    // ============ QQ 长期大脑记忆（复用 brain_memory 表，tags=qq:{openid}） ============
+
+    /** 读取某 QQ 用户最近的记忆（用于注入 system 上下文）。 */
+    fun getQqBrainMemories(openid: String, limit: Int = 6): List<String> {
+        val rows = query(
+            "SELECT content FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit",
+            "qq:$openid"
+        )
+        return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
+    }
+
+    /** 写入一条 QQ 用户记忆。 */
+    fun saveQqBrainMemory(openid: String, content: String, type: String = "short") {
+        stmt(
+            "INSERT INTO brain_memory (user_id,title,content,type,emotion,importance,timestamp,access_count,source,tags,model_id) VALUES (0,?,?,?,?,?,?,0,'qq',?, '')",
+            openid, content.take(500), type, "neutral", 5, System.currentTimeMillis(), "qq:$openid"
+        )
+    }
+
+    /** 清空某 QQ 用户记忆。 */
+    fun clearQqBrainMemories(openid: String) {
+        stmt("DELETE FROM brain_memory WHERE tags=?", "qq:$openid")
+    }
 }
