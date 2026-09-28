@@ -224,14 +224,17 @@ function qqLoadUsers(){
   var list=(r&&r.data)||[];
   if(!list.length){ el.innerHTML='<div style="color:var(--muted);padding:16px">暂无用户。有人@机器人后自动登记。</div>'; return; }
   var rows=list.map(function(u){
+   var permTxt = ['⛔禁止','👀查询','🔧操作','🛠管理','✅全部'][u.permLevel] || '查询';
    return '<tr><td><code style="font-size:11px">'+esc(u.openid.substring(0,12))+'…</code></td>'+
     '<td>'+esc(u.displayName||'-')+'</td>'+
     '<td>'+(u.aiEnabled?'<span class="badge green">AI</span>':'<span class="badge gray">禁言</span>')+'</td>'+
+    '<td><span class="badge '+(u.permLevel>=3?'purple':(u.permLevel==0?'gray':'blue'))+'">'+permTxt+'</span></td>'+
     '<td>'+(u.totalMessages||0)+'</td>'+
     '<td>'+qqTime(u.lastActiveAt)+'</td>'+
-    '<td><button class="btn-ghost btn-sm" onclick="qqUserEdit('+JSON.stringify(u).replace(/"/g,'&quot;')+')">人设</button></td></tr>';
+    '<td><button class="btn-ghost btn-sm" onclick="qqUserEdit('+JSON.stringify(u).replace(/"/g,'"')+')">配置</button></td></tr>';
   }).join('');
-  el.innerHTML='<div class="table-wrap"><table><thead><tr><th>openid</th><th>昵称</th><th>AI</th><th>消息数</th><th>最后活跃</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  el.innerHTML='<div class="table-wrap"><table><thead><tr><th>openid</th><th>昵称</th><th>AI</th><th>权限</th><th>消息数</th><th>最后活跃</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+   '<div style="font-size:12px;color:var(--muted);margin-top:8px">权限：禁止=不能操作机器人 · 查询=查状态/排行/余额 · 操作=切模型/测速 · 管理=启停/充值/改配置 · 全部=所有网关操作</div>';
  });
 }
 function qqUserEdit(u){
@@ -239,10 +242,19 @@ function qqUserEdit(u){
   '<div class="form-row"><label>昵称备注</label><input class="input" id="uuName" value="'+esc(u.displayName||'')+'"></div>'+
   '<div class="form-row"><label>独立人设（覆盖该用户的 system prompt，留空用机器人默认）</label><textarea class="input" id="uuPersona" rows="3">'+esc(u.persona||'')+'</textarea></div>'+
   '<div class="form-row"><label><input type="checkbox" id="uuAi" '+(u.aiEnabled?'checked':'')+'> 允许此用户使用 AI</label></div>'+
+  '<div class="form-row"><label>网关操作权限</label><select class="input" id="uuPerm">'+
+   '<option value="0"'+(u.permLevel==0?' selected':'')+'>⛔ 禁止（不能操作机器人）</option>'+
+   '<option value="1"'+(u.permLevel==1?' selected':'')+'>👀 查询（状态/排行/余额）</option>'+
+   '<option value="2"'+(u.permLevel==2?' selected':'')+'>🔧 操作（切模型/测速）</option>'+
+   '<option value="3"'+(u.permLevel==3?' selected':'')+'>🛠 管理（启停/充值/配置）</option>'+
+   '<option value="4"'+(u.permLevel==4?' selected':'')+'>✅ 全部（所有网关操作）</option></select></div>'+
   '<div class="form-row" style="display:flex;gap:8px;margin-top:6px">'+
    '<button class="btn-ghost btn-sm" onclick="qqUserMemory(\''+esc(u.openid)+'\')">查看长期记忆</button>'+
    '<button class="btn-ghost btn-sm danger" onclick="qqUserMemoryClear(\''+esc(u.openid)+'\')">清空记忆</button></div>';
  openModal('用户独立配置', html, function(){
+  var permLevel = parseInt($('uuPerm').value) || 1;
+  api('/api/qq/users/perm',{method:'POST',body:{openid:u.openid, level:permLevel, flags:''}})
+  .then(function(r){ if(r.code!==0){ toast(r.msg||'权限保存失败',false); return; } });
   api('/api/qq/users/update',{method:'POST',body:{openid:u.openid,
    displayName:$('uuName').value, persona:$('uuPersona').value, aiEnabled:$('uuAi').checked}})
   .then(function(r){ if(r.code===0){toast('已保存',true);closeModal();qqLoadUsers();}else toast(r.msg,false); });

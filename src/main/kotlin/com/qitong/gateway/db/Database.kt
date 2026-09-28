@@ -365,7 +365,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // QQ 用户绑定（独立用户隔离：人设覆盖/AI开关/累计消息）
+            // QQ 用户绑定（独立用户隔离：人设覆盖/AI开关/累计消息 + 权限控制）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_user_bindings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -375,9 +375,14 @@ class Database(private val dbPath: String) {
                     ai_enabled INTEGER NOT NULL DEFAULT 1,
                     total_messages INTEGER NOT NULL DEFAULT 0,
                     last_active_at INTEGER NOT NULL DEFAULT 0,
-                    created_at INTEGER NOT NULL
+                    created_at INTEGER NOT NULL,
+                    perm_level INTEGER NOT NULL DEFAULT 1,
+                    perm_flags TEXT NOT NULL DEFAULT ''
                 )"""
             )
+            // 旧库迁移：补权限列（已存在则忽略）
+            runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN perm_level INTEGER NOT NULL DEFAULT 1") }
+            runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN perm_flags TEXT NOT NULL DEFAULT ''") }
             try { st.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_qq_user_openid ON qq_user_bindings(qq_openid)") } catch (_: Exception) {}
             // QQ 全量运行日志（动态面板数据源）
             st.executeUpdate(
@@ -1503,9 +1508,22 @@ class Database(private val dbPath: String) {
                 "persona" to (row["persona"] as? String ?: ""),
                 "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() == 1),
                 "totalMessages" to ((row["total_messages"] as? Number)?.toLong() ?: 0),
-                "lastActiveAt" to ((row["last_active_at"] as? Number)?.toLong() ?: 0)
+                "lastActiveAt" to ((row["last_active_at"] as? Number)?.toLong() ?: 0),
+                "permLevel" to ((row["perm_level"] as? Number)?.toInt() ?: 1),
+                "permFlags" to (row["perm_flags"] as? String ?: "")
             )
         }
+
+    /** 设置 QQ 用户权限（level: 0=禁止 1=查询 2=操作 3=管理 4=全部；flags: 细分权限逗号分隔） */
+    fun setQqUserPerm(openid: String, level: Int, flags: String) {
+        val exists = queryOne("SELECT COUNT(*) FROM qq_user_bindings WHERE qq_openid=?", openid) ?: 0
+        if (exists == 0L) {
+            stmt("INSERT INTO qq_user_bindings (qq_openid,perm_level,perm_flags,created_at) VALUES (?,?,?,?)",
+                openid, level.coerceIn(0, 4), flags, System.currentTimeMillis())
+        } else {
+            stmt("UPDATE qq_user_bindings SET perm_level=?, perm_flags=? WHERE qq_openid=?", level.coerceIn(0, 4), flags, openid)
+        }
+    }
 
     /** 收到消息时登记/累计（独立用户）。 */
     fun touchQqUser(openid: String) {
@@ -1527,7 +1545,9 @@ class Database(private val dbPath: String) {
                 "persona" to (row["persona"] as? String ?: ""),
                 "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() == 1),
                 "totalMessages" to ((row["total_messages"] as? Number)?.toLong() ?: 0),
-                "lastActiveAt" to ((row["last_active_at"] as? Number)?.toLong() ?: 0)
+                "lastActiveAt" to ((row["last_active_at"] as? Number)?.toLong() ?: 0),
+                "permLevel" to ((row["perm_level"] as? Number)?.toInt() ?: 1),
+                "permFlags" to (row["perm_flags"] as? String ?: "")
             )
         }
 

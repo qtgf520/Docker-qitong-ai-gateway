@@ -163,15 +163,15 @@ object QqBotManager {
         }
     }
 
-    private fun withUserLock(key: String, block: () -> Unit) {
+    private fun withUserLock(key: String, block: suspend () -> Unit) {
         val m = userMutex.getOrPut(key) { Mutex() }
         CoroutineScope(Dispatchers.IO).launch {
             m.withLock { runCatching { block() } }
         }
     }
 
-    /** 统一分发：内置指令 > 插件指令 > 大模型；全程记日志。 */
-    private fun dispatch(
+    /** 统一分发：内置指令 > 网关技能 > 插件指令 > 大模型；全程记日志。 */
+    private suspend fun dispatch(
         bot: QqBot, key: String, groupOpenid: String, userOpenid: String,
         text: String, msgId: String, send: (String) -> Boolean
     ) {
@@ -212,6 +212,26 @@ object QqBotManager {
                 }
             }
         }
+        // 0.5) 网关技能指令（内置：查状态/排行/余额/充值/启停/切模型等，按 openid 权限控制）
+        val skill = matchGatewaySkill(text)
+        if (skill != null) {
+            val (code, param) = skill
+            val qqUser = db.getQqUser(userOpenid)
+            val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1
+            if (perm <= 0) { send("⛔ 您没有权限使用机器人网关操作，请联系管理员开通"); return }
+            // 权限分级：查询类(6xxxxx)需>=1；切换类(2xxxxx)/测速(1xxxxx)需>=2；网关启停(3xxxxx)/管理(8xxxxx)需>=3
+            val need = when {
+                code.startsWith("6") -> 1
+                code.startsWith("1") || code.startsWith("2") -> 2
+                code.startsWith("8") || code.startsWith("3") || code.startsWith("9") -> 3
+                else -> 2
+            }
+            if (perm < need) { send("⛔ 该操作需要权限等级 ${needLabel(need)}，您当前为 ${permLabel(perm)}"); return }
+            val result = com.qitong.gateway.http.SkillExecutor.execute(db, code, param, 0)
+            send(result)
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill", "[$code] $text", System.currentTimeMillis() - t0)
+            return
+        }
         // 1) 插件指令匹配
         val cmd = matchCommand(text)
         if (cmd != null) {
@@ -230,8 +250,10 @@ object QqBotManager {
             return
         }
 
-        // 2) 大模型对话
+        // 2) 大模型对话（人格系统 qtai-sj：需 permLevel>=1 才允许；禁止=0 不响应）
         val u = db.getQqUser(userOpenid)
+        val perm = (u?.get("permLevel") as? Number)?.toInt() ?: 1
+        if (perm <= 0) { send("⛔ 您已被禁止使用机器人，请联系管理员"); return }
         if (u != null && !(u["aiEnabled"] as Boolean)) return
         val cfg = if (groupOpenid.isNotBlank()) db.getQqGroupConfig(groupOpenid) else null
         if (cfg != null && !(cfg["aiEnabled"] as Boolean)) return
@@ -260,6 +282,61 @@ object QqBotManager {
             if (t.equals("解除全员禁言", true) || t.equals("取消全员禁言", true)) return "mute_off" to t
         }
         return null
+    }
+
+    /** 网关技能指令匹配（对齐原APP技能：查状态/排行/模型/启停/切换等；返回 技能编码+参数） */
+    private fun matchGatewaySkill(text: String): Pair<String, String>? {
+        val t = text.trim()
+        if (t.isBlank()) return null
+        // 查官网状态 / 网关状态
+        if (t.startsWith("查状态", true) || t.equals("网关状态", true) || t.startsWith("状态", true) && t.length <= 6) return "600001" to ""
+        // 查排行榜 / 测速排行
+        if (t.contains("排行", true) || t.contains("排行榜", true) || t.startsWith("测速排行", true)) return "600002" to ""
+        // 查活跃模型 / 当前模型
+        if (t.contains("活跃模型", true) || t.contains("当前模型", true)) return "600003" to ""
+        // 查流量 / 用量
+        if (t.contains("流量", true) || t.contains("用量", true) || t.contains("上行", true)) return "600004" to ""
+        // 查余额：查余额 用户名
+        if (t.startsWith("查余额", true) || t.startsWith("查余额 ", true)) return "600009" to t.substringAfter("余额").trim()
+        // 充值：充值 用户名 金额
+        if (t.startsWith("充值 ", true) || t.startsWith("给 ", true) && t.contains("充值", true)) {
+            return "900020" to t.substringAfter("充值").trim().ifBlank { t.substringAfter("给 ").trim() }
+        }
+        // 查服务商
+        if (t.contains("服务商", true) && (t.contains("查", true) || t.contains("列", true) || t.length <= 5)) return "600007" to ""
+        // 查模型列表
+        if (t.contains("模型列表", true) || t.equals("模型", true)) return "600008" to ""
+        // 切换模型：切换模型 xxx
+        if (t.startsWith("切换", true) || t.startsWith("切到", true) || t.startsWith("用", true)) {
+            val p = t.substringAfter(" ").trim().ifBlank { "" }
+            return "200001" to p
+        }
+        // 启停：启动网关 / 停止网关
+        if (t.equals("启动网关", true) || t.equals("开启网关", true)) return "300004" to ""
+        if (t.equals("停止网关", true) || t.equals("关闭网关", true)) return "300005" to ""
+        // 故障转移开关
+        if (t.contains("开启故障", true) || t.contains("打开故障", true)) return "300001" to ""
+        if (t.contains("关闭故障", true) || t.contains("关闭转移", true)) return "300002" to ""
+        // 启用/禁用模型
+        if (t.startsWith("启用模型", true) || t.startsWith("启用 ", true)) return "800003" to t.substringAfter(" ").trim()
+        if (t.startsWith("禁用模型", true) || t.startsWith("禁用 ", true)) return "800004" to t.substringAfter(" ").trim()
+        return null
+    }
+
+    private fun permLabel(level: Int): String = when (level) {
+        0 -> "禁止"
+        1 -> "查询"
+        2 -> "操作"
+        3 -> "管理"
+        4 -> "全部"
+        else -> "未知"
+    }
+
+    private fun needLabel(need: Int): String = when (need) {
+        1 -> "查询(1级)"
+        2 -> "操作(2级)"
+        3 -> "管理(3级)"
+        else -> "操作"
     }
 
     /** 按优先级匹配一条启用指令。 */

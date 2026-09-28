@@ -775,6 +775,19 @@ fun Application.moduleWeb(database: Database) {
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
             AdminApi.ok(call, database.getQqUsers(), "ok")
         }
+        // QQ 用户权限设置（level: 0禁止 1查询 2操作 3管理 4全部；flags细分）
+        post("/api/qq/users/perm") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val openid = body["openid"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val level = body["level"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
+            val flags = body["flags"]?.jsonPrimitive?.content ?: ""
+            if (openid.isBlank()) { AdminApi.fail(call, "openid 不能为空", 400); return@post }
+            database.setQqUserPerm(openid, level.coerceIn(0, 4), flags)
+            database.addOpLog(u.id, u.username, "QQ用户权限", "设置 $openid 权限=$level flags=$flags", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "权限已保存")
+        }
         post("/api/qq/users/update") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }

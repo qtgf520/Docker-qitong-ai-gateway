@@ -149,6 +149,13 @@ object SkillExecutor {
                 val models = database.getModels()
                 if (models.isEmpty()) "📋 暂无模型" else "📋 模型列表（${models.size}个）：\n" + models.map { "  · ${it.modelId}" }.joinToString("\n")
             }
+            "600009" -> {
+                // 查余额：给网关用户名
+                val uname = param.trim().ifBlank { "" }
+                val target = if (uname.isNotBlank()) database.getUserByUsername(uname) else null
+                if (target == null) "👤 用户 $uname 不存在（语法：查余额 用户名）"
+                else "💰 ${target.username} 余额：¥${"%.2f".format(target.balance)}（累计充值 ¥${"%.2f".format(target.totalRecharge)}）"
+            }
 
             // ========== 8xxxxx 服务商&模型管理 ==========
             "800001" -> "ℹ️ 请到服务商管理页面添加服务商"
@@ -183,6 +190,23 @@ object SkillExecutor {
             "900009" -> "ℹ️ qtai-sj 自动化切换始终可用"
             "900010" -> { database.setConfig("require_api_key", "true"); "✅ 已开启API密钥验证" }
             "900011" -> { database.setConfig("require_api_key", "false"); "✅ 已关闭API密钥验证" }
+            "900020" -> {
+                // 充值：给网关用户充值（语法：充值 用户名 金额）
+                val parts = param.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                if (parts.size < 2) "⚠️ 语法：充值 用户名 金额（如：充值 qtgf520 10）"
+                else {
+                    val target = database.getUserByUsername(parts[0])
+                    if (target == null) "❌ 用户 ${parts[0]} 不存在"
+                    else {
+                        val amount = parts[1].toDoubleOrNull()
+                        if (amount == null || amount <= 0) "⚠️ 金额无效：${parts[1]}"
+                        else if (database.rechargeBalance(target.id, amount)) {
+                            val bal = database.getUserBalance(target.id)
+                            "✅ 已给 ${target.username} 充值 ¥${"%.2f".format(amount)}，当前余额 ¥${"%.2f".format(bal)}"
+                        } else "❌ 充值失败"
+                    }
+                }
+            }
 
             else -> "❌ 未知技能编码: $code"
         }
