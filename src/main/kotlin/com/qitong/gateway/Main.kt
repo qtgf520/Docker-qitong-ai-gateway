@@ -1675,6 +1675,10 @@ fun Application.moduleWeb(database: Database) {
                     // 当前真实活跃（含强制池首位）
                     val forcedActive = forcedPoolStr.split(",").filter { it.isNotBlank() }.firstOrNull()
                     put("forcedActive", JsonPrimitive(forcedActive?.substringAfter("::", forcedActive) ?: ""))
+                    // 最近一次实际成功命中的模型（自动故障转移后灯跟随它）
+                    put("runtimeActive", JsonPrimitive(com.qitong.gateway.http.GatewayProxy.lastServedKey.substringAfter("::", "")))
+                    put("runtimeActiveKey", JsonPrimitive(com.qitong.gateway.http.GatewayProxy.lastServedKey))
+                    put("runtimeActiveAt", JsonPrimitive(com.qitong.gateway.http.GatewayProxy.lastServedAt))
                     put("forcedPool", JsonArray(forcedPoolStr.split(",").filter { it.isNotBlank() }.map { JsonPrimitive(it) }))
                     // 自动测速：管理员=全局；用户=自己的
                     val autoSpeedStr = if (isAdmin) {

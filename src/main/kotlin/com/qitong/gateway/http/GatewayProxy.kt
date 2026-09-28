@@ -342,6 +342,9 @@ class GatewayProxy(private val database: Database) {
             try {
                 val success = forwardToUpstream(call, provider, targetModel, bodyStr, body, modelId, stream, path, ownerUser)
                 if (success) {
+                    // 记录实际命中的模型，首页灯跟随它
+                    lastServedKey = "${targetModel.providerId}::${targetModel.modelId}"
+                    lastServedAt = System.currentTimeMillis()
                     return
                 }
                 // 非流式失败时记录错误并切换到下一模型
@@ -636,6 +639,14 @@ class GatewayProxy(private val database: Database) {
         /** 网关运行状态（Docker版默认常驻，提供开关供展示） */
         @Volatile
         var running = true
+
+        /** 最近一次实际成功转发的模型 key（providerId::modelId），用于首页"灯跟随实际命中" */
+        @Volatile
+        var lastServedKey: String = ""
+
+        /** 最近一次实际命中时间戳 */
+        @Volatile
+        var lastServedAt: Long = 0L
 
         /** 自动测速协程句柄 */
         @Volatile

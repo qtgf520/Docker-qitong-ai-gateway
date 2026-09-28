@@ -127,7 +127,9 @@ loaders.dashboard = function(){
   // 模型排行榜（三指标 + 全部已启用模型 + 点灯=强制切换）
   var rankRows = '';
   var pool = st.forcedPool || [];
-  var active = st.forcedActive || st.activeModel || ''; // 当前活跃（含强制池首位）
+  var active = st.forcedActive || st.activeModel || ''; // 当前强制活跃
+  var runtimeKey = st.runtimeActiveKey || '';           // 最近一次实际成功命中的模型 key
+  var runtimeMid = st.runtimeActive || '';
   (st.pipelineSorted || []).forEach(function(key, i){
    var parts = key.split('::');
    var mid = parts.length > 1 ? parts[1] : key;
@@ -135,14 +137,18 @@ loaders.dashboard = function(){
    var h = (st.healthCache || []).find(function(x){ return x.key === key; });
    var ok = h ? h.isHealthy : false;
    var inPool = pool.indexOf(key) >= 0;
-   var isActive = (mid === active) || (inPool && pool[0] === key); // 亮灯=当前强制活跃
+   var isServed = runtimeKey && runtimeKey === key;       // 本次实际走了这个模型
+   var isActive = isServed || (!runtimeKey && ((mid === active) || (inPool && pool[0] === key)));
    var lat = (h && h.isHealthy && h.totalMs > 0) ? h.totalMs + 'ms' : '—';
    var ttft = (h && h.isHealthy && h.ttftMs > 0) ? h.ttftMs + 'ms' : '—';
    var tps = (h && h.isHealthy && h.tps > 0) ? h.tps.toFixed(2) + ' tok/s' : '—';
-   // 池灯：点击=强制切换到此模型（点灯）
-   var poolDot = '<span class="pool-dot ' + (isActive ? 'on' : (inPool ? 'pooled' : '')) + '" title="' + (isActive ? '当前强制活跃，点击移出' : '点击强制切换到此模型') + '" onclick="forceSwitchModel(\'' + key.replace(/'/g, '') + '\')" style="cursor:pointer"></span>';
+   // 池灯：点击=强制切换到此模型（点灯）；亮=正在实际服务
+   var dotCls = isActive ? 'on' : (inPool ? 'pooled' : '');
+   var dotTitle = isServed ? '当前实际命中，点击强制切到本模型' : (isActive ? '当前强制活跃，点击移出' : '点击强制切换到此模型');
+   var poolDot = '<span class="pool-dot ' + dotCls + '" title="' + dotTitle + '" onclick="forceSwitchModel(\'' + key.replace(/'/g, '') + '\')" style="cursor:pointer"></span>';
    var poolBtn = '<button class="btn-ghost ' + (inPool ? 'danger' : '') + '" style="padding:2px 8px;font-size:12px" onclick="toggleForcedModel(\'' + key.replace(/'/g, '') + '\')">' + (inPool ? '移出池' : '加入池') + '</button>';
-   rankRows += '<tr><td>' + poolDot + '</td><td>' + (i+1) + '</td><td>' + esc(mid) + (isActive ? ' <span class="badge cyan">当前</span>' : '') + '</td><td>P' + esc(pid) + '</td><td>' + ttft + '</td><td>' + tps + '</td><td>' + lat + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td><td>' + poolBtn + '</td></tr>';
+   var activeBadge = isServed ? ' <span class="badge cyan">实际服务中</span>' : (isActive && !runtimeKey ? ' <span class="badge green">强制</span>' : '');
+   rankRows += '<tr><td>' + poolDot + '</td><td>' + (i+1) + '</td><td>' + esc(mid) + activeBadge + '</td><td>P' + esc(pid) + '</td><td>' + ttft + '</td><td>' + tps + '</td><td>' + lat + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td><td>' + poolBtn + '</td></tr>';
   });
   // 强制故障池（常驻展示，首位=当前活跃）
   var poolHtml;
@@ -151,10 +157,12 @@ loaders.dashboard = function(){
     pool.map(function(k, idx){
      var mid = k.split('::').length > 1 ? k.split('::')[1] : k;
      var isTop = idx === 0;
-     return '<span class="badge ' + (isTop ? 'green' : 'purple') + '" style="cursor:pointer" onclick="forceSwitchModel(\'' + k.replace(/'/g, '') + '\')" title="点击强制切换">' + '' + esc(mid) + ' <span class="pool-dot ' + (isTop ? 'on' : '') + '"></span></span>';
-    }).join('') + '</div><span style="font-size:12px;color:var(--muted)">点灯/点击=强制切换到此模型；首位=当前活跃，qtai-sj 优先走它；失败自动切下一个</span><div style="margin-top:8px"><button class="btn-ghost" onclick="clearForcedPool()">清空故障池</button></div></div>';
+     var isRt = runtimeKey && runtimeKey === k;
+     var cls = isRt ? 'cyan' : (isTop ? 'green' : 'purple');
+     return '<span class="badge ' + cls + '" style="cursor:pointer" onclick="forceSwitchModel(\'' + k.replace(/'/g, '') + '\')" title="点击强制切换">' + '' + esc(mid) + (isRt ? ' ★实际' : '') + ' <span class="pool-dot ' + (isRt ? 'on' : (isTop ? 'on' : '')) + '"></span></span>';
+    }).join('') + '</div><span style="font-size:12px;color:var(--muted)">点灯/点击=强制切换；绿=池首，★=最近实际命中（自动故障转移会自动跟到能用的那个）</span><div style="margin-top:8px"><button class="btn-ghost" onclick="clearForcedPool()">清空故障池</button></div></div>';
   } else {
-   poolHtml = '<div class="card"><h3>强制故障池 (0)</h3><div style="color:var(--muted);font-size:13px;padding:6px 0">故障池为空。在下方「模型排行榜」点 灯 把模型加入池，加入后 qtai-sj 会按池顺序自动故障转移。</div></div>';
+   poolHtml = '<div class="card"><h3>强制故障池 (0)</h3><div style="color:var(--muted);font-size:13px;padding:6px 0">故障池为空。在下方「模型排行榜」点 灯 把模型加入池，加入后 qtai-sj 会按池顺序自动故障转移；★灯跟随最近实际命中的模型。</div></div>';
   }
   // 地址行（本地 + IP + 当前访问域名）
   var gwPort = st.gatewayPort || 18889;
@@ -179,7 +187,7 @@ loaders.dashboard = function(){
      '<span id="gwDot" class="dot ' + (st.running ? '' : 'off') + '"></span>' +
      '<span id="gwState" style="font-weight:700;color:' + (st.running ? 'var(--green)' : 'var(--red)') + '">' + (st.running ? '运行中' : '已停止') + '</span>' +
      '<button class="btn" id="gwToggleBtn" onclick="toggleGateway()">' + (st.running ? '暂停' : '启动') + '</button>' +
-    '</div><div style="margin-top:8px;font-size:12px;color:var(--muted)">活跃模型：' + esc(st.activeModel || 'qtai-sj') + '</div></div>',
+    '</div><div style="margin-top:8px;font-size:12px;color:var(--muted)">强制模型：' + esc(st.activeModel || 'qtai-sj') + (runtimeMid ? '　·　<span style="color:var(--cyan)">实际命中：' + esc(runtimeMid) + '</span>' : '') + '</div></div>',
     '<div class="card" id="autoSpeedCard"><h3>自动测速</h3><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
      '<button class="btn" id="autoSpeedBtn" onclick="toggleAutoSpeed()">' + (st.autoSpeedTest ? '停止自动测速' : '启动自动测速') + '</button>' +
      '<button class="btn-ghost" onclick="runHomeSpeedTest()">立即测速</button>' +
