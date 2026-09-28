@@ -318,5 +318,75 @@ function qqLoadLogs(){
   el.innerHTML='<div class="table-wrap"><table><thead><tr><th>类型</th><th>内容</th><th>耗时</th><th>时间</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
  });
 }
+
+// ===== 沙盒 Linux 终端（临时会话） =====
+var termCur = null;
+loaders.terminal = function(){
+ var box = $('view-terminal');
+ box.innerHTML = '<div class="action-bar">'+
+  '<button class="btn" onclick="termCreate()">+ 创建终端</button>'+
+  '<button class="btn-ghost" onclick="loaders.terminal()">刷新</button>'+
+  '<button class="btn-ghost danger" onclick="termCloseAll()">关闭全部</button>'+
+  '<span style="font-size:12px;color:var(--muted)">临时会话：30分钟无操作自动清理，进程用完即焚</span></div>'+
+  '<div id="termList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
+ termLoad();
+};
+function termLoad(){
+ api('/api/terminal/sessions').then(function(r){
+  var el=$('termList'); if(!el) return;
+  var list=(r&&r.data)||[];
+  if(!list.length){ el.innerHTML='<div class="card" style="color:var(--muted);text-align:center;padding:30px">暂无终端会话，点「+ 创建终端」开始（自建沙盒 Linux，可跑任何命令）</div>'; return; }
+  var rows=list.map(function(s){
+   return '<tr>'+
+    '<td><b>'+esc(s.label)+'</b><br><code style="font-size:10px">'+esc(s.id)+'</code></td>'+
+    '<td>'+(s.commands||0)+'</td>'+
+    '<td style="font-size:11px;color:var(--muted)">'+qqTime(s.lastActiveAt)+'</td>'+
+    '<td style="white-space:nowrap">'+
+     '<button class="btn-ghost btn-sm" onclick="termOpen(\''+esc(s.id)+'\')">打开</button> '+
+     '<button class="btn-ghost btn-sm danger" onclick="termClose(\''+esc(s.id)+'\')">关闭</button></td></tr>';
+  }).join('');
+  el.innerHTML='<div class="card" style="box-shadow:none"><div class="table-wrap"><table><thead><tr><th>会话</th><th>命令数</th><th>最后活跃</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+ });
+}
+function termCreate(){
+ openModal('创建终端', '<div class="form-row"><label>会话名称（可选）</label><input class="input" id="termLabel" placeholder="如：测试环境"></div>', function(){
+  api('/api/terminal/create',{method:'POST',body:{label:$('termLabel').value.trim()}}).then(function(r){
+   if(r.code===0){ toast(r.msg,true); closeModal(); loaders.terminal(); } else toast(r.msg,false);
+  });
+ });
+}
+function termOpen(id){
+ termCur=id;
+ api('/api/terminal/sessions').then(function(r){
+  var list=(r&&r.data)||[]; var s=list.filter(function(x){return x.id===id;})[0];
+  if(!s){ toast('会话不存在',false); return; }
+  openModal('终端 - '+esc(s.label)+' <code>'+esc(s.id)+'</code>',
+   '<div style="background:#0b1120;color:#e2e8f0;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;height:220px;overflow-y:auto;white-space:pre-wrap" id="termOut">'+esc(s.output||'(新会话)')+'</div>'+
+   '<div class="form-row" style="margin-top:10px"><input class="input" id="termCmd" placeholder="输入命令，Enter 执行，如 ls -la" style="font-family:monospace" onkeydown="if(event.key===\'Enter\')termExec()"></div>'+
+   '<button class="btn" onclick="termExec()">执行</button>',
+   function(){ termCur=null; });
+ });
+}
+function termExec(){
+ var c=$('termCmd').value.trim(); if(!c) return;
+ api('/api/terminal/exec',{method:'POST',body:{id:termCur,cmd:c}}).then(function(r){
+  if(r.code===0){
+   var out=$('termOut'); if(out){ out.innerHTML = esc(r.data.output || '(无输出)'); out.scrollTop = out.scrollHeight; }
+   $('termCmd').value='';
+  } else toast(r.msg,false);
+ });
+}
+function termClose(id){
+ if(!confirm('关闭该终端会话？')) return;
+ api('/api/terminal/close',{method:'POST',body:{id:id}}).then(function(r){
+  toast(r.msg, r.code===0); loaders.terminal();
+ });
+}
+function termCloseAll(){
+ if(!confirm('关闭全部终端会话？')) return;
+ api('/api/terminal/close',{method:'POST',body:{id:''}}).then(function(r){
+  toast(r.msg, r.code===0); loaders.terminal();
+ });
+}
 """.trimIndent()
 }
