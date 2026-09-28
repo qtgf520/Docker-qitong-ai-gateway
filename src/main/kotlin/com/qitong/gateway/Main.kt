@@ -135,6 +135,9 @@ fun main(args: Array<String>) {
         }
     }
 
+    // QQ 开放平台机器人：启动所有已启用的 Bot 长连接
+    com.qitong.gateway.qq.QqBotManager.startAll(scope, database, gatewayPort)
+
     val gatewayServer = embeddedServer(Netty, port = gatewayPort) { moduleGateway(database) }
     val webServer = embeddedServer(Netty, port = webPort) { moduleWeb(database) }
 
@@ -619,6 +622,96 @@ fun Application.moduleWeb(database: Database) {
             val u = call.requireAuth(database) ?: return@delete
             if (AdminApi.deleteRule(database, id, u)) AdminApi.ok(call, null, "已删除")
             else AdminApi.fail(call, "无权限删除该规则", 403)
+        }
+
+        // ============ QQ 开放平台机器人（仅管理员） ============
+        fun requireAdminQQ(u: com.qitong.gateway.model.User): Boolean = u.role == "admin"
+
+        get("/api/qq/bots") {
+            val u = call.requireAuth(database) ?: return@get
+            if (!requireAdminQQ(u)) { AdminApi.fail(call, "仅管理员可管理QQ机器人", 403); return@get }
+            val list = database.getQqBots().map { row ->
+                val id = row["id"] as Long
+                val st = com.qitong.gateway.qq.QqBotManager.statusOf(id)
+                row + mapOf(
+                    "online" to (st.status == com.qitong.gateway.qq.QqBotStatus.ONLINE),
+                    "status" to st.status.name,
+                    "lastError" to st.lastError,
+                    "messagesHandled" to st.messagesHandled,
+                    "readyAt" to st.readyAt
+                )
+            }
+            AdminApi.ok(call, list, "ok")
+        }
+        post("/api/qq/bots") {
+            val u = call.requireAuth(database) ?: return@post
+            if (!requireAdminQQ(u)) { AdminApi.fail(call, "仅管理员可管理QQ机器人", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val appid = body["appid"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val token = body["token"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (appid.isBlank() || token.isBlank()) { AdminApi.fail(call, "AppID 和 Token 不能为空", 400); return@post }
+            val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val enabled = body["enabled"]?.jsonPrimitive?.content?.toBoolean() ?: true
+            val aiModel = body["aiModel"]?.jsonPrimitive?.content?.trim()?.ifBlank { "qtai-sj" } ?: "qtai-sj"
+            val systemPrompt = body["systemPrompt"]?.jsonPrimitive?.content ?: ""
+            val welcome = body["welcome"]?.jsonPrimitive?.content ?: ""
+            val id = database.upsertQqBot(appid, token, name, enabled, aiModel, systemPrompt, welcome)
+            // 保存后立即按启用状态拉起/停止
+            val fresh = database.getQqBotById(id)
+            if (fresh != null) {
+                if (enabled) {
+                    com.qitong.gateway.qq.QqBotManager.startBot(com.qitong.gateway.qq.QqBot(
+                        id = id, appid = appid, token = token, name = name, enabled = true,
+                        aiModel = aiModel, systemPrompt = systemPrompt, welcome = welcome
+                    ))
+                } else {
+                    com.qitong.gateway.qq.QqBotManager.stopBot(id)
+                }
+            }
+            AdminApi.ok(call, mapOf("id" to id), "保存成功")
+        }
+        delete("/api/qq/bots/{id}") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            val u = call.requireAuth(database) ?: return@delete
+            if (!requireAdminQQ(u)) { AdminApi.fail(call, "仅管理员可管理QQ机器人", 403); return@delete }
+            com.qitong.gateway.qq.QqBotManager.stopBot(id)
+            database.deleteQqBot(id)
+            AdminApi.ok(call, null, "已删除")
+        }
+        post("/api/qq/bots/{id}/toggle") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val u = call.requireAuth(database) ?: return@post
+            if (!requireAdminQQ(u)) { AdminApi.fail(call, "仅管理员可管理QQ机器人", 403); return@post }
+            val row = database.getQqBotById(id) ?: run { AdminApi.fail(call, "机器人不存在", 404); return@post }
+            val nowOn = !(row["enabled"] as Boolean)
+            database.setQqBotEnabled(id, nowOn)
+            if (nowOn) com.qitong.gateway.qq.QqBotManager.restartBot(id)
+            else com.qitong.gateway.qq.QqBotManager.stopBot(id)
+            AdminApi.ok(call, mapOf("enabled" to nowOn), if (nowOn) "已启用" else "已停用")
+        }
+        post("/api/qq/bots/{id}/restart") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val u = call.requireAuth(database) ?: return@post
+            if (!requireAdminQQ(u)) { AdminApi.fail(call, "仅管理员可管理QQ机器人", 403); return@post }
+            com.qitong.gateway.qq.QqBotManager.restartBot(id)
+            AdminApi.ok(call, null, "已重启")
+        }
+        get("/api/qq/groups") {
+            val u = call.requireAuth(database) ?: return@get
+            if (!requireAdminQQ(u)) { AdminApi.fail(call, "仅管理员可查看群配置", 403); return@get }
+            AdminApi.ok(call, database.getQqGroups(), "ok")
+        }
+        post("/api/qq/groups/update") {
+            val u = call.requireAuth(database) ?: return@post
+            if (!requireAdminQQ(u)) { AdminApi.fail(call, "仅管理员可修改群配置", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val groupOpenid = body["groupOpenid"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (groupOpenid.isBlank()) { AdminApi.fail(call, "groupOpenid 不能为空", 400); return@post }
+            val aiEnabled = body["aiEnabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+            val welcomeEnabled = body["welcomeEnabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+            val greeting = body["greeting"]?.jsonPrimitive?.content
+            database.updateQqGroup(groupOpenid, aiEnabled, welcomeEnabled, greeting)
+            AdminApi.ok(call, null, "群配置已保存")
         }
 
         // 用户（admin=全部；代理=自己的下级用户；普通用户无权限）

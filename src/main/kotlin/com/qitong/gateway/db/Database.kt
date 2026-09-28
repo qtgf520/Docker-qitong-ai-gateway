@@ -318,6 +318,33 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
+            // QQ 开放平台机器人（多号管理）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS qq_bots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    appid TEXT NOT NULL UNIQUE,
+                    token TEXT NOT NULL,
+                    name TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    ai_model TEXT NOT NULL DEFAULT 'qtai-sj',
+                    system_prompt TEXT NOT NULL DEFAULT '',
+                    welcome TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            // QQ 群配置（按群 openid 隔离：AI开关/欢迎语/人格覆盖）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS qq_groups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_openid TEXT NOT NULL,
+                    bot_appid TEXT NOT NULL DEFAULT '',
+                    ai_enabled INTEGER NOT NULL DEFAULT 1,
+                    welcome_enabled INTEGER NOT NULL DEFAULT 1,
+                    greeting TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            try { st.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_qq_groups_openid ON qq_groups(group_openid)") } catch (_: Exception) {}
         }
     }
 
@@ -1238,5 +1265,118 @@ class Database(private val dbPath: String) {
 
     fun clearLoginLogs() {
         stmt("DELETE FROM login_logs")
+    }
+
+    // ============ QQ 开放平台机器人 ============
+
+    fun getQqBots(): List<Map<String, Any?>> =
+        query("SELECT * FROM qq_bots ORDER BY id").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "appid" to (row["appid"] as? String ?: ""),
+                "name" to (row["name"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+                "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
+                "systemPrompt" to (row["system_prompt"] as? String ?: ""),
+                "welcome" to (row["welcome"] as? String ?: ""),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+
+    fun getQqBotById(id: Long): Map<String, Any?>? =
+        query("SELECT * FROM qq_bots WHERE id=?", id).firstOrNull()?.let { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "appid" to (row["appid"] as? String ?: ""),
+                "token" to (row["token"] as? String ?: ""),
+                "name" to (row["name"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+                "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
+                "systemPrompt" to (row["system_prompt"] as? String ?: ""),
+                "welcome" to (row["welcome"] as? String ?: "")
+            )
+        }
+
+    fun getQqBotByAppid(appid: String): Map<String, Any?>? =
+        query("SELECT * FROM qq_bots WHERE appid=?", appid).firstOrNull()?.let { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "appid" to (row["appid"] as? String ?: ""),
+                "token" to (row["token"] as? String ?: ""),
+                "name" to (row["name"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+                "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
+                "systemPrompt" to (row["system_prompt"] as? String ?: ""),
+                "welcome" to (row["welcome"] as? String ?: "")
+            )
+        }
+
+    /** 新增或更新（appid 为主键）。返回 bot id。 */
+    fun upsertQqBot(appid: String, token: String, name: String, enabled: Boolean,
+                    aiModel: String, systemPrompt: String, welcome: String): Long {
+        val existing = queryOne("SELECT id FROM qq_bots WHERE appid=?", appid)
+        if (existing != null) {
+            stmt(
+                "UPDATE qq_bots SET token=?, name=?, enabled=?, ai_model=?, system_prompt=?, welcome=? WHERE appid=?",
+                token, name, if (enabled) 1 else 0, aiModel, systemPrompt, welcome, appid
+            )
+            return existing
+        }
+        stmt(
+            "INSERT INTO qq_bots (appid,token,name,enabled,ai_model,system_prompt,welcome,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            appid, token, name, if (enabled) 1 else 0, aiModel, systemPrompt, welcome, System.currentTimeMillis()
+        )
+        return queryOne("SELECT id FROM qq_bots WHERE appid=?", appid) ?: 0
+    }
+
+    fun deleteQqBot(id: Long) {
+        stmt("DELETE FROM qq_bots WHERE id=?", id)
+    }
+
+    fun setQqBotEnabled(id: Long, enabled: Boolean) {
+        stmt("UPDATE qq_bots SET enabled=? WHERE id=?", if (enabled) 1 else 0, id)
+    }
+
+    fun getQqGroups(): List<Map<String, Any?>> =
+        query("SELECT * FROM qq_groups ORDER BY id DESC").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "groupOpenid" to (row["group_openid"] as? String ?: ""),
+                "botAppid" to (row["bot_appid"] as? String ?: ""),
+                "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() == 1),
+                "welcomeEnabled" to ((row["welcome_enabled"] as? Number)?.toInt() == 1),
+                "greeting" to (row["greeting"] as? String ?: "")
+            )
+        }
+
+    fun getQqGroupConfig(groupOpenid: String): Map<String, Any?>? =
+        query("SELECT * FROM qq_groups WHERE group_openid=?", groupOpenid).firstOrNull()?.let { row ->
+            mapOf(
+                "groupOpenid" to (row["group_openid"] as? String ?: ""),
+                "botAppid" to (row["bot_appid"] as? String ?: ""),
+                "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() == 1),
+                "welcomeEnabled" to ((row["welcome_enabled"] as? Number)?.toInt() == 1),
+                "greeting" to (row["greeting"] as? String ?: "")
+            )
+        }
+
+    /** 记录/更新一个已知群（收到消息时自动落库）。 */
+    fun touchQqGroup(groupOpenid: String, botAppid: String) {
+        val exists = queryOne("SELECT COUNT(*) FROM qq_groups WHERE group_openid=?", groupOpenid) ?: 0
+        if (exists == 0L) {
+            stmt(
+                "INSERT INTO qq_groups (group_openid,bot_appid,created_at) VALUES (?,?,?)",
+                groupOpenid, botAppid, System.currentTimeMillis()
+            )
+        } else if (botAppid.isNotBlank()) {
+            stmt("UPDATE qq_groups SET bot_appid=? WHERE group_openid=?", botAppid, groupOpenid)
+        }
+    }
+
+    fun updateQqGroup(groupOpenid: String, aiEnabled: Boolean?, welcomeEnabled: Boolean?, greeting: String?) {
+        touchQqGroup(groupOpenid, "")
+        aiEnabled?.let { stmt("UPDATE qq_groups SET ai_enabled=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
+        welcomeEnabled?.let { stmt("UPDATE qq_groups SET welcome_enabled=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
+        greeting?.let { stmt("UPDATE qq_groups SET greeting=? WHERE group_openid=?", it, groupOpenid) }
     }
 }
