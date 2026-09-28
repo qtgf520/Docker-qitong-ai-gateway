@@ -231,14 +231,19 @@ function qqLoadUsers(){
     '<td><span class="badge '+(u.permLevel>=3?'purple':(u.permLevel==0?'gray':'blue'))+'">'+permTxt+'</span></td>'+
     '<td>'+(u.totalMessages||0)+'</td>'+
     '<td>'+qqTime(u.lastActiveAt)+'</td>'+
-    '<td><button class="btn-ghost btn-sm" onclick="qqUserEdit('+JSON.stringify(u).replace(/"/g,'"')+')">配置</button></td></tr>';
+    '<td><button class="btn-ghost btn-sm" onclick="qqUserEdit(\''+esc(u.openid)+'\')">配置</button></td></tr>';
   }).join('');
   el.innerHTML='<div class="table-wrap"><table><thead><tr><th>openid</th><th>昵称</th><th>AI</th><th>权限</th><th>消息数</th><th>最后活跃</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
    '<div style="font-size:12px;color:var(--muted);margin-top:8px">权限：禁止=不能操作机器人 · 查询=查状态/排行/余额 · 操作=切模型/测速 · 管理=启停/充值/改配置 · 全部=所有网关操作</div>';
  });
 }
-function qqUserEdit(u){
- var html='<div class="form-row"><label>openid</label><input class="input" value="'+esc(u.openid)+'" readonly></div>'+
+function qqUserEdit(openid){
+ // 从当前列表重新拉用户（避免 JSON 传对象引号问题）
+ api('/api/qq/users').then(function(r){
+  var list=(r&&r.data)||[];
+  var u=list.filter(function(x){return x.openid===openid;})[0];
+  if(!u){ toast('用户不存在',false); return; }
+  var html='<div class="form-row"><label>openid</label><input class="input" value="'+esc(u.openid)+'" readonly></div>'+
   '<div class="form-row"><label>昵称备注</label><input class="input" id="uuName" value="'+esc(u.displayName||'')+'"></div>'+
   '<div class="form-row"><label>独立人设（覆盖该用户的 system prompt，留空用机器人默认）</label><textarea class="input" id="uuPersona" rows="3">'+esc(u.persona||'')+'</textarea></div>'+
   '<div class="form-row"><label><input type="checkbox" id="uuAi" '+(u.aiEnabled?'checked':'')+'> 允许此用户使用 AI</label></div>'+
@@ -251,13 +256,14 @@ function qqUserEdit(u){
   '<div class="form-row" style="display:flex;gap:8px;margin-top:6px">'+
    '<button class="btn-ghost btn-sm" onclick="qqUserMemory(\''+esc(u.openid)+'\')">查看长期记忆</button>'+
    '<button class="btn-ghost btn-sm danger" onclick="qqUserMemoryClear(\''+esc(u.openid)+'\')">清空记忆</button></div>';
- openModal('用户独立配置', html, function(){
-  var permLevel = parseInt($('uuPerm').value) || 1;
-  api('/api/qq/users/perm',{method:'POST',body:{openid:u.openid, level:permLevel, flags:''}})
-  .then(function(r){ if(r.code!==0){ toast(r.msg||'权限保存失败',false); return; } });
-  api('/api/qq/users/update',{method:'POST',body:{openid:u.openid,
-   displayName:$('uuName').value, persona:$('uuPersona').value, aiEnabled:$('uuAi').checked}})
-  .then(function(r){ if(r.code===0){toast('已保存',true);closeModal();qqLoadUsers();}else toast(r.msg,false); });
+  openModal('用户独立配置', html, function(){
+   var permLevel = parseInt($('uuPerm').value) || 1;
+   api('/api/qq/users/perm',{method:'POST',body:{openid:u.openid, level:permLevel, flags:''}})
+   .then(function(r){ if(r.code!==0){ toast(r.msg||'权限保存失败',false); return; } });
+   api('/api/qq/users/update',{method:'POST',body:{openid:u.openid,
+    displayName:$('uuName').value, persona:$('uuPersona').value, aiEnabled:$('uuAi').checked}})
+   .then(function(r){ if(r.code===0){toast('已保存',true);closeModal();qqLoadUsers();}else toast(r.msg,false); });
+  });
  });
 }
 function qqUserMemory(openid){

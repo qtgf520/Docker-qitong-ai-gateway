@@ -44,6 +44,86 @@ object QqBotManager {
     // 每用户冷却时间戳
     private val lastReplyTs = ConcurrentHashMap<String, Long>()
 
+    // ============ 文字游戏状态（每用户独立） ============
+    private val gameState = ConcurrentHashMap<String, MutableMap<String, Any>>()
+
+    /** 游戏指令：开始猜数字 / 猜数字 50 / 开始成语接龙 / 成语 xxx / 骰子 / 抽卡 */
+    private fun matchGame(text: String): String? {
+        val t = text.trim()
+        if (t.contains("猜数字", true) || t.startsWith("猜", true) && t.length <= 4) return "guess"
+        if (t.contains("成语接龙", true) || t.startsWith("接龙", true)) return "idiom"
+        if (t.contains("骰子", true) || t.contains("掷骰子", true)) return "dice"
+        if (t.contains("抽卡", true) || t.contains("抽奖", true)) return "gacha"
+        return null
+    }
+
+    private fun handleGame(userOpenid: String, text: String): String? {
+        val t = text.trim()
+        when (matchGame(text)) {
+            "guess" -> {
+                val st = gameState.getOrPut(userOpenid) { mutableMapOf() }
+                val cur = st["guess"]
+                if (t.contains("开始", true) || t.contains("重新", true) || cur == null) {
+                    val num = (1..100).random()
+                    st["guess"] = num
+                    st["guessTries"] = 0
+                    return "🎮 猜数字开始！已想好 1-100 的数，回复「猜 50」试猜～"
+                }
+                if (t.startsWith("猜", true)) {
+                    val n = t.substringAfter("猜").trim().toIntOrNull() ?: return "⚠️ 请输入数字，如「猜 50」"
+                    val target = st["guess"] as Int
+                    val tries = ((st["guessTries"] as Int?) ?: 0) + 1
+                    st["guessTries"] = tries
+                    return when {
+                        n < target -> "📉 小了！猜大点（已试 $tries 次）"
+                        n > target -> "📈 大了！猜小点（已试 $tries 次）"
+                        else -> { st.remove("guess"); "🎉 恭喜猜中 $target！用了 $tries 次。回复「猜数字」再来一局～" }
+                    }
+                }
+                return "🎮 当前在猜数字，回复「猜 数字」继续"
+            }
+            "dice" -> {
+                val d1 = (1..6).random(); val d2 = (1..6).random()
+                val total = d1 + d2
+                return if (total == 7 || total == 11) "🎲 掷出 $d1 + $d2 = $total 🎉 大赢！" else "🎲 掷出 $d1 + $d2 = $total"
+            }
+            "gacha" -> {
+                val r = (1..100).random()
+                val card = when {
+                    r <= 3 -> "🌟 SSR 传说卡！"
+                    r <= 15 -> "✨ SR 稀有卡"
+                    r <= 45 -> "💎 R 卡"
+                    else -> "📦 N 卡"
+                }
+                return "🃏 抽卡结果（概率 $r/100）：$card"
+            }
+            "idiom" -> {
+                val st = gameState.getOrPut(userOpenid) { mutableMapOf() }
+                val cur = st["idiom"] as? String
+                if (t.contains("开始", true) || cur == null) {
+                    val pool = arrayOf("一心一意", "二龙戏珠", "三阳开泰", "四海为家", "五谷丰登", "六六大顺", "七步成诗", "八面玲珑", "九九归一", "十全十美")
+                    val pick = pool.random()
+                    st["idiom"] = pick
+                    st["idiomCount"] = 0
+                    return "🧩 成语接龙开始！我先出：「$pick」——请用「$pick」最后一个字（谐音也可）接一个成语"
+                }
+                if (t.startsWith("成语", true)) {
+                    val word = t.substringAfter("成语").trim()
+                    val lastChar = (cur as String).takeLast(1)
+                    if (!word.contains(lastChar) && !word.contains(if (lastChar == "一") "一" else lastChar)) {
+                        return "❌ 接龙失败：需包含「$lastChar」字（谐音也可）。当前：「$cur」"
+                    }
+                    val cnt = ((st["idiomCount"] as Int?) ?: 0) + 1
+                    st["idiom"] = word
+                    st["idiomCount"] = cnt
+                    return "✅ 接得好！「$word」（已接 $cnt 个）。继续：用「${word.takeLast(1)}」接～"
+                }
+                return "🧩 当前接龙：「$cur」，回复「成语 xxx」来接"
+            }
+        }
+        return null
+    }
+
     fun statusOf(id: Long): QqRuntimeState = runtime.getOrPut(id) { QqRuntimeState() }
     fun allStatus(): Map<Long, QqRuntimeState> = runtime.toMap()
 
@@ -176,6 +256,7 @@ object QqBotManager {
         text: String, msgId: String, send: (String) -> Boolean
     ) {
         val t0 = System.currentTimeMillis()
+        val t = text.trim()
         // 0) 内置指令（签到/积分/全员禁言）
         val builtin = matchBuiltin(text, groupOpenid)
         if (builtin != null) {
@@ -232,6 +313,28 @@ object QqBotManager {
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill", "[$code] $text", System.currentTimeMillis() - t0)
             return
         }
+        // 0.6) 文字游戏（每用户独立，无需权限门槛，娱乐）
+        val game = handleGame(userOpenid, text)
+        if (game != null) { send(game); db.addQqLog(bot.appid, groupOpenid, userOpenid, "game", text, System.currentTimeMillis() - t0); return }
+
+        // 0.7) 沙盒 Linux 终端操控（需管理级权限，远程执行 shell 命令）
+        if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWith("运行 ", true)) {
+            val qqUser = db.getQqUser(userOpenid)
+            val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1
+            if (perm < 3) { send("⛔ 终端操控需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }
+            val cmd = t.substringAfter(" ").trim()
+            if (cmd.isBlank()) { send("⚠️ 语法：终端 <命令>（如：终端 ls -la）"); return }
+            if (cmd.length > 500) { send("⚠️ 命令太长（限500字符）"); return }
+            // 危险命令黑名单
+            val dangerous = listOf("rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", ":(){", "format", "fdisk")
+            if (dangerous.any { cmd.contains(it) }) { send("⛔ 危险命令已拦截"); return }
+            val result = runShell(cmd)
+            val shown = result.take(800)
+            send("🖥 终端执行：\n$ cmd\n\n```\n$shown\n```")
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "shell", "[$cmd] ${result.take(80)}", System.currentTimeMillis() - t0)
+            return
+        }
+
         // 1) 插件指令匹配
         val cmd = matchCommand(text)
         if (cmd != null) {
@@ -371,6 +474,23 @@ object QqBotManager {
                 r.body?.string()?.trim()?.take(500)
             }
         } catch (e: Exception) { null }
+    }
+
+    /** 沙盒终端执行（容器内 shell，10 秒超时，输出截断） */
+    private fun runShell(cmd: String): String {
+        return try {
+            val proc = ProcessBuilder("/bin/sh", "-c", cmd)
+                .redirectErrorStream(true)
+                .start()
+            val out = proc.inputStream.bufferedReader().readText()
+            if (!proc.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                proc.destroyForcibly()
+                return "⚠️ 命令超时（10秒）已终止\n$out".take(800)
+            }
+            out.ifBlank { "(无输出)" }.take(800)
+        } catch (e: Exception) {
+            "❌ 执行失败：${e.message}".take(800)
+        }
     }
 
     /** 调本机网关大模型，带每用户独立上下文与人设覆盖。 */
