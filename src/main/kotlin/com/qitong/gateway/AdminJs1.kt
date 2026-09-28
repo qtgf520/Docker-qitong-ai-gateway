@@ -164,7 +164,7 @@ loaders.dashboard = function(){
    '<div class="form-row"><label>服务器地址（IP）</label><div class="addr-line" onclick="copyAddr(this)">http://' + esc(ip) + ':' + gwPort + '/v1 <span class="copy-tag">复制</span></div></div>' +
    domainLine + '</div>';
   box.innerHTML = [
-   '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥0.00</div><div class="lbl">我的余额</div></div></div></div>',
+   addrHtml,
    '<div class="card" id="announceCard"><h3>公告</h3><div style="color:var(--muted);padding:8px;font-size:13px">加载中...</div></div>',
    '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr)">' +
     '<div class="stat"><div class="num" style="font-size:20px">' + fmtUptime(st.uptime || 0) + '</div><div class="lbl">运行时长</div></div>' +
@@ -180,6 +180,7 @@ loaders.dashboard = function(){
     '</div><div style="margin-top:8px;font-size:12px;color:var(--muted)">活跃模型：' + esc(st.activeModel || 'qtai-sj') + '</div></div>',
     '<div class="card" id="autoSpeedCard"><h3>自动测速</h3><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
      '<button class="btn" id="autoSpeedBtn" onclick="toggleAutoSpeed()">' + (st.autoSpeedTest ? '停止自动测速' : '启动自动测速') + '</button>' +
+     '<button class="btn-ghost" onclick="runHomeSpeedTest()">立即测速</button>' +
      '<select id="speedInterval" class="input" style="width:130px" onchange="saveSpeedInterval()">' +
       '<option value="5"' + (st.speedIntervalMin==5?' selected':'') + '>5分钟</option>' +
       '<option value="15"' + (st.speedIntervalMin==15?' selected':'') + '>15分钟</option>' +
@@ -187,9 +188,11 @@ loaders.dashboard = function(){
       '<option value="60"' + (st.speedIntervalMin==60?' selected':'') + '>1小时</option>' +
       '<option value="120"' + (st.speedIntervalMin==120?' selected':'') + '>2小时</option>' +
       '<option value="240"' + (st.speedIntervalMin==240?' selected':'') + '>4小时</option>' +
-     '</select><span style="font-size:11px;color:var(--muted)" id="speedScopeTag"></span></div><div style="margin-top:6px;font-size:12px;color:var(--cyan)" id="dashCountdown"></div></div>',
+     '</select><span style="font-size:11px;color:var(--muted)" id="speedScopeTag"></span></div>' +
+     '<div id="homeSpeedProg" style="display:none;margin-top:10px"></div>' +
+     '<div style="margin-top:6px;font-size:12px;color:var(--cyan)" id="dashCountdown"></div></div>',
    '</div>',
-   addrHtml,
+   '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥0.00</div><div class="lbl">我的余额</div></div></div></div>',
    poolHtml,
    '<div class="card"><h3>模型排行榜 <span style="font-size:12px;color:var(--muted)">（点击 灯加入/移出强制故障池，多选支持自动故障转移）</span></h3><div class="table-wrap"><table><thead><tr><th>池</th><th>#</th><th>模型ID</th><th>服务商</th><th>TTFT</th><th>TPS</th><th>总耗时</th><th>状态</th><th>强制池</th></tr></thead><tbody>' +
     (rankRows || '<tr><td colspan="9" style="text-align:center;color:var(--muted)">暂无启用模型，请先在服务商页添加并同步</td></tr>') +
@@ -237,6 +240,43 @@ loaders.dashboard = function(){
    var dc = $('dashCountdown');
    if(dc){ dc.textContent = '下次自动测速：' + interval + '分00秒'; startDashCountdown(interval * 60); }
   }
+  // 接续后台测速任务：首页也显示实时进度条（与测速页一致）
+  checkHomeSpeed();
+ });
+};
+// 首页实时测速进度（轮询 /api/speedtest/progress，效果对齐测速页）
+var homeSpeedTimer = null;
+function checkHomeSpeed(){
+ api('/api/speedtest/progress').then(function(r){
+  if(r.code===0 && r.data && r.data.running){ renderHomeSpeedProg(r.data); pollHomeSpeed(); }
+ });
+}
+function pollHomeSpeed(){
+ if(homeSpeedTimer) clearInterval(homeSpeedTimer);
+ homeSpeedTimer = setInterval(function(){
+  if(!$('view-dashboard')){ clearInterval(homeSpeedTimer); return; }
+  api('/api/speedtest/progress').then(function(r){
+   if(r.code!==0 || !r.data){ return; }
+   if(r.data.running){ renderHomeSpeedProg(r.data); }
+   else {
+    clearInterval(homeSpeedTimer);
+    var wrap=$('homeSpeedProg'); if(wrap) wrap.style.display='none';
+    toast('测速完成：'+(r.data.passed||0)+'/'+(r.data.total||0)+' 正常', true);
+   }
+  });
+ },1200);
+}
+function renderHomeSpeedProg(s){
+ var wrap=$('homeSpeedProg'); if(!wrap) return;
+ var pct=s.progress||0;
+ wrap.style.display='block';
+ wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);margin-bottom:4px">测速中 '+pct+'% ('+(s.done||0)+'/'+(s.total||0)+')</div>'+
+  '<div style="background:var(--inset);border-radius:8px;height:8px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:var(--primary);transition:width .4s"></div></div>';
+}
+window.runHomeSpeedTest = function(){
+ api('/api/speedtest/start',{method:'POST',body:{}}).then(function(r){
+  if(r.code===0){ toast('已开始测速', true); renderHomeSpeedProg(r.data||{progress:0,done:0,total:0}); pollHomeSpeed(); }
+  else toast(r.msg||'启动失败', false);
  });
 };
 // ===== 首页操作 =====

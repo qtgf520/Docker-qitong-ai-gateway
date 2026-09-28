@@ -784,6 +784,22 @@ fun Application.moduleWeb(database: Database) {
             val type = call.queryParameters["type"]
             AdminApi.ok(call, database.getQqLogs(limit = 300, type = type), "ok")
         }
+        // QQ 积分排行/调整
+        get("/api/qq/points") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, database.getAllQqPoints(), "ok")
+        }
+        post("/api/qq/points/adjust") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val openid = body["openid"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val delta = body["delta"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+            if (openid.isBlank()) { AdminApi.fail(call, "openid 不能为空", 400); return@post }
+            database.adjustQqPoints(openid, delta)
+            AdminApi.ok(call, null, "已调整 $delta 积分")
+        }
 
         // 用户（admin=全部；代理=自己的下级用户；普通用户无权限）
         get("/api/users") {

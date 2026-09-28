@@ -75,4 +75,23 @@ class QqApiClient {
             return resp.isSuccessful
         }
     }
+
+    /** 全员禁言/解除（机器人需为群管理员）。enable=true 开启全员禁言。 */
+    fun setGroupMute(bot: QqBot, groupOpenid: String, enable: Boolean): Boolean {
+        val mode = if (enable) "always" else "none"
+        val payload = "{\"global_mute\":{\"mode\":\"$mode\"}}"
+        val req = Request.Builder()
+            .url("$base/v2/groups/$groupOpenid/restrict_chat_setting")
+            .addHeader("Authorization", bot.authHeader())
+            .addHeader("Content-Type", "application/json")
+            .post(payload.toRequestBody(jsonCt))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                System.err.println("[QQBot] 群禁言失败 ${bot.appid} -> $groupOpenid : HTTP ${resp.code} $body")
+            }
+            return resp.isSuccessful
+        }
+    }
 }

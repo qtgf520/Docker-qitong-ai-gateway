@@ -132,12 +132,44 @@ object QqBotManager {
         }
     }
 
-    /** 统一分发：插件指令优先，其次大模型；全程记日志。 */
+    /** 统一分发：内置指令 > 插件指令 > 大模型；全程记日志。 */
     private fun dispatch(
         bot: QqBot, key: String, groupOpenid: String, userOpenid: String,
         text: String, msgId: String, send: (String) -> Boolean
     ) {
         val t0 = System.currentTimeMillis()
+        // 0) 内置指令（签到/积分/全员禁言）
+        val builtin = matchBuiltin(text, groupOpenid)
+        if (builtin != null) {
+            when (builtin.first) {
+                "sign" -> {
+                    if (onCooldown(userOpenid, 3)) return
+                    val reward = (5..20).random()
+                    val got = db.signQqUser(userOpenid, reward)
+                    val reply = if (got != null) "签到成功 +$got 积分" else "今天已经签过到啦，明天再来～"
+                    send(reply); lastReplyTs[userOpenid] = System.currentTimeMillis()
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "签到", System.currentTimeMillis() - t0)
+                    return
+                }
+                "points" -> {
+                    val p = db.getQqPoints(userOpenid)
+                    send("当前积分：${p["points"]}（累计签到 ${p["signCount"]} 次）")
+                    return
+                }
+                "mute_on" -> {
+                    if (groupOpenid.isBlank()) return
+                    if (api.setGroupMute(bot, groupOpenid, true)) send("已开启全员禁言") else send("全员禁言失败（需机器人是群管理员）")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "全员禁言", System.currentTimeMillis() - t0)
+                    return
+                }
+                "mute_off" -> {
+                    if (groupOpenid.isBlank()) return
+                    if (api.setGroupMute(bot, groupOpenid, false)) send("已解除全员禁言") else send("解除失败")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "解除全员禁言", System.currentTimeMillis() - t0)
+                    return
+                }
+            }
+        }
         // 1) 插件指令匹配
         val cmd = matchCommand(text)
         if (cmd != null) {
@@ -174,6 +206,18 @@ object QqBotManager {
     private fun onCooldown(userOpenid: String, seconds: Int): Boolean {
         val last = lastReplyTs[userOpenid] ?: 0L
         return System.currentTimeMillis() - last < seconds * 1000L
+    }
+
+    /** 内置指令匹配。 */
+    private fun matchBuiltin(text: String, groupOpenid: String): Pair<String, String>? {
+        val t = text.trim()
+        if (t.equals("签到", true) || t.equals("打卡", true)) return "sign" to t
+        if (t.equals("我的积分", true) || t.equals("积分", true)) return "points" to t
+        if (groupOpenid.isNotBlank()) {
+            if (t.equals("全员禁言", true)) return "mute_on" to t
+            if (t.equals("解除全员禁言", true) || t.equals("取消全员禁言", true)) return "mute_off" to t
+        }
+        return null
     }
 
     /** 按优先级匹配一条启用指令。 */

@@ -11,7 +11,7 @@ loaders.qqbot = function(){
  var box = $('view-qqbot');
  var tabs = [
   ['overview','动态概览'],['cmds','插件指令'],['groups','群配置'],
-  ['users','独立用户'],['logs','运行日志']
+  ['users','独立用户'],['points','积分排行'],['logs','运行日志']
  ].map(function(x){
   return '<button class="log-tab" style="'+(qqTab===x[0]?'color:var(--primary);border-bottom-color:var(--primary);font-weight:600':'')+'" onclick="qqTabBtn(\''+x[0]+'\')">'+x[1]+'</button>';
  }).join('');
@@ -21,6 +21,7 @@ loaders.qqbot = function(){
  if(qqTab==='cmds') qqLoadCmds();
  if(qqTab==='groups') qqLoadGroups();
  if(qqTab==='users') qqLoadUsers();
+ if(qqTab==='points') qqLoadPoints();
  if(qqTab==='logs') qqLoadLogs();
 };
 function qqTabHtml(){
@@ -28,6 +29,7 @@ function qqTabHtml(){
  if(qqTab==='cmds') return '<div class="action-bar"><button class="btn" onclick="qqCmdForm()">+ 新建指令插件</button><span style="font-size:12px;color:var(--muted)">小栗子式：触发词 -> 回复/HTTP/AI，按优先级匹配，命中即停</span></div><div id="qqCmdList"></div>';
  if(qqTab==='groups') return '<div id="qqGroupList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  if(qqTab==='users') return '<div id="qqUserList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
+ if(qqTab==='points') return '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">群里发「签到」每日得 5-20 积分，「我的积分」查询。此处可查看排行并手动调整。</div><div id="qqPointsList"></div>';
  return '<div class="action-bar"><button class="btn-ghost" onclick="qqLoadLogs()">刷新</button></div><div id="qqLogList"></div>';
 }
 function qqTime(ts){ if(!ts) return '-'; var d=new Date(ts); return d.toLocaleString('zh-CN',{hour12:false}); }
@@ -178,6 +180,28 @@ function qqUserEdit(u){
   api('/api/qq/users/update',{method:'POST',body:{openid:u.openid,
    displayName:$('uuName').value, persona:$('uuPersona').value, aiEnabled:$('uuAi').checked}})
   .then(function(r){ if(r.code===0){toast('已保存',true);closeModal();qqLoadUsers();}else toast(r.msg,false); });
+ });
+}
+
+// ---- 积分排行 ----
+function qqLoadPoints(){
+ api('/api/qq/points').then(function(r){
+  var el=$('qqPointsList'); if(!el) return;
+  var list=(r&&r.data)||[];
+  if(!list.length){ el.innerHTML='<div style="color:var(--muted);padding:16px">暂无积分记录，群里发「签到」即可产生。</div>'; return; }
+  var rows=list.map(function(p,i){
+   return '<tr><td>'+(i+1)+'</td><td><code style="font-size:11px">'+esc(p.openid.substring(0,14))+'…</code></td>'+
+    '<td><b style="color:var(--amber)">'+(p.points||0)+'</b></td>'+
+    '<td>'+(p.signCount||0)+'</td><td>'+esc(p.lastSignDate||'-')+'</td>'+
+    '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="qqPointsAdjust(\''+esc(p.openid)+'\',10)">+10</button> '+
+    '<button class="btn-ghost btn-sm" onclick="qqPointsAdjust(\''+esc(p.openid)+'\',-10)">-10</button></td></tr>';
+  }).join('');
+  el.innerHTML='<div class="table-wrap"><table><thead><tr><th>#</th><th>openid</th><th>积分</th><th>签到次数</th><th>最近签到</th><th>调整</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+ });
+}
+function qqPointsAdjust(openid,delta){
+ api('/api/qq/points/adjust',{method:'POST',body:{openid:openid,delta:delta}}).then(function(r){
+  toast(r.msg||'已调整', r.code===0); if(r.code===0) qqLoadPoints();
  });
 }
 
