@@ -1634,4 +1634,10 @@ class Database(private val dbPath: String) {
     fun clearQqBrainMemories(openid: String) {
         stmt("DELETE FROM brain_memory WHERE tags=?", "qq:$openid")
     }
+
+    /** 自动过期：清理 N 天前的 QQ 记忆。 */
+    fun cleanOldQqMemories(days: Int = 30) {
+        val cutoff = System.currentTimeMillis() - days * 86400000L
+        stmt("DELETE FROM brain_memory WHERE tags LIKE 'qq:%' AND timestamp < ?", cutoff)
+    }
 }

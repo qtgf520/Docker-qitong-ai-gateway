@@ -50,6 +50,14 @@ object QqBotManager {
     fun startAll(scope: CoroutineScope, database: Database, gatewayPort: Int) {
         this.db = database
         this.gatewayPort = gatewayPort
+        // 记忆自动过期：每 6 小时清理一次 30 天前的 QQ 记忆
+        scope.launch(Dispatchers.IO) {
+            runCatching { db.cleanOldQqMemories(30) }
+            while (true) {
+                kotlinx.coroutines.delay(6 * 3600 * 1000L)
+                runCatching { db.cleanOldQqMemories(30) }
+            }
+        }
         scope.launch(Dispatchers.IO) {
             val bots = database.getQqBots()
             bots.filter { (it["enabled"] as? Boolean) == true }.forEach { row ->
@@ -101,9 +109,19 @@ object QqBotManager {
     // ============ 消息处理（每用户独立互斥） ============
 
     private fun handleGroup(bot: QqBot, msg: QqGroupMessage) {
+        val isNewGroup = db.getQqGroupConfig(msg.groupOpenid) == null
         db.touchQqGroup(msg.groupOpenid, bot.appid)
         db.touchQqUser(msg.memberOpenid)
         runtime[bot.id]?.let { it.messagesHandled++; it.groupsSeen = (it.groupsSeen + 1).coerceAtLeast(1) }
+
+        // 新群首次触达：若开启欢迎且填了欢迎语，自动下发
+        if (isNewGroup) {
+            val cfg = db.getQqGroupConfig(msg.groupOpenid)
+            if (cfg != null && (cfg["welcomeEnabled"] as Boolean)) {
+                val g = cfg["greeting"] as? String
+                if (!g.isNullOrBlank()) api.sendGroupMessage(bot, msg.groupOpenid, g, null)
+            }
+        }
 
         val text = stripAt(msg.content).trim()
         if (text.isEmpty()) return

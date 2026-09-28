@@ -14,20 +14,74 @@ loaders.models = function(){
    var enBtn = '<button class="btn-ghost ' + (m.isEnabled ? '' : 'danger') + '" style="padding:2px 8px;font-size:12px" onclick="toggleModel(' + m.id + ')">' + (m.isEnabled ? '停用' : '启用') + '</button>';
    var pubTxt = m.isPublic ? '<span class="badge green">公用</span>' : (m.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
    var priceTxt = m.price > 0 ? ('¥'+m.price+'/M') : '<span style="color:var(--muted)">默认价</span>';
-   return '<tr><td>'+(m.isEnabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td><td>'+esc(m.modelId)+'</td><td>'+esc(m.displayName)+(m.customAlias?' <span class="badge purple">'+esc(m.customAlias)+'</span>':'')+'</td><td><span class="badge blue">'+esc(pmap[m.providerId]||('P'+m.providerId))+'</span></td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(m.ownerName||'')+'</span></td><td>'+priceTxt+'</td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td><td>'+enBtn+'</td><td><button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
+   var key = m.providerId + '::' + m.modelId;
+   return '<tr id="mdRow-' + esc(key) + '" data-key="' + esc(key) + '">' +
+    '<td>'+(m.isEnabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
+    '<td>'+esc(m.modelId)+'</td><td>'+esc(m.displayName)+(m.customAlias?' <span class="badge purple">'+esc(m.customAlias)+'</span>':'')+'</td>'+
+    '<td><span class="badge blue">'+esc(pmap[m.providerId]||('P'+m.providerId))+'</span></td>'+
+    '<td>'+pubTxt+'</td><td><span class="badge blue">'+esc(m.ownerName||'')+'</span></td>'+
+    '<td>'+priceTxt+'</td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td>'+
+    '<td class="md-health" style="min-width:90px"><span class="badge gray">未测</span></td>'+
+    '<td>'+enBtn+'</td>'+
+    '<td style="white-space:nowrap"><button class="btn-ghost btn-sm md-test-btn" onclick="testOneModel('+m.providerId+',\''+esc(m.modelId)+'\',\''+esc(key)+'\')">测速</button> '+
+    '<button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
   }).join('');
   box.innerHTML = [
    '<div class="action-bar">',
     '<button class="btn" onclick="editModel(0)">手动添加模型</button>',
     '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">自动全部测速</button>',
     '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
-    '<span style="color:var(--muted);font-size:12px">测速通过自动启用 / 失败自动关闭（可手动启用）</span>',
+    '<span style="color:var(--muted);font-size:12px">点每行「测速」单测该模型；批量测速通过自动启用 / 失败自动关闭</span>',
    '</div><div class="card" id="batchSpeedCard" style="display:none"></div>',
-   '<div class="card"><div class="table-wrap"><table><thead><tr><th></th><th>模型ID</th><th>显示名</th><th>服务商</th><th>归属</th><th>属主</th><th>价格</th><th>默认</th><th>上下文</th><th>启停</th><th>操作</th></tr></thead><tbody>' +
-   rows + '<tr><td colspan="11" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
+   '<div class="card"><div class="table-wrap"><table><thead><tr><th>状态</th><th>模型ID</th><th>显示名</th><th>服务商</th><th>归属</th><th>属主</th><th>价格</th><th>默认</th><th>上下文</th><th>健康</th><th>启停</th><th>操作</th></tr></thead><tbody>' +
+   rows + '<tr><td colspan="12" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
    '</tbody></table></div></div>'
   ].join('');
+  // 接续后台批量测速任务：高亮正在被测的那一行
+  api('/api/speedtest/progress').then(function(r){
+   if(r.code===0 && r.data && r.data.running){ pollMdProgress(); }
+  });
  });
+};
+// 单模型测速：点某行「测速」按钮直接测
+window.testOneModel = function(providerId, modelId, key){
+  var row = document.getElementById('mdRow-' + key);
+  var health = row ? row.querySelector('.md-health') : null;
+  var btn = row ? row.querySelector('.md-test-btn') : null;
+  if(btn) btn.disabled = true;
+  if(health) health.innerHTML = '<span class="badge amber">测速中…</span>';
+  api('/api/speedtest/one', { method:'POST', body:{ providerId:providerId, modelId:modelId } }).then(function(r){
+   if(btn) btn.disabled = false;
+   if(r.code!==0){ if(health) health.innerHTML = '<span class="badge red">失败</span>'; toast(r.msg||'测速失败', false); return; }
+   var h = r.data || {};
+   if(health){
+    if(h.isHealthy){
+     var tps = h.tps>0 ? h.tps.toFixed(1)+'t/s ' : '';
+     health.innerHTML = '<span class="badge green" title="TTFT '+(h.ttftMs||0)+'ms / 总 '+(h.totalMs||0)+'ms">正常 '+tps+(h.totalMs||0)+'ms</span>';
+    } else {
+     health.innerHTML = '<span class="badge red">失败</span>';
+    }
+   }
+  });
+};
+// 模型页轮询后台批量测速进度，高亮当前被测行
+var mdPollTimer = null;
+function pollMdProgress(){
+ if(mdPollTimer) clearInterval(mdPollTimer);
+ mdPollTimer = setInterval(function(){
+  if(!$('view-models')){ clearInterval(mdPollTimer); return; }
+  api('/api/speedtest/progress').then(function(r){
+   if(r.code!==0 || !r.data){ return; }
+   if(r.data.currentKey){
+    var row = document.getElementById('mdRow-' + r.data.currentKey);
+    if(row){
+      var h = row.querySelector('.md-health');
+      if(h) h.innerHTML = '<span class="badge amber">测速中… '+(r.data.progress||0)+'%</span>';
+    }
+   }
+   if(!r.data.running) clearInterval(mdPollTimer);
+  });
+ },1200);
 };
 // 行内启停（对齐原APP toggleModel）
 window.toggleModel = function(id){
