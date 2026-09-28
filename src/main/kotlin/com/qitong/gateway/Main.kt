@@ -882,6 +882,30 @@ fun Application.moduleWeb(database: Database) {
             database.deleteUser(userId)
             AdminApi.ok(call, null, "用户已删除")
         }
+        // 管理员直接创建用户（可指定角色/初始余额/额度）
+        post("/api/users/create") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员可直接开通账号", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val uname = body["username"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val pwd = body["password"]?.jsonPrimitive?.content?.orEmpty() ?: ""
+            val displayName = body["displayName"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val role = body["role"]?.jsonPrimitive?.content ?: "user"
+            val quotaLimit = body["quotaLimit"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            val balance = body["balance"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.0
+            if (uname.length < 3) { AdminApi.fail(call, "用户名至少3个字符", 400); return@post }
+            if (pwd.length < 6) { AdminApi.fail(call, "密码至少6个字符", 400); return@post }
+            if (database.getUserByUsername(uname) != null) { AdminApi.fail(call, "用户名已存在", 400); return@post }
+            val reg = AuthManager.register(database, uname, pwd, displayName, "")
+            if (reg.isFailure) { AdminApi.fail(call, reg.exceptionOrNull()?.message ?: "创建失败", 400); return@post }
+            val newUser = database.getUserByUsername(uname)
+            if (newUser != null) {
+                database.updateUser(newUser.copy(role = role, quotaLimit = quotaLimit))
+                if (balance > 0) database.rechargeBalance(newUser.id, balance)
+                database.addOpLog(u.id, u.username, "开通账号", "为 $uname 开通账号（角色=$role，余额¥$balance）", call.request.local.remoteHost)
+            }
+            AdminApi.ok(call, null, "账号已创建")
+        }
         // 用户充值（admin / 代理自己的下级）
         post("/api/users/recharge") {
             val u = call.requireAuth(database) ?: return@post
@@ -1616,6 +1640,8 @@ fun Application.moduleWeb(database: Database) {
                     else GatewayProxy.running
                     put("running", JsonPrimitive(userRunning))
                     put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
+                    put("balance", JsonPrimitive(viewer?.balance ?: 0.0))
+                    put("role", JsonPrimitive(viewer?.role ?: ""))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
                     put("autoFailover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
                     // 网关地址

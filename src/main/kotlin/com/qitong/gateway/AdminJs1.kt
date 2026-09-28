@@ -144,15 +144,17 @@ loaders.dashboard = function(){
    var poolBtn = '<button class="btn-ghost ' + (inPool ? 'danger' : '') + '" style="padding:2px 8px;font-size:12px" onclick="toggleForcedModel(\'' + key.replace(/'/g, '') + '\')">' + (inPool ? '移出池' : '加入池') + '</button>';
    rankRows += '<tr><td>' + poolDot + '</td><td>' + (i+1) + '</td><td>' + esc(mid) + (isActive ? ' <span class="badge cyan">当前</span>' : '') + '</td><td>P' + esc(pid) + '</td><td>' + ttft + '</td><td>' + tps + '</td><td>' + lat + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td><td>' + poolBtn + '</td></tr>';
   });
-  // 强制故障池（池灯展示，首位=当前活跃）
-  var poolHtml = '';
+  // 强制故障池（常驻展示，首位=当前活跃）
+  var poolHtml;
   if(pool.length){
    poolHtml = '<div class="card"><h3>强制故障池 (' + pool.length + ')</h3><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' +
     pool.map(function(k, idx){
      var mid = k.split('::').length > 1 ? k.split('::')[1] : k;
      var isTop = idx === 0;
      return '<span class="badge ' + (isTop ? 'green' : 'purple') + '" style="cursor:pointer" onclick="forceSwitchModel(\'' + k.replace(/'/g, '') + '\')" title="点击强制切换">' + '' + esc(mid) + ' <span class="pool-dot ' + (isTop ? 'on' : '') + '"></span></span>';
-    }).join('') + '</div><span style="font-size:12px;color:var(--muted)">点灯/点击=强制切换到此模型；首位=当前活跃，qtai-sj 优先走它</span><div style="margin-top:8px"><button class="btn-ghost" onclick="clearForcedPool()">清空</button></div></div>';
+    }).join('') + '</div><span style="font-size:12px;color:var(--muted)">点灯/点击=强制切换到此模型；首位=当前活跃，qtai-sj 优先走它；失败自动切下一个</span><div style="margin-top:8px"><button class="btn-ghost" onclick="clearForcedPool()">清空故障池</button></div></div>';
+  } else {
+   poolHtml = '<div class="card"><h3>强制故障池 (0)</h3><div style="color:var(--muted);font-size:13px;padding:6px 0">故障池为空。在下方「模型排行榜」点 灯 把模型加入池，加入后 qtai-sj 会按池顺序自动故障转移。</div></div>';
   }
   // 地址行（本地 + IP + 当前访问域名）
   var gwPort = st.gatewayPort || 18889;
@@ -192,7 +194,7 @@ loaders.dashboard = function(){
      '<div id="homeSpeedProg" style="display:none;margin-top:10px"></div>' +
      '<div style="margin-top:6px;font-size:12px;color:var(--cyan)" id="dashCountdown"></div></div>',
    '</div>',
-   '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥0.00</div><div class="lbl">我的余额</div></div></div></div>',
+   '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥' + ((st.balance||0)).toFixed(2) + '</div><div class="lbl">我的余额</div></div><div class="stat"><div class="num" style="font-size:18px">' + esc(st.role||'') + '</div><div class="lbl">当前身份</div></div></div></div>',
    poolHtml,
    '<div class="card"><h3>模型排行榜 <span style="font-size:12px;color:var(--muted)">（点击 灯加入/移出强制故障池，多选支持自动故障转移）</span></h3><div class="table-wrap"><table><thead><tr><th>池</th><th>#</th><th>模型ID</th><th>服务商</th><th>TTFT</th><th>TPS</th><th>总耗时</th><th>状态</th><th>强制池</th></tr></thead><tbody>' +
     (rankRows || '<tr><td colspan="9" style="text-align:center;color:var(--muted)">暂无启用模型，请先在服务商页添加并同步</td></tr>') +

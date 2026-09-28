@@ -637,13 +637,33 @@ var balTxt = '<span style="color:var(--green);font-weight:700">¥'+(u.balance||0
    api('/api/auth/me').then(function(me){
     var isAgent = me && me.data && me.data.role === 'agent';
     box.innerHTML = [
-     '<div class="card"><h3>' + (isAgent ? '我的下级用户' : '用户管理') + '</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>邮箱</th><th>操作</th></tr></thead><tbody>' +
+     '<div class="card"><h3 style="display:flex;align-items:center;justify-content:space-between"> ' + (isAgent ? '我的下级用户' : '用户管理') + (isAgent ? '' : '<button class="btn" onclick="openUserCreate()">+ 添加用户</button>') + '</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>邮箱</th><th>操作</th></tr></thead><tbody>' +
      rows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (users.length ? '' : (isAgent ? '暂无下级用户，邀请注册或让客户填你的邀请码' : '暂无用户')) + '</td></tr>' +
      '</tbody></table></div><div style="margin-top:10px;color:var(--muted);font-size:12px">' + (isAgent ? '代理只能管理自己邀请/开通的下级客户；余额用于按模型价格扣费' : '注册页开放注册；可编辑用户角色 / 额度 / 绑定模型 / 系统权限；余额用于按模型价格扣费') + '</div></div>'
     ].join('');
    });
   });
  };
+// ===== 管理员直接添加用户 =====
+window.openUserCreate = function(){
+ var html = [
+  '<div class="form-row"><label>用户名 *</label><input id="cuName" class="input" placeholder="至少3个字符"></div>',
+  '<div class="form-row"><label>初始密码 *</label><input id="cuPwd" class="input" type="text" placeholder="至少6个字符，登录后可改"></div>',
+  '<div class="form-row"><label>昵称</label><input id="cuDisplay" class="input" placeholder="选填"></div>',
+  '<div class="form-row"><label>角色</label><select id="cuRole" class="input"><option value="user">普通用户</option><option value="agent">代理</option><option value="admin">管理员</option></select></div>',
+  '<div class="form-row"><label>初始余额（元）</label><input id="cuBalance" class="input" type="number" step="0.01" value="0"></div>',
+  '<div class="form-row"><label>额度上限（token，0=不限）</label><input id="cuQuota" class="input" type="number" value="0"></div>'
+ ].join('');
+ openModal('添加用户', html, function(){
+  var body = { username: $('cuName').value.trim(), password: $('cuPwd').value, displayName: $('cuDisplay').value.trim(),
+   role: $('cuRole').value, balance: parseFloat($('cuBalance').value)||0, quotaLimit: parseInt($('cuQuota').value)||0 };
+  if(body.username.length < 3){ toast('用户名至少3个字符', false); return; }
+  if(body.password.length < 6){ toast('密码至少6个字符', false); return; }
+  api('/api/users/create', { method:'POST', body: body }).then(function(r){
+   if(r.code === 0){ toast(r.msg, true); closeModal(); loaders.users(); } else toast(r.msg, false);
+  });
+ });
+};
 // ===== 用户扣款 =====
 window.deductUser = function(id, name){
  openModal('扣款 - ' + name, '<div class="form-row"><label>扣款金额（元）</label><input id="dcAmount" class="input" type="number" step="0.01" min="0.01" placeholder="如 5.00"></div>', function(){

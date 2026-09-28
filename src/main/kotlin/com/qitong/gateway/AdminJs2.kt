@@ -269,6 +269,7 @@ loaders.chat = function(){
    '<div class="card" style="padding:12px 16px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">',
     '<select id="chatConv" class="input" style="width:160px" onchange="loadConvMsgs()">'+convOpts+'</select>',
     '<select id="chatModel" class="input" style="width:180px">'+modelOpts+'</select>',
+    '<button class="btn" onclick="newChat()">+ 新聊天</button>',
     '<button class="btn-ghost" onclick="deleteConv()">删除会话</button>',
    '</div></div>',
    '<div class="card chat-box"><div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">选择或新建会话开始聊天</div></div></div>',
@@ -323,6 +324,13 @@ window.sendChat = function(){
    if(wb) wb.textContent = ' ' + (r.msg || '失败');
   }
  }).finally(function(){ window._chatBusy = false; });
+};
+window.newChat = function(){
+ state.currentChatConv = 0;
+ var sel = $('chatConv'); if(sel) sel.value = '0';
+ var msgs = $('chatMsgs'); if(msgs) msgs.innerHTML = '<div class="msg-row system"><div class="bubble">新对话，开始输入吧</div></div>';
+ var inp = $('chatInput'); if(inp) inp.focus();
+ toast('已开始新聊天', true);
 };
 window.deleteConv = function(){
  var id = state.currentChatConv;
