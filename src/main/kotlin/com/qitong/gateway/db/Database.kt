@@ -1729,6 +1729,14 @@ class Database(private val dbPath: String) {
         }
     }
 
+    /** 按群更新用户（备注修改：用户改自己的，管理员帮改） */
+    fun updateQqUserByGroup(openid: String, groupOpenid: String = "", displayName: String? = null, persona: String? = null, aiEnabled: Boolean? = null) {
+        touchQqUser(openid, groupOpenid)
+        displayName?.let { stmt("UPDATE qq_user_bindings SET display_name=? WHERE qq_openid=? AND group_openid=?", it, openid, groupOpenid) }
+        persona?.let { stmt("UPDATE qq_user_bindings SET persona=? WHERE qq_openid=? AND group_openid=?", it, openid, groupOpenid) }
+        aiEnabled?.let { stmt("UPDATE qq_user_bindings SET ai_enabled=? WHERE qq_openid=? AND group_openid=?", if (it) 1 else 0, openid, groupOpenid) }
+    }
+
     /** 按群更新用户权限 */
     fun setQqUserPermByGroup(openid: String, groupOpenid: String, level: Int, flags: String) {
         touchQqUser(openid, groupOpenid)

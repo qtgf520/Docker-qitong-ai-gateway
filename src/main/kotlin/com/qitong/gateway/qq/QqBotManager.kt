@@ -348,6 +348,30 @@ object QqBotManager {
                     send("当前积分：${p["points"]}（累计签到 ${p["signCount"]} 次）")
                     return
                 }
+                "rename" -> {
+                    // ★ 备注修改：群/私聊均可，用户改自己的；管理员(3+)可"改备注 openid 名字"帮改别人
+                    val parts = builtin.second.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                    if (parts.isEmpty()) { send("⚠️ 语法：改我名字 新备注；管理员可：改备注 用户openid 新备注"); return }
+                    // 管理员帮改：第一个参数是 openid（后台QQ管理可查），剩余是名字
+                    val qqU = db.getQqUserByGroup(userOpenid, groupOpenid)
+                    val perm = (qqU?.get("permLevel") as? Number)?.toInt() ?: 1
+                    if (parts.size >= 2 && perm >= 3) {
+                        val targetOpenid = parts[0]
+                        val newName = parts.drop(1).joinToString(" ")
+                        if (newName.length > 20) { send("⚠️ 备注最多 20 字"); return }
+                        db.updateQqUserByGroup(targetOpenid, groupOpenid, displayName = newName)
+                        send("✅ 已把用户备注改为「$newName」")
+                        db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "帮改 $targetOpenid 备注 $newName", System.currentTimeMillis() - t0)
+                        return
+                    }
+                    // 用户改自己的
+                    val newName = builtin.second.trim()
+                    if (newName.length > 20) { send("⚠️ 备注最多 20 字"); return }
+                    db.updateQqUserByGroup(userOpenid, groupOpenid, displayName = newName)
+                    send("✅ 已把你的备注改为「$newName」（本群生效）")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "改备注 $newName", System.currentTimeMillis() - t0)
+                    return
+                }
                 "mute_on" -> {
                     if (groupOpenid.isBlank()) return
                     // ★ 群管权限开关：本群禁止全员禁言则拒绝
@@ -566,7 +590,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         }
 
         // 2) 大模型对话（人格系统 qtai-sj：需 permLevel>=1 才允许；禁止=0 不响应）
-        val u = db.getQqUser(userOpenid)
+        // ★ 按群取用户（群隔离）：群内用群记录，私聊 group 为空
+        val u = db.getQqUserByGroup(userOpenid, groupOpenid) ?: db.getQqUser(userOpenid)
         val perm = (u?.get("permLevel") as? Number)?.toInt() ?: 1
         if (perm <= 0) { send("⛔ 您已被禁止使用机器人，请联系管理员"); return }
         if (u != null && !(u["aiEnabled"] as Boolean)) return
@@ -574,7 +599,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (cfg != null && !(cfg["aiEnabled"] as Boolean)) return
         if (onCooldown(userOpenid, 3)) return
 
-        val reply = askModel(bot, key, text, userOpenid)
+        val reply = askModel(bot, key, text, userOpenid, groupOpenid)
         if (!reply.isNullOrBlank()) {
             send(reply)
             lastReplyTs[userOpenid] = System.currentTimeMillis()
@@ -592,6 +617,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val t = text.trim()
         if (t.equals("签到", true) || t.equals("打卡", true)) return "sign" to t
         if (t.equals("我的积分", true) || t.equals("积分", true)) return "points" to t
+        if (t.startsWith("改我名字", true) || t.startsWith("修改备注", true) || t.startsWith("改备注", true)) return "rename" to t.substringAfter(" ").trim()
         if (groupOpenid.isNotBlank()) {
             if (t.equals("全员禁言", true)) return "mute_on" to t
             if (t.equals("解除全员禁言", true) || t.equals("取消全员禁言", true)) return "mute_off" to t
@@ -761,10 +787,11 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     }
 
     /** 调本机网关大模型，带每用户独立上下文与人设覆盖。 */
-    private fun askModel(bot: QqBot, key: String, userText: String, userOpenid: String): String? {
+    private fun askModel(bot: QqBot, key: String, userText: String, userOpenid: String, groupOpenid: String = ""): String? {
         val hist = history.getOrPut(key) { mutableListOf() }
         val msgs = JSONArray()
-        val userPersona = db.getQqUser(userOpenid)?.get("persona") as? String?
+        // ★ 按群取人设（群隔离）：群内用群记录，私聊 group 为空
+        val userPersona = (db.getQqUserByGroup(userOpenid, groupOpenid) ?: db.getQqUser(userOpenid))?.get("persona") as? String?
         val sys = when {
             !userPersona.isNullOrBlank() -> userPersona
             bot.systemPrompt.isNotBlank() -> bot.systemPrompt
