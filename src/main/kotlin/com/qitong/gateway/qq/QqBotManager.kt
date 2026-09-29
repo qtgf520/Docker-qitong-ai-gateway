@@ -318,21 +318,47 @@ object QqBotManager {
         if (game != null) { send(game); db.addQqLog(bot.appid, groupOpenid, userOpenid, "game", text, System.currentTimeMillis() - t0); return }
 
         // 0.7) 沙盒 Linux 终端操控（需管理级权限，远程执行 shell 命令）
-        if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWith("运行 ", true)) {
+        if (t.equals("创建终端", true) || t.startsWith("创建终端 ", true)) {
             val qqUser = db.getQqUser(userOpenid)
             val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1
             if (perm < 3) { send("⛔ 终端操控需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }
-            val cmd = t.substringAfter(" ").trim()
-            if (cmd.isBlank()) { send("⚠️ 语法：终端 <命令>（如：终端 ls -la）"); return }
-            if (cmd.length > 500) { send("⚠️ 命令太长（限500字符）"); return }
-            // 危险命令黑名单
-            val dangerous = listOf("rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", ":(){", "format", "fdisk")
-            if (dangerous.any { cmd.contains(it) }) { send("⛔ 危险命令已拦截"); return }
-            val result = runShell(cmd)
-            val shown = result.take(800)
-            send("🖥 终端执行：\n$ cmd\n\n```\n$shown\n```")
-            db.addQqLog(bot.appid, groupOpenid, userOpenid, "shell", "[$cmd] ${result.take(80)}", System.currentTimeMillis() - t0)
+            val label = t.removePrefix("创建终端").trim().ifBlank { "QQ终端-" + userOpenid.take(6) }
+            val s = com.qitong.gateway.http.TerminalManager.create(label)
+            send("✅ 终端创建成功！\n📛 会话: ${s.label}\n🆔 ID: ${s.id}\n\n发送「终端 $s.id 命令」即可执行（如：终端 $s.id ls -la）\nWeb后台「侧边栏 → 终端」也能看到并操作它")
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "terminal", "创建终端 ${s.id}", System.currentTimeMillis() - t0)
             return
+if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWith("运行 ", true)) {
+            val qqUser = db.getQqUser(userOpenid)
+            val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1
+            if (perm < 3) { send("⛔ 终端操控需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }
+            var rest = t.substringAfter(" ").trim()
+            if (rest.isBlank()) { send("⚠️ 语法：终端 <命令>（用最近会话）或 终端 <会话ID> <命令>；先发「创建终端」创建会话"); return }
+            var targetId: String? = null
+            // 若第一个词是已有会话ID，则在该会话执行
+            val first = rest.substringBefore(" ").trim()
+            if (first.startsWith("term-") && com.qitong.gateway.http.TerminalManager.get(first) != null) {
+                targetId = first
+                rest = rest.substringAfter(" ").trim()
+            }
+            if (rest.isBlank()) { send("⚠️ 请提供要执行的命令"); return }
+            if (rest.length > 500) { send("⚠️ 命令太长（限500字符）"); return }
+            val dangerous = listOf("rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", ":(){", "format", "fdisk")
+            if (dangerous.any { rest.contains(it) }) { send("⛔ 危险命令已拦截"); return }
+            // 无指定会话：自动创建/复用最近一次
+            if (targetId == null) {
+                val sessions = com.qitong.gateway.http.TerminalManager.list()
+                val mine = sessions.firstOrNull()
+                if (mine == null) {
+                    val s = com.qitong.gateway.http.TerminalManager.create("QQ终端-" + userOpenid.take(6))
+                    targetId = s.id
+                } else targetId = mine.id
+            }
+            val (ok, out) = com.qitong.gateway.http.TerminalManager.exec(targetId!!, rest)
+            if (!ok) { send("⚠️ $out"); return }
+            send("🖥 [${targetId}] 终端执行：\n$ rest\n\n" + out.take(800))
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "shell", "[$targetId] $rest → ${out.take(60)}", System.currentTimeMillis() - t0)
+            return
+        }
         }
 
         // 1) 插件指令匹配

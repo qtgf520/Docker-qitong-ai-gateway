@@ -37,12 +37,31 @@ loaders.models = function(){
    rows + '<tr><td colspan="12" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
    '</tbody></table></div></div>'
   ].join('');
-  // 接续后台批量测速任务：高亮正在被测的那一行
-  api('/api/speedtest/progress').then(function(r){
-   if(r.code===0 && r.data && r.data.running){ pollMdProgress(); }
+// 接续后台批量测速任务：高亮正在被测的那一行
+   api('/api/speedtest/progress').then(function(r){
+    if(r.code===0 && r.data && r.data.running){ pollMdProgress(); }
+   });
+   // 加载已有健康缓存显示到每行（测过的不再显示"未测"）
+   api('/api/speedtest/health').then(function(rr){
+    if(rr.code!==0 || !rr.data) return;
+    var hmap = {};
+    (rr.data||[]).forEach(function(h){ hmap[h.providerId+'::'+h.modelId] = h; });
+    state.models.forEach(function(m){
+     var key = m.providerId+'::'+m.modelId;
+     var h = hmap[key];
+     var row = document.getElementById('mdRow-' + key);
+     if(!row || !h) return;
+     var health = row.querySelector('.md-health'); if(!health) return;
+     if(h.isHealthy){
+      var tps = h.tps>0 ? h.tps.toFixed(1)+'t/s ' : '';
+      health.innerHTML = '<span class="badge green" title="TTFT '+(h.ttftMs||0)+'ms / 总 '+(h.totalMs||0)+'ms">正常 '+tps+(h.totalMs||0)+'ms</span>';
+     } else {
+      health.innerHTML = '<span class="badge red">失败</span>';
+     }
+    });
+   });
   });
- });
-};
+ };
 // 单模型测速：点某行「测速」按钮直接测
 window.testOneModel = function(providerId, modelId, key){
   var row = document.getElementById('mdRow-' + key);
@@ -64,7 +83,7 @@ window.testOneModel = function(providerId, modelId, key){
    }
   });
 };
-// 模型页轮询后台批量测速进度，高亮当前被测行
+// 模型页轮询后台批量测速进度，高亮当前被测行 + 完成行回填状态
 var mdPollTimer = null;
 function pollMdProgress(){
  if(mdPollTimer) clearInterval(mdPollTimer);
@@ -72,14 +91,39 @@ function pollMdProgress(){
   if(!$('view-models')){ clearInterval(mdPollTimer); return; }
   api('/api/speedtest/progress').then(function(r){
    if(r.code!==0 || !r.data){ return; }
-   if(r.data.currentKey){
-    var row = document.getElementById('mdRow-' + r.data.currentKey);
+   var d = r.data;
+   if(d.currentKey){
+    var row = document.getElementById('mdRow-' + d.currentKey);
     if(row){
-      var h = row.querySelector('.md-health');
-      if(h) h.innerHTML = '<span class="badge amber">测速中… '+(r.data.progress||0)+'%</span>';
+     var h = row.querySelector('.md-health');
+     if(h) h.innerHTML = '<span class="badge amber">测速中… '+(d.progress||0)+'%</span>';
     }
+    var tx = $('mdProgTxt'); if(tx) tx.textContent = '进度 '+(d.done||0)+'/'+(d.total||0)+' · 通过 '+(d.passed||0);
    }
-   if(!r.data.running) clearInterval(mdPollTimer);
+   // 完成后：回填健康状态到每行 + 恢复按钮
+   if(!d.running){
+    clearInterval(mdPollTimer);
+    if(mdPollTimer){ clearInterval(mdPollTimer); mdPollTimer=null; }
+    var btn = $('batchSpeedBtn'); if(btn) btn.disabled = false;
+    api('/api/speedtest/health').then(function(rr){
+     if(rr.code!==0 || !rr.data) return;
+     var hmap={}; (rr.data||[]).forEach(function(h){ hmap[h.providerId+'::'+h.modelId]=h; });
+     state.models.forEach(function(m){
+      var key=m.providerId+'::'+m.modelId; var h=hmap[key]; if(!h) return;
+      var row=document.getElementById('mdRow-'+key); if(!row) return;
+      var health=row.querySelector('.md-health'); if(!health) return;
+      if(h.isHealthy){
+       var tps=h.tps>0?h.tps.toFixed(1)+'t/s ':'';
+       health.innerHTML='<span class="badge green" title="TTFT '+(h.ttftMs||0)+'ms / 总 '+(h.totalMs||0)+'ms">正常 '+tps+(h.totalMs||0)+'ms</span>';
+      } else {
+       health.innerHTML='<span class="badge red">失败</span>';
+      }
+     });
+    });
+    var card=$('batchSpeedCard');
+    if(card) card.innerHTML='<div style="text-align:center;color:var(--green);padding:20px">✅ 批量测速完成：通过 '+d.passed+'/'+d.total+' 个</div>';
+    toast('批量测速完成：'+d.passed+'/'+d.total+' 正常', true);
+   }
   });
  },1200);
 };
@@ -90,32 +134,22 @@ window.toggleModel = function(id){
   loaders.models();
  });
 };
-// 自动全部测速（对齐原APP batchTestAllModels）：串行测试全部模型，可选自动关闭失败模型
+// 自动全部测速（对齐原APP batchTestAllModels）：后台任务逐个测 + 前端轮询逐步更新每行状态
 window.runBatchSpeedTest = function(){
  var card = $('batchSpeedCard');
  var autoClose = $('batchAutoClose') ? $('batchAutoClose').checked : true;
  card.style.display = 'block';
- card.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px">正在逐个串行测速全部模型（三指标：TTFT/TPS/总耗时）...<br><span style="font-size:12px">测速通过将自动启用，失败' + (autoClose ? '将自动关闭' : '保留原状态') + '</span></div>';
+ card.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px">🚀 正在启动后台批量测速...<br><span style="font-size:12px">逐个串行测速全部模型（TTFT/TPS/总耗时），下方模型行会逐步更新状态</span></div>';
  $('batchSpeedBtn').disabled = true;
- api('/api/speedtest/batch', { method:'POST', body: { autoClose: autoClose } }).then(function(r){
-  $('batchSpeedBtn').disabled = false;
-  if(r.code === 0){
-   var list = r.data || [];
-   var rows = list.map(function(h,i){
-    var stOk = h.isHealthy;
-    var ttft = stOk && h.ttftMs > 0 ? h.ttftMs + 'ms' : '—';
-    var tps = stOk && h.tps > 0 ? h.tps.toFixed(2) + ' tok/s' : '—';
-    var total = stOk && h.totalMs > 0 ? h.totalMs + 'ms' : '—';
-    return '<tr><td>'+(i+1)+'</td><td>'+esc(h.modelId)+'</td><td>P'+h.providerId+'</td><td>'+ttft+'</td><td>'+tps+'</td><td>'+total+'</td><td>'+esc(h.displayName||'')+'</td><td><span class="badge '+(stOk?'green':'red')+'">'+(stOk?'正常':'失败')+'</span></td><td><span class="badge '+(h.enabled?'green':'gray')+'">'+(h.enabled?'已启用':'已停用')+'</span></td></tr>';
-   }).join('');
-   card.innerHTML = '<div class="table-wrap"><table><thead><tr><th>#</th><th>模型ID</th><th>服务商</th><th>TTFT</th><th>TPS</th><th>总耗时</th><th>显示名</th><th>状态</th><th>启用</th></tr></thead><tbody>' +
-    rows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (list.length ? '' : '没有可测速的模型') + '</td></tr>' +
-   '</tbody></table></div>';
-   toast('批量测速完成：' + list.filter(function(x){ return x.isHealthy; }).length + '/' + list.length + '正常', true);
-   loaders.models(); // 刷新启停状态
-  } else {
-   card.innerHTML = '<div style="color:var(--red);padding:20px;text-align:center">' + esc(r.msg || '测速失败') + '</div>';
+ // 用后台任务接口（不阻塞请求，前端轮询 progress 逐步显示）
+ api('/api/speedtest/start', { method:'POST', body: {} }).then(function(r){
+  if(r.code !== 0){
+   $('batchSpeedBtn').disabled = false;
+   card.innerHTML = '<div style="color:var(--red);padding:20px;text-align:center">' + esc(r.msg||'启动失败') + '</div>';
+   return;
   }
+  card.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px">后台测速已启动...<span id="mdProgTxt" style="font-size:12px;display:block;margin-top:8px"></span></div>';
+  pollMdProgress(); // 轮询逐步高亮当前行
  });
 };
 window.editModel = function(id){

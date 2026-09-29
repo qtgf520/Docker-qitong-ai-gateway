@@ -11,7 +11,7 @@ function qqTabBtn(t){ qqTab=t; loaders.qqbot(); }
  var box = $('view-qqbot');
  var tabs = [
   ['overview','动态概览'],['cmds','插件指令'],['groups','群配置'],
-  ['users','独立用户'],['points','积分排行'],['logs','运行日志']
+  ['users','独立用户'],['points','积分排行'],['games','🎮游戏'],['logs','运行日志']
  ].map(function(x){
   return '<button class="log-tab" style="'+(qqTab===x[0]?'color:var(--primary);border-bottom-color:var(--primary);font-weight:600':'')+'" onclick="qqTabBtn(\''+x[0]+'\')">'+x[1]+'</button>';
  }).join('');
@@ -22,6 +22,7 @@ function qqTabBtn(t){ qqTab=t; loaders.qqbot(); }
  if(qqTab==='groups') qqLoadGroups();
  if(qqTab==='users') qqLoadUsers();
  if(qqTab==='points') qqLoadPoints();
+ if(qqTab==='games') qqLoadGames();
  if(qqTab==='logs') qqLoadLogs();
  };
 function qqTabHtml(){
@@ -30,7 +31,8 @@ function qqTabHtml(){
  if(qqTab==='groups') return '<div id="qqGroupList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  if(qqTab==='users') return '<div id="qqUserList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  if(qqTab==='points') return '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">群里发「签到」每日得 5-20 积分，「我的积分」查询。此处可查看排行并手动调整。</div><div id="qqPointsList"></div>';
- return '<div class="action-bar"><button class="btn-ghost" onclick="qqLoadLogs()">刷新</button></div><div id="qqLogList"></div>';
+ if(qqTab==='games') return '<div id="qqGames"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
+ return '<div class="action-bar"><button class="btn-ghost" onclick="qqLoadLogs()">刷新</button><button class="btn-ghost danger" onclick="qqLogsClear()">清空全部</button><span style="font-size:12px;color:var(--muted)">实时动态最多保留最近 50 条，超出自动删除</span></div><div id="qqLogList"></div>';
 }
 function qqTime(ts){ if(!ts) return '-'; var d=new Date(ts); return d.toLocaleString('zh-CN',{hour12:false}); }
 
@@ -304,6 +306,34 @@ function qqPointsAdjust(openid,delta){
  });
 }
 
+// ---- 游戏（QQ机器人内置文字游戏说明） ----
+function qqLoadGames(){
+ var el=$('qqGames'); if(!el) return;
+ el.innerHTML = [
+  '<div class="card" style="box-shadow:none"><h3>🎮 内置文字游戏（群里 @机器人 即可玩）</h3>',
+  '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:10px">',
+  '<div class="stat"><div class="lbl" style="font-size:14px;font-weight:600;color:var(--text)">🎲 猜数字</div><div style="font-size:12px;color:var(--muted);margin-top:6px">发「开始猜数字」开局，回复「猜 50」试猜，大/小提示 + 次数统计</div></div>',
+  '<div class="stat"><div class="lbl" style="font-size:14px;font-weight:600;color:var(--text)">🧩 成语接龙</div><div style="font-size:12px;color:var(--muted);margin-top:6px">发「开始成语接龙」开局，回复「成语 四字词」接龙（首尾字/谐音）</div></div>',
+  '<div class="stat"><div class="lbl" style="font-size:14px;font-weight:600;color:var(--text)">🎲 骰子</div><div style="font-size:12px;color:var(--muted);margin-top:6px">发「骰子」/「掷骰子」，双骰 7/11 大赢</div></div>',
+  '<div class="stat"><div class="lbl" style="font-size:14px;font-weight:600;color:var(--text)">🃏 抽卡</div><div style="font-size:12px;color:var(--muted);margin-top:6px">发「抽卡」/「抽奖」，SSR 3% / SR 15% / R 45% / N 卡</div></div>',
+  '</div><div style="font-size:12px;color:var(--muted);margin-top:12px">💡 游戏状态按用户独立，每人互不干扰；无需权限门槛，纯娱乐</div></div>'
+ ].join('');
+}
+
+// ---- 运行日志：删除/清空 ----
+function qqLogsClear(){
+ if(!confirm('确定清空全部运行日志？')) return;
+ api('/api/qq/logs/clear',{method:'POST'}).then(function(r){
+  toast(r.msg||'', r.code===0); if(r.code===0) qqLoadLogs();
+ });
+}
+function qqLogDel(id){
+ if(!confirm('删除这条日志？')) return;
+ api('/api/qq/logs/'+id,{method:'DELETE'}).then(function(r){
+  toast(r.msg||'', r.code===0); if(r.code===0) qqLoadLogs();
+ });
+}
+
 // ---- 日志 ----
 function qqLoadLogs(){
  api('/api/qq/logs').then(function(r){
@@ -313,9 +343,11 @@ function qqLoadLogs(){
   var rows=list.map(function(l){
    return '<tr><td><span class="badge">'+esc(l.type)+'</span></td>'+
     '<td style="max-width:380px">'+esc(l.content)+'</td>'+
-    '<td>'+(l.latencyMs||0)+'ms</td><td>'+qqTime(l.createdAt)+'</td></tr>';
+    '<td>'+(l.latencyMs||0)+'ms</td><td>'+qqTime(l.createdAt)+'</td>'+
+    '<td><button class="btn-ghost btn-sm danger" onclick="qqLogDel('+l.id+')">删</button></td></tr>';
   }).join('');
-  el.innerHTML='<div class="table-wrap"><table><thead><tr><th>类型</th><th>内容</th><th>耗时</th><th>时间</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  el.innerHTML='<div class="table-wrap"><table><thead><tr><th>类型</th><th>内容</th><th>耗时</th><th>时间</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+   '<div style="font-size:12px;color:var(--muted);margin-top:6px">共 '+list.length+' 条（实时动态自动保留最近 50 条）</div>';
  });
 }
 

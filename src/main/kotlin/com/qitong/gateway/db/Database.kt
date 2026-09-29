@@ -1563,6 +1563,8 @@ class Database(private val dbPath: String) {
     fun addQqLog(botAppid: String, groupOpenid: String, userOpenid: String, type: String, content: String, latencyMs: Long = 0) {
         stmt("INSERT INTO qq_logs (bot_appid,group_openid,user_openid,type,content,latency_ms,created_at) VALUES (?,?,?,?,?,?,?)",
             botAppid, groupOpenid, userOpenid, type, content.take(500), latencyMs, System.currentTimeMillis())
+        // 实时动态：只保留最近 50 条，超出自动删除旧记录
+        trimQqLogs(50)
     }
 
     fun getQqLogs(limit: Int = 200, type: String? = null): List<Map<String, Any?>> {
@@ -1583,6 +1585,17 @@ class Database(private val dbPath: String) {
             )
         }
     }
+
+    /** QQ 运行日志：保留最近 N 条，超出的自动删除（实时动态不无限堆积） */
+    fun trimQqLogs(keep: Int = 50) {
+        try { stmt("DELETE FROM qq_logs WHERE id NOT IN (SELECT id FROM qq_logs ORDER BY id DESC LIMIT ?)", keep) } catch (_: Exception) {}
+    }
+
+    /** QQ 运行日志：删除单条 */
+    fun deleteQqLog(id: Long) { stmt("DELETE FROM qq_logs WHERE id=?", id) }
+
+    /** QQ 运行日志：清空全部 */
+    fun clearQqLogs() { stmt("DELETE FROM qq_logs") }
 
     /** 概览统计：今日消息数 / 群数 / 用户数。 */
     fun qqOverview(): Map<String, Any?> {

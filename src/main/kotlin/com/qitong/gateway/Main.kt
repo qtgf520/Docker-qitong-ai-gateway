@@ -540,6 +540,12 @@ fun Application.moduleWeb(database: Database) {
             val u = call.requireAuth(database) ?: return@get
             AdminApi.ok(call, SpeedTaskRunner.snapshot(), "ok")
         }
+        // 健康缓存（模型页每行显示测过状态）
+        get("/api/speedtest/health") {
+            val u = call.requireAuth(database) ?: return@get
+            val cache = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
+            AdminApi.ok(call, cache, "ok")
+        }
         // 传输明细（每次调用一条：上传/下载/token，对齐原APP TokenUsage；admin=全部，普通用户=自己）
         get("/api/usage/recent") {
             val u = call.requireAuth(database) ?: return@get
@@ -843,6 +849,19 @@ fun Application.moduleWeb(database: Database) {
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
             val type = call.queryParameters["type"]
             AdminApi.ok(call, database.getQqLogs(limit = 300, type = type), "ok")
+        }
+        delete("/api/qq/logs/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            database.deleteQqLog(id)
+            AdminApi.ok(call, null, "日志已删除")
+        }
+        post("/api/qq/logs/clear") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            database.clearQqLogs()
+            AdminApi.ok(call, null, "日志已清空")
         }
         // QQ 积分排行/调整
         get("/api/qq/points") {

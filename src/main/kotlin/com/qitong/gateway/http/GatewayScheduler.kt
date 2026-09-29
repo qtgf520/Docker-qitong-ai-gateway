@@ -52,6 +52,21 @@ object GatewayScheduler {
     val healthCache = mutableMapOf<String, ModelHealth>()
     private var cacheTime: Long = 0
 
+    /** 健康缓存快照（模型页显示测过状态） */
+    fun healthCacheSnapshot(): List<Map<String, Any?>> = synchronized(healthCache) {
+        healthCache.values.map { h ->
+            mapOf(
+                "modelId" to h.modelId,
+                "providerId" to h.providerId,
+                "isHealthy" to h.isHealthy,
+                "ttftMs" to h.ttftMs,
+                "tps" to h.tps,
+                "totalMs" to h.totalMs,
+                "lastCheckTime" to h.lastCheckTime
+            )
+        }
+    }
+
     @Volatile
     private var bestModelKey: String? = null
     @Volatile
