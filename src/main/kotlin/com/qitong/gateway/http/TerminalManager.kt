@@ -65,6 +65,19 @@ object TerminalManager {
 
     fun get(id: String): TermSession? = sessions[id]
 
+    /** 一次性执行命令（不建会话，用于工作流/技能；危险拦截+超时） */
+    fun runOnce(cmd: String): String {
+        if (cmd.isBlank()) return "(无输出)"
+        if (cmd.length > 500) return "⚠️ 命令太长"
+        if (dangerous.any { cmd.contains(it) }) return "⛔ 危险命令已拦截"
+        return try {
+            val proc = ProcessBuilder("/bin/sh", "-c", cmd).redirectErrorStream(true).start()
+            val out = proc.inputStream.bufferedReader().readText()
+            if (!proc.waitFor(10, TimeUnit.SECONDS)) { proc.destroyForcibly(); "⚠️ 命令超时（10秒）已终止\n$out" }
+            else out.ifBlank { "(无输出)" }.take(2000)
+        } catch (e: Exception) { "❌ 执行失败：${e.message}" }
+    }
+
     /** 在临时会话中执行命令 */
     fun exec(id: String, cmd: String): Pair<Boolean, String> {
         cleanup()

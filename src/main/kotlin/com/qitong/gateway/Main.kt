@@ -818,6 +818,159 @@ fun Application.moduleWeb(database: Database) {
             val closed = if (id.isBlank()) { com.qitong.gateway.http.TerminalManager.closeAll(); true } else com.qitong.gateway.http.TerminalManager.close(id)
             AdminApi.ok(call, null, if (closed) "终端已关闭" else "会话不存在")
         }
+        // ===== 技能库（独立管理界面：触发器 -> 动作） =====
+        get("/api/skills") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, database.getSkills(if (u.role == "admin") 0 else u.id), "ok")
+        }
+        post("/api/skills") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin" && !AdminApi.hasPerm(u, AdminApi.Perm.SYS_SPEED)) { AdminApi.fail(call, "仅管理员可管理技能", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull()
+            val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val trigger = body["trigger"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val matchType = body["matchType"]?.jsonPrimitive?.content ?: "exact"
+            val action = body["action"]?.jsonPrimitive?.content ?: "skill"
+            val content = body["content"]?.jsonPrimitive?.content ?: ""
+            val enabled = body["enabled"]?.jsonPrimitive?.content?.toBoolean() ?: true
+            if (name.isBlank() && trigger.isBlank()) { AdminApi.fail(call, "名称或触发词不能为空", 400); return@post }
+            val sid = database.saveSkill(id, name, trigger, matchType, action, content, enabled, if (u.role == "admin") 0 else u.id)
+            AdminApi.ok(call, mapOf("id" to sid), "技能已保存")
+        }
+        delete("/api/skills/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            database.deleteSkill(id)
+            AdminApi.ok(call, null, "技能已删除")
+        }
+        // 测试技能执行
+        post("/api/skills/run") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val skillId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "技能ID无效", 400); return@post }
+            val skill = database.getSkills(0).firstOrNull { it["id"] as Long == skillId }
+                ?: run { AdminApi.fail(call, "技能不存在", 404); return@post }
+            val result = com.qitong.gateway.http.WorkflowEngine.runStep(database, skill["action"] as? String ?: "reply", skill["content"] as? String ?: "")
+            AdminApi.ok(call, mapOf("result" to result), "ok")
+        }
+
+        // ===== MCP 服务器管理（独立界面：对接外部 MCP，编辑/删除/启停） =====
+        get("/api/mcp") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, database.getMcpConfigs(), "ok")
+        }
+        post("/api/mcp") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull()
+            val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val serverType = body["serverType"]?.jsonPrimitive?.content ?: "http"
+            val url = body["url"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val authToken = body["authToken"]?.jsonPrimitive?.content.orEmpty()
+            val enabled = body["enabled"]?.jsonPrimitive?.content?.toBoolean() ?: true
+            if (name.isBlank() || url.isBlank()) { AdminApi.fail(call, "名称和URL必填", 400); return@post }
+            val mid = database.saveMcpConfig(id, name, serverType, url, authToken, enabled)
+            AdminApi.ok(call, mapOf("id" to mid), "MCP已保存")
+        }
+        delete("/api/mcp/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            database.deleteMcpConfig(id)
+            AdminApi.ok(call, null, "MCP已删除")
+        }
+        // 测试 MCP 连接
+        post("/api/mcp/test") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val url = body["url"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (url.isBlank()) { AdminApi.fail(call, "URL必填", 400); return@post }
+            val ok = try {
+                val req = okhttp3.Request.Builder().url(url).get().build()
+                okhttp3.OkHttpClient.Builder().connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS).readTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build().newCall(req).execute().use { it.isSuccessful }
+            } catch (e: Exception) { false }
+            AdminApi.ok(call, mapOf("ok" to ok), if (ok) "MCP 连接正常" else "MCP 连接失败")
+        }
+
+        // ===== 工作流（可做任何事的自动化：触发条件 -> 动作序列；qtai-sj 可创建/修改/执行） =====
+        get("/api/workflows") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, database.getWorkflows(if (u.role == "admin") 0 else u.id), "ok")
+        }
+        post("/api/workflows") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull()
+            val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val description = body["description"]?.jsonPrimitive?.content.orEmpty()
+            val triggerType = body["triggerType"]?.jsonPrimitive?.content ?: "manual"
+            val triggerText = body["triggerText"]?.jsonPrimitive?.content.orEmpty()
+            val steps = body["steps"]?.jsonPrimitive?.content ?: "[]"
+            val enabled = body["enabled"]?.jsonPrimitive?.content?.toBoolean() ?: true
+            if (name.isBlank()) { AdminApi.fail(call, "工作流名称必填", 400); return@post }
+            val wid = database.saveWorkflow(id, name, description, triggerType, triggerText, steps, enabled, if (u.role == "admin") 0 else u.id)
+            AdminApi.ok(call, mapOf("id" to wid), "工作流已保存")
+        }
+        delete("/api/workflows/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            database.deleteWorkflow(id)
+            AdminApi.ok(call, null, "工作流已删除")
+        }
+        // 执行工作流（逐步执行 steps JSON 数组）
+        post("/api/workflows/run") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val wid = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "工作流ID无效", 400); return@post }
+            val wf = database.getWorkflows(0).firstOrNull { it["id"] as Long == wid }
+                ?: run { AdminApi.fail(call, "工作流不存在", 404); return@post }
+            val stepsJson = try { org.json.JSONArray(wf["steps"] as? String ?: "[]") } catch (e: Exception) { org.json.JSONArray() }
+            val results = mutableListOf<Map<String, Any?>>()
+            for (i in 0 until stepsJson.length()) {
+                val step = stepsJson.optJSONObject(i) ?: continue
+                val stepType = step.optString("type", "reply")
+                val stepContent = step.optString("content", "")
+                val out = com.qitong.gateway.http.WorkflowEngine.runStep(database, stepType, stepContent)
+                results.add(mapOf("index" to i, "type" to stepType, "output" to out))
+            }
+            database.addOpLog(u.id, u.username, "工作流", "执行 ${wf["name"]}：${results.size}步", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("results" to results), "工作流执行完成")
+        }
+
+        // ===== 群级自动化（单群独立：自定义提醒/自动化任务） =====
+        get("/api/qq/automation") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val groupOpenid = call.queryParameters["group"]
+            AdminApi.ok(call, database.getGroupAutomation(groupOpenid), "ok")
+        }
+        post("/api/qq/automation") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull()
+            val groupOpenid = body["groupOpenid"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val type = body["type"]?.jsonPrimitive?.content ?: "reminder"
+            val content = body["content"]?.jsonPrimitive?.content.orEmpty()
+            val cron = body["cron"]?.jsonPrimitive?.content.orEmpty()
+            val enabled = body["enabled"]?.jsonPrimitive?.content?.toBoolean() ?: true
+            if (groupOpenid.isBlank() || name.isBlank()) { AdminApi.fail(call, "群和名称必填", 400); return@post }
+            val aid = database.saveGroupAutomation(id, groupOpenid, name, type, content, cron, enabled)
+            AdminApi.ok(call, mapOf("id" to aid), "群自动化已保存")
+        }
+        delete("/api/qq/automation/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            database.deleteGroupAutomation(id)
+            AdminApi.ok(call, null, "已删除")
+        }
+
         // QQ 插件指令
         get("/api/qq/commands") {
             val u = call.requireAuth(database) ?: return@get

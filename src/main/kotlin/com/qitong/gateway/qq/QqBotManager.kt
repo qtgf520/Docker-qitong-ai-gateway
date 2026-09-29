@@ -364,6 +364,28 @@ object QqBotManager {
         val game = handleGame(userOpenid, text)
         if (game != null) { send(game); db.addQqLog(bot.appid, groupOpenid, userOpenid, "game", text, System.currentTimeMillis() - t0); return }
 
+        // 0.65) 工作流关键词触发（QQ 发匹配触发词 → 执行整个工作流）
+        val wfHit = try {
+            db.getWorkflows(0).filter { (it["enabled"] as? Boolean) == true && it["triggerType"] as? String == "keyword" }
+                .firstOrNull { w -> val trig = (w["triggerText"] as? String)?.trim() ?: ""; trig.isNotBlank() && t.contains(trig, true) }
+        } catch (e: Exception) { null }
+        if (wfHit != null) {
+            val qqUser = db.getQqUser(userOpenid)
+            val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1
+            if (perm < 2) { send("⛔ 工作流触发需要操作级权限(2级)，您当前为 ${permLabel(perm)}"); return }
+            send("⚙️ 正在执行工作流「${wfHit["name"]}」…")
+            val stepsJson = try { org.json.JSONArray(wfHit["steps"] as? String ?: "[]") } catch (e: Exception) { org.json.JSONArray() }
+            val sb = StringBuilder()
+            for (i in 0 until stepsJson.length()) {
+                val step = stepsJson.optJSONObject(i) ?: continue
+                val out = com.qitong.gateway.http.WorkflowEngine.runStep(db, step.optString("type", "reply"), step.optString("content", ""))
+                sb.append("【").append(i + 1).append("·").append(step.optString("type", "reply")).append("】\n").append(out).append("\n\n")
+            }
+            send("✅ 工作流「${wfHit["name"]}」完成：\n" + sb.toString().take(800))
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "workflow", "触发 ${wfHit["name"]}", System.currentTimeMillis() - t0)
+            return
+        }
+
         // 0.7) 沙盒 Linux 终端操控（需管理级权限，远程执行 shell 命令）
         // 0.7a) AI 智能终端：自然语言直接操作
         if (t.startsWith("AI终端", true) || t.startsWith("智能终端", true) || t.startsWith("ai终端", true)) {

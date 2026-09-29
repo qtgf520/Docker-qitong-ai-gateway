@@ -149,6 +149,9 @@ ${adminCss()}
       <a data-page="chat"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><b>内置聊天</b></a>
       <a data-page="tickets"><svg viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.83z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><b>工单中心</b></a>
       <a data-page="terminal" class="admin-only"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><b>终端</b></a>
+      <a data-page="skills"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><b>技能</b></a>
+      <a data-page="workflows"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h7v7h-7z"/></svg><b>工作流</b></a>
+      <a data-page="mcp" class="admin-only"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><circle cx="12" cy="10" r="3"/></svg><b>MCP</b></a>
       <div class="nav-group">系统</div>
       <a data-page="settings"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><b>网关设置</b></a>
       <a data-page="profile"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><b>个人中心</b></a>
@@ -171,6 +174,9 @@ ${adminCss()}
     <div id="view-usage" class="view"></div>
     <div id="view-tickets" class="view"></div>
     <div id="view-terminal" class="view"></div>
+    <div id="view-skills" class="view"></div>
+    <div id="view-workflows" class="view"></div>
+    <div id="view-mcp" class="view"></div>
     <div id="view-profile" class="view"></div>
     <div id="view-settings" class="view"></div>
     <div id="view-logs" class="view"></div>
@@ -424,6 +430,6 @@ background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none;box-
 }
 """.trimIndent()
 
-    /** 后台 JS：核心 + 模型测速聊天 + 密钥规则用量用户 + UX 增强包 */
-    fun adminJs(): String = "var APP_VER = '" + VER + "';\n" + AdminJs1.js() + AdminJs2.js() + AdminJs3.js() + AdminJs4.js() + AdminJs5.js()
+    /** 后台 JS：核心 + 模型测速聊天 + 密钥规则用量用户 + UX 增强包 + QQ + 技能工作流MCP */
+    fun adminJs(): String = "var APP_VER = '" + VER + "';\n" + AdminJs1.js() + AdminJs2.js() + AdminJs3.js() + AdminJs4.js() + AdminJs5.js() + AdminJs6.js()
 }

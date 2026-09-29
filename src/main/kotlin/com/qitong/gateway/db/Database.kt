@@ -384,6 +384,61 @@ class Database(private val dbPath: String) {
             runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN perm_level INTEGER NOT NULL DEFAULT 1") }
             runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN perm_flags TEXT NOT NULL DEFAULT ''") }
             try { st.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_qq_user_openid ON qq_user_bindings(qq_openid)") } catch (_: Exception) {}
+            // 技能库（对齐"技能 = 可执行动作"，支持自定义技能：触发器 -> SkillExecutor编码 / 终端命令 / HTTP / 大模型）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS skills (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL DEFAULT '',
+                    trigger TEXT NOT NULL DEFAULT '',
+                    match_type TEXT NOT NULL DEFAULT 'exact',
+                    action TEXT NOT NULL DEFAULT 'skill',
+                    content TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    owner_id INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            // MCP 服务器对接（独立管理：名称/地址/类型/启停）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS mcp_configs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL DEFAULT '',
+                    server_type TEXT NOT NULL DEFAULT 'http',
+                    url TEXT NOT NULL DEFAULT '',
+                    auth_token TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            // 工作流（可做任何事的自动化：触发条件 -> 动作序列，qtai-sj 可创建/修改/执行）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS workflows (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL DEFAULT '',
+                    description TEXT NOT NULL DEFAULT '',
+                    trigger_type TEXT NOT NULL DEFAULT 'manual',
+                    trigger_text TEXT NOT NULL DEFAULT '',
+                    steps TEXT NOT NULL DEFAULT '[]',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    owner_id INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
+            // 群级自动化（单群自定义提醒/自动化任务：按群 openid 独立）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS qq_group_automation (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_openid TEXT NOT NULL,
+                    name TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT 'reminder',
+                    content TEXT NOT NULL DEFAULT '',
+                    cron TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            try { st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_qq_group_auto ON qq_group_automation(group_openid)") } catch (_: Exception) {}
             // QQ 全量运行日志（动态面板数据源）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_logs (
@@ -1402,6 +1457,118 @@ class Database(private val dbPath: String) {
     fun deleteQqBot(id: Long) {
         stmt("DELETE FROM qq_bots WHERE id=?", id)
     }
+
+    // ============ 技能库 ============
+    fun getSkills(ownerId: Long = 0): List<Map<String, Any?>> =
+        query("SELECT * FROM skills WHERE owner_id=? OR owner_id=0 ORDER BY id", ownerId).map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "name" to (row["name"] as? String ?: ""),
+                "trigger" to (row["trigger"] as? String ?: ""),
+                "matchType" to (row["match_type"] as? String ?: "exact"),
+                "action" to (row["action"] as? String ?: "skill"),
+                "content" to (row["content"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+                "ownerId" to ((row["owner_id"] as? Number)?.toLong() ?: 0),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    fun saveSkill(id: Long?, name: String, trigger: String, matchType: String, action: String, content: String, enabled: Boolean, ownerId: Long): Long {
+        if (id != null) {
+            stmt("UPDATE skills SET name=?, trigger=?, match_type=?, action=?, content=?, enabled=? WHERE id=?",
+                name, trigger, matchType, action, content, if (enabled) 1 else 0, id)
+            return id
+        }
+        stmt("INSERT INTO skills (name,trigger,match_type,action,content,enabled,owner_id,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            name, trigger, matchType, action, content, if (enabled) 1 else 0, ownerId, System.currentTimeMillis())
+        return queryOne("SELECT id FROM skills ORDER BY id DESC LIMIT 1") ?: 0
+    }
+    fun deleteSkill(id: Long) { stmt("DELETE FROM skills WHERE id=?", id) }
+
+    // ============ MCP 服务器 ============
+    fun getMcpConfigs(): List<Map<String, Any?>> =
+        query("SELECT * FROM mcp_configs ORDER BY id").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "name" to (row["name"] as? String ?: ""),
+                "serverType" to (row["server_type"] as? String ?: "http"),
+                "url" to (row["url"] as? String ?: ""),
+                "authToken" to (row["auth_token"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    fun saveMcpConfig(id: Long?, name: String, serverType: String, url: String, authToken: String, enabled: Boolean): Long {
+        if (id != null) {
+            stmt("UPDATE mcp_configs SET name=?, server_type=?, url=?, auth_token=?, enabled=? WHERE id=?",
+                name, serverType, url, authToken, if (enabled) 1 else 0, id)
+            return id
+        }
+        stmt("INSERT INTO mcp_configs (name,server_type,url,auth_token,enabled,created_at) VALUES (?,?,?,?,?,?)",
+            name, serverType, url, authToken, if (enabled) 1 else 0, System.currentTimeMillis())
+        return queryOne("SELECT id FROM mcp_configs ORDER BY id DESC LIMIT 1") ?: 0
+    }
+    fun deleteMcpConfig(id: Long) { stmt("DELETE FROM mcp_configs WHERE id=?", id) }
+
+    // ============ 工作流（可做任何事） ============
+    fun getWorkflows(ownerId: Long = 0): List<Map<String, Any?>> =
+        query("SELECT * FROM workflows WHERE owner_id=? OR owner_id=0 ORDER BY id", ownerId).map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "name" to (row["name"] as? String ?: ""),
+                "description" to (row["description"] as? String ?: ""),
+                "triggerType" to (row["trigger_type"] as? String ?: "manual"),
+                "triggerText" to (row["trigger_text"] as? String ?: ""),
+                "steps" to (row["steps"] as? String ?: "[]"),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+                "ownerId" to ((row["owner_id"] as? Number)?.toLong() ?: 0),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0),
+                "updatedAt" to ((row["updated_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    fun saveWorkflow(id: Long?, name: String, description: String, triggerType: String, triggerText: String, steps: String, enabled: Boolean, ownerId: Long): Long {
+        val now = System.currentTimeMillis()
+        if (id != null) {
+            stmt("UPDATE workflows SET name=?, description=?, trigger_type=?, trigger_text=?, steps=?, enabled=?, updated_at=? WHERE id=?",
+                name, description, triggerType, triggerText, steps, if (enabled) 1 else 0, now, id)
+            return id
+        }
+        stmt("INSERT INTO workflows (name,description,trigger_type,trigger_text,steps,enabled,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            name, description, triggerType, triggerText, steps, if (enabled) 1 else 0, ownerId, now, now)
+        return queryOne("SELECT id FROM workflows ORDER BY id DESC LIMIT 1") ?: 0
+    }
+    fun deleteWorkflow(id: Long) { stmt("DELETE FROM workflows WHERE id=?", id) }
+
+    // ============ 群级自动化（单群独立：提醒/定时任务） ============
+    fun getGroupAutomation(groupOpenid: String? = null): List<Map<String, Any?>> {
+        val rows = if (groupOpenid.isNullOrBlank())
+            query("SELECT * FROM qq_group_automation ORDER BY id")
+        else
+            query("SELECT * FROM qq_group_automation WHERE group_openid=? ORDER BY id", groupOpenid)
+        return rows.map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "groupOpenid" to (row["group_openid"] as? String ?: ""),
+                "name" to (row["name"] as? String ?: ""),
+                "type" to (row["type"] as? String ?: "reminder"),
+                "content" to (row["content"] as? String ?: ""),
+                "cron" to (row["cron"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    }
+    fun saveGroupAutomation(id: Long?, groupOpenid: String, name: String, type: String, content: String, cron: String, enabled: Boolean): Long {
+        if (id != null) {
+            stmt("UPDATE qq_group_automation SET group_openid=?, name=?, type=?, content=?, cron=?, enabled=? WHERE id=?",
+                groupOpenid, name, type, content, cron, if (enabled) 1 else 0, id)
+            return id
+        }
+        stmt("INSERT INTO qq_group_automation (group_openid,name,type,content,cron,enabled,created_at) VALUES (?,?,?,?,?,?,?)",
+            groupOpenid, name, type, content, cron, if (enabled) 1 else 0, System.currentTimeMillis())
+        return queryOne("SELECT id FROM qq_group_automation ORDER BY id DESC LIMIT 1") ?: 0
+    }
+    fun deleteGroupAutomation(id: Long) { stmt("DELETE FROM qq_group_automation WHERE id=?", id) }
 
     fun setQqBotEnabled(id: Long, enabled: Boolean) {
         stmt("UPDATE qq_bots SET enabled=? WHERE id=?", if (enabled) 1 else 0, id)
