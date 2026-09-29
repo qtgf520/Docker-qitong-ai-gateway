@@ -272,7 +272,8 @@ object QqBotManager {
     private fun handleGroup(bot: QqBot, msg: QqGroupMessage) {
         val isNewGroup = db.getQqGroupConfig(msg.groupOpenid) == null
         db.touchQqGroup(msg.groupOpenid, bot.appid)
-        db.touchQqUser(msg.memberOpenid)
+        // ★ 群隔离：用户按群登记（群内成员独立管理，私聊另算）
+        db.touchQqUser(msg.memberOpenid, msg.groupOpenid, stripAt(msg.content).trim().take(20))
         runtime[bot.id]?.let { it.messagesHandled++; it.groupsSeen = (it.groupsSeen + 1).coerceAtLeast(1) }
         // 刷新 AccessToken（7200s 有效，这里简单每次调用前获取）
         val at = api.getAccessToken(bot) ?: run {
@@ -299,7 +300,8 @@ object QqBotManager {
     }
 
     private fun handleC2c(bot: QqBot, msg: QqC2cMessage) {
-        db.touchQqUser(msg.userOpenid)
+        // ★ 群隔离：私聊用户 group 为空串独立登记
+        db.touchQqUser(msg.userOpenid, "", msg.content.trim().take(20))
         runtime[bot.id]?.let { it.messagesHandled++ }
         val at = api.getAccessToken(bot) ?: run {
             System.err.println("[QQBot] ${bot.appid} 私聊消息处理：获取AccessToken失败")
@@ -346,6 +348,13 @@ object QqBotManager {
                 }
                 "mute_on" -> {
                     if (groupOpenid.isBlank()) return
+                    // ★ 群管权限开关：本群禁止全员禁言则拒绝
+                    val gc = db.getQqGroupConfig(groupOpenid)
+                    if (gc != null && (gc["adminMute"] as? Boolean) != true) { send("⛔ 本群已关闭「全员禁言」权限"); return }
+                    // 需要管理级权限(3+)
+                    val qqU = db.getQqUserByGroup(userOpenid, groupOpenid)
+                    val perm = (qqU?.get("permLevel") as? Number)?.toInt() ?: 1
+                    if (perm < 3) { send("⛔ 全员禁言需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }
                     val at = api.getAccessToken(bot)
                     if (at.isNullOrBlank()) { send("禁言失败（获取凭证失败）"); return }
                     if (api.setGroupMute(bot, at, groupOpenid, true)) send("已开启全员禁言") else send("全员禁言失败（需机器人是群管理员）")
@@ -354,6 +363,11 @@ object QqBotManager {
                 }
                 "mute_off" -> {
                     if (groupOpenid.isBlank()) return
+                    val gc = db.getQqGroupConfig(groupOpenid)
+                    if (gc != null && (gc["adminMute"] as? Boolean) != true) { send("⛔ 本群已关闭「全员禁言」权限"); return }
+                    val qqU = db.getQqUserByGroup(userOpenid, groupOpenid)
+                    val perm = (qqU?.get("permLevel") as? Number)?.toInt() ?: 1
+                    if (perm < 3) { send("⛔ 解除禁言需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }
                     val at = api.getAccessToken(bot)
                     if (at.isNullOrBlank()) { send("解除失败（获取凭证失败）"); return }
                     if (api.setGroupMute(bot, at, groupOpenid, false)) send("已解除全员禁言") else send("解除失败")

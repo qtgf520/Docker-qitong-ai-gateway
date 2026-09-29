@@ -362,6 +362,11 @@ class Database(private val dbPath: String) {
                 )"""
             )
             try { st.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_qq_groups_openid ON qq_groups(group_openid)") } catch (_: Exception) {}
+            // 旧库迁移：补群管权限开关（禁言/踢人/管理，管理员可对单个群开/关）
+            runCatching { st.executeUpdate("ALTER TABLE qq_groups ADD COLUMN admin_mute INTEGER NOT NULL DEFAULT 1") }
+            runCatching { st.executeUpdate("ALTER TABLE qq_groups ADD COLUMN admin_kick INTEGER NOT NULL DEFAULT 1") }
+            runCatching { st.executeUpdate("ALTER TABLE qq_groups ADD COLUMN admin_manage INTEGER NOT NULL DEFAULT 1") }
+            runCatching { st.executeUpdate("ALTER TABLE qq_groups ADD COLUMN group_name TEXT NOT NULL DEFAULT ''") }
             // QQ 插件/自定义指令（小栗子风格：触发器 -> 回复/HTTP/AI）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_commands (
@@ -395,6 +400,10 @@ class Database(private val dbPath: String) {
             // 旧库迁移：补权限列（已存在则忽略）
             runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN perm_level INTEGER NOT NULL DEFAULT 1") }
             runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN perm_flags TEXT NOT NULL DEFAULT ''") }
+            // 群隔离：每个用户记录来自哪个群（好友私聊=空），同一 openid 在不同群独立管理
+            runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN group_openid TEXT NOT NULL DEFAULT ''") }
+            runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN qq_nick TEXT NOT NULL DEFAULT ''") }
+            try { st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_qq_user_group ON qq_user_bindings(group_openid)") } catch (_: Exception) {}
             try { st.executeUpdate("CREATE UNIQUE INDEX IF NOT EXISTS idx_qq_user_openid ON qq_user_bindings(qq_openid)") } catch (_: Exception) {}
             // 技能库（对齐"技能 = 可执行动作"，支持自定义技能：触发器 -> SkillExecutor编码 / 终端命令 / HTTP / 大模型）
             st.executeUpdate(
@@ -1646,11 +1655,80 @@ class Database(private val dbPath: String) {
         }
     }
 
-    fun updateQqGroup(groupOpenid: String, aiEnabled: Boolean?, welcomeEnabled: Boolean?, greeting: String?) {
+    fun updateQqGroup(groupOpenid: String, aiEnabled: Boolean?, welcomeEnabled: Boolean?, greeting: String?, adminMute: Boolean?, adminKick: Boolean?, adminManage: Boolean?, groupName: String?) {
         touchQqGroup(groupOpenid, "")
         aiEnabled?.let { stmt("UPDATE qq_groups SET ai_enabled=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
         welcomeEnabled?.let { stmt("UPDATE qq_groups SET welcome_enabled=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
         greeting?.let { stmt("UPDATE qq_groups SET greeting=? WHERE group_openid=?", it, groupOpenid) }
+        adminMute?.let { stmt("UPDATE qq_groups SET admin_mute=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
+        adminKick?.let { stmt("UPDATE qq_groups SET admin_kick=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
+        adminManage?.let { stmt("UPDATE qq_groups SET admin_manage=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
+        groupName?.let { stmt("UPDATE qq_groups SET group_name=? WHERE group_openid=?", it, groupOpenid) }
+    }
+
+    /** 删除群配置（同时清空该群下用户记录） */
+    fun deleteQqGroup(groupOpenid: String) {
+        stmt("DELETE FROM qq_user_bindings WHERE group_openid=?", groupOpenid)
+        stmt("DELETE FROM qq_group_automation WHERE group_openid=?", groupOpenid)
+        stmt("DELETE FROM qq_groups WHERE group_openid=?", groupOpenid)
+    }
+
+    // ============ QQ 用户绑定（独立隔离，按群独立） ============
+
+    /** 按群+openid查询用户（群隔离） */
+    fun getQqUserByGroup(openid: String, groupOpenid: String): Map<String, Any?>? =
+        query("SELECT * FROM qq_user_bindings WHERE qq_openid=? AND group_openid=?", openid, groupOpenid).firstOrNull()?.let { row ->
+            mapOf(
+                "openid" to (row["qq_openid"] as? String ?: ""),
+                "groupOpenid" to (row["group_openid"] as? String ?: ""),
+                "displayName" to (row["display_name"] as? String ?: ""),
+                "qqNick" to (row["qq_nick"] as? String ?: ""),
+                "persona" to (row["persona"] as? String ?: ""),
+                "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() == 1),
+                "totalMessages" to ((row["total_messages"] as? Number)?.toLong() ?: 0),
+                "lastActiveAt" to ((row["last_active_at"] as? Number)?.toLong() ?: 0),
+                "permLevel" to ((row["perm_level"] as? Number)?.toInt() ?: 1),
+                "permFlags" to (row["perm_flags"] as? String ?: "")
+            )
+        }
+
+    /** 按群查询用户列表 */
+    fun getQqUsersByGroup(groupOpenid: String, limit: Int = 200): List<Map<String, Any?>> =
+        query("SELECT * FROM qq_user_bindings WHERE group_openid=? ORDER BY last_active_at DESC LIMIT $limit", groupOpenid).map { row ->
+            mapOf(
+                "openid" to (row["qq_openid"] as? String ?: ""),
+                "groupOpenid" to (row["group_openid"] as? String ?: ""),
+                "displayName" to (row["display_name"] as? String ?: ""),
+                "qqNick" to (row["qq_nick"] as? String ?: ""),
+                "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() == 1),
+                "totalMessages" to ((row["total_messages"] as? Number)?.toLong() ?: 0),
+                "lastActiveAt" to ((row["last_active_at"] as? Number)?.toLong() ?: 0),
+                "permLevel" to ((row["perm_level"] as? Number)?.toInt() ?: 1),
+                "permFlags" to (row["perm_flags"] as? String ?: "")
+            )
+        }
+
+    /** 删除单个用户记录（所有群） */
+    fun deleteQqUser(openid: String) {
+        stmt("DELETE FROM qq_user_bindings WHERE qq_openid=?", openid)
+    }
+
+    /** 收到消息时登记/累计（按群隔离，群=空表示私聊） */
+    fun touchQqUser(openid: String, groupOpenid: String = "", qqNick: String = "") {
+        val exists = queryOne("SELECT COUNT(*) FROM qq_user_bindings WHERE qq_openid=? AND group_openid=?", openid, groupOpenid) ?: 0
+        val now = System.currentTimeMillis()
+        if (exists == 0L) {
+            stmt("INSERT INTO qq_user_bindings (qq_openid,group_openid,qq_nick,total_messages,last_active_at,created_at) VALUES (?,?,?,?,?,?)",
+                openid, groupOpenid, qqNick, 1, now, now)
+        } else {
+            stmt("UPDATE qq_user_bindings SET total_messages=total_messages+1, last_active_at=?, qq_nick=? WHERE qq_openid=? AND group_openid=?", now, qqNick, openid, groupOpenid)
+        }
+    }
+
+    /** 按群更新用户权限 */
+    fun setQqUserPermByGroup(openid: String, groupOpenid: String, level: Int, flags: String) {
+        touchQqUser(openid, groupOpenid)
+        stmt("UPDATE qq_user_bindings SET perm_level=?, perm_flags=? WHERE qq_openid=? AND group_openid=?", level.coerceIn(0, 4), flags, openid, groupOpenid)
     }
 
     // ============ QQ 插件/指令 ============

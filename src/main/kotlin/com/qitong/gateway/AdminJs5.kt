@@ -199,22 +199,35 @@ function qqLoadGroups(){
   var list=(r&&r.data)||[];
   if(!list.length){ el.innerHTML='<div style="color:var(--muted);padding:16px">暂无群记录。让机器人进群并@它一次即可。</div>'; return; }
   var rows=list.map(function(g){
-   return '<tr><td><code style="font-size:11px">'+esc(g.groupOpenid)+'</code></td>'+
+return '<tr><td><b>'+esc(g.groupName||'-')+'</b><br><code style="font-size:11px">'+esc(g.groupOpenid)+'</code></td>'+
     '<td>'+(g.aiEnabled?'<span class="badge green">AI开</span>':'<span class="badge gray">AI关</span>')+'</td>'+
-    '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(g.greeting||'-')+'</td>'+
-    '<td><button class="btn-ghost btn-sm" onclick="qqGroupEdit('+JSON.stringify(g).replace(/"/g,'&quot;')+')">配置</button></td></tr>';
+    '<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(g.greeting||'-')+'</td>'+
+    '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="qqGroupEdit('+JSON.stringify(g).replace(/"/g,'"')+')">配置</button> '+
+    '<button class="btn-ghost btn-sm danger" onclick="qqGroupDel(\''+esc(g.groupOpenid)+'\')">删</button></td></tr>';
   }).join('');
   el.innerHTML='<div class="table-wrap"><table><thead><tr><th>群 openid</th><th>AI</th><th>备注</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+ });
+}
+function qqGroupDel(openid){
+ if(!confirm('确认删除该群？将同时清空该群下所有用户记录与自动化任务。')) return;
+ api('/api/qq/groups/'+openid,{method:'DELETE'}).then(function(r){
+  if(r.code===0){ toast('群已删除',true); qqLoadGroups(); } else toast(r.msg||'删除失败',false);
  });
 }
 function qqGroupEdit(g){
  var html='<div class="form-row"><label>群 openid</label><input class="input" value="'+esc(g.groupOpenid)+'" readonly></div>'+
   '<div class="form-row"><label><input type="checkbox" id="ggAi" '+(g.aiEnabled?'checked':'')+'> 启用 AI 回复</label></div>'+
   '<div class="form-row"><label><input type="checkbox" id="ggWelcome" '+(g.welcomeEnabled?'checked':'')+'> 启用入群欢迎</label></div>'+
-  '<div class="form-row"><label>欢迎语/备注</label><input class="input" id="ggGreeting" value="'+esc(g.greeting||'')+'"></div>';
+  '<div class="form-row"><label>欢迎语/备注</label><input class="input" id="ggGreeting" value="'+esc(g.greeting||'')+'"></div>'+
+  '<div class="form-row"><label>群名称/备注</label><input class="input" id="ggName" value="'+esc(g.groupName||'')+'" placeholder="如：綦桐开发群"></div>'+
+  '<hr style="border-color:var(--border);margin:10px 0"><div style="font-size:12px;color:var(--muted);margin-bottom:6px">🛠 群管权限开关（机器人需为本群管理员才生效）</div>'+
+  '<div class="form-row"><label><input type="checkbox" id="ggMute" '+(g.adminMute!==false?'checked':'')+'> 允许全员禁言/解除</label></div>'+
+  '<div class="form-row"><label><input type="checkbox" id="ggKick" '+(g.adminKick!==false?'checked':'')+'> 允许群员管理</label></div>'+
+  '<div class="form-row"><label><input type="checkbox" id="ggManage" '+(g.adminManage!==false?'checked':'')+'> 允许管理操作</label></div>';
  openModal('群配置', html, function(){
   api('/api/qq/groups/update',{method:'POST',body:{groupOpenid:g.groupOpenid,
-   aiEnabled:$('ggAi').checked, welcomeEnabled:$('ggWelcome').checked, greeting:$('ggGreeting').value}})
+   aiEnabled:$('ggAi').checked, welcomeEnabled:$('ggWelcome').checked, greeting:$('ggGreeting').value,
+   groupName:$('ggName').value, adminMute:$('ggMute').checked, adminKick:$('ggKick').checked, adminManage:$('ggManage').checked}})
   .then(function(r){ if(r.code===0){toast('已保存',true);closeModal();qqLoadGroups();}else toast(r.msg,false); });
  });
 }
@@ -233,10 +246,17 @@ function qqLoadUsers(){
     '<td><span class="badge '+(u.permLevel>=3?'purple':(u.permLevel==0?'gray':'blue'))+'">'+permTxt+'</span></td>'+
     '<td>'+(u.totalMessages||0)+'</td>'+
     '<td>'+qqTime(u.lastActiveAt)+'</td>'+
-    '<td><button class="btn-ghost btn-sm" onclick="qqUserEdit(\''+esc(u.openid)+'\')">配置</button></td></tr>';
+    '<td><button class="btn-ghost btn-sm" onclick="qqUserEdit(\''+esc(u.openid)+'\')">配置</button> '+
+    '<button class="btn-ghost btn-sm danger" onclick="qqUserDel(\''+esc(u.openid)+'\')">删</button></td></tr>';
   }).join('');
   el.innerHTML='<div class="table-wrap"><table><thead><tr><th>openid</th><th>昵称</th><th>AI</th><th>权限</th><th>消息数</th><th>最后活跃</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
    '<div style="font-size:12px;color:var(--muted);margin-top:8px">权限：禁止=不能操作机器人 · 查询=查状态/排行/余额 · 操作=切模型/测速 · 管理=启停/充值/改配置 · 全部=所有网关操作</div>';
+ });
+}
+function qqUserDel(openid){
+ if(!confirm('确认删除该用户？其所有群内的记录与权限将一并清除。')) return;
+ api('/api/qq/users/'+openid,{method:'DELETE'}).then(function(r){
+  if(r.code===0){ toast('用户已删除',true); qqLoadUsers(); } else toast(r.msg||'删除失败',false);
  });
 }
 function qqUserEdit(openid){
