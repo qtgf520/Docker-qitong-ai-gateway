@@ -327,8 +327,8 @@ loaders.chat = function(){
       '<select id="chatModel" class="input" style="width:190px;border-radius:16px;padding:6px 10px">'+modelOpts+'</select>'+
       '<button class="btn-ghost btn-sm" onclick="deleteConv()" title="删除当前会话">🗑</button>'+
      '</div>'+
-     '<div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">👋 点 ☰ 打开会话列表，输入框固定在底部</div></div></div>',
-     '<div class="chat-input"><input id="chatInput" class="input" placeholder="输入消息... (Enter发送)" onkeydown="if(event.key===\'Enter\')sendChat()"><button class="btn" onclick="sendChat()">发送</button></div>',
+     '<div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">👋 点 ☰ 打开会话列表，输入框固定在底部，📎可发图片/文件</div></div></div>',
+     '<div class="chat-input"><div style="display:flex;flex-direction:column;flex:1;min-width:0"><div class="chat-attach-preview" id="chatAttachPreview"></div><div style="display:flex;gap:8px;align-items:center"><button class="chat-att" onclick="pickChatFile()" title="上传图片/文件">📎</button><input id="chatInput" class="input" placeholder="输入消息... (Enter发送)" onkeydown="if(event.key===\'Enter\')sendChat()"></div></div><button class="btn" onclick="sendChat()">发送</button></div>',
     '</div>',
    '</div>'
   ].join('');
@@ -378,40 +378,100 @@ window.loadConvMsgs = function(){
    var msgs = r.data.messages || [];
    $('chatMsgs').innerHTML = msgs.map(function(m){
     var t = fmtTime2(m.createdAt);
-    if(m.role==='user') return '<div class="msg-row user"><div class="bubble">'+esc(m.content)+'<div class="msg-time">'+t+'</div></div></div>';
-    return '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble">'+esc(m.content)+'<div class="msg-time">'+t+'</div></div></div>';
+    if(m.role==='user') return '<div class="msg-row user"><div class="bubble">'+renderMd(m.content)+'<div class="msg-time">'+t+'</div></div></div>';
+    return '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble">'+renderMd(m.content)+'<div class="msg-time">'+t+'</div></div></div>';
    }).join('') || '<div class="msg-row system"><div class="bubble">空对话</div></div>';
    var e3 = $('chatMsgs'); if(e3) e3.scrollTop = e3.scrollHeight;
   }
  });
 };
+// 轻量 Markdown 渲染：转义 HTML -> 代码块 -> 图片 -> 换行
+function renderMd(t){
+ var s = esc(t||'');
+ // 代码块 ```lang\n...```
+ s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, function(m,lang,code){
+  return '<pre><code>'+code+'</code></pre>';
+ });
+ // 行内 `code`
+ s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+ // 图片 URL
+ s = s.replace(/(https?:\/\/[^\s<>\)]+\.(png|jpe?g|gif|webp|svg))/gi, '<img src="$1" alt="img">');
+ // /uploads/ 本地图片
+ s = s.replace(/(\/uploads\/[^\s<>\)]+)/g, '<img src="$1" alt="img">');
+ // 换行
+ s = s.replace(/\n/g, '<br>');
+ return s;
+}
+// 待发送附件
+state.chatAttachments = state.chatAttachments || [];
+window.pickChatFile = function(){
+ var inp = document.createElement('input');
+ inp.type='file'; inp.accept='image/*,.pdf,.txt,.md,.json,.csv,.doc,.docx,.zip,.mp4';
+ inp.onchange = function(){
+  var f = inp.files[0]; if(!f) return;
+  var reader = new FileReader();
+  reader.onload = function(){
+   api('/api/upload',{method:'POST',body:{filename:f.name,mime:f.type,data:reader.result}}).then(function(r){
+    if(r.code===0){ state.chatAttachments.push({url:r.data.url,name:r.data.name,mime:r.data.mime}); toast('已附加 '+r.data.name, true); renderAttachPreview(); }
+    else toast(r.msg||'上传失败', false);
+   });
+  };
+  reader.readAsDataURL(f);
+ };
+ inp.click();
+};
+function renderAttachPreview(){
+ var box = $('chatAttachPreview'); if(!box) return;
+ box.innerHTML = (state.chatAttachments||[]).map(function(a,i){
+  var isImg = (a.mime||'').indexOf('image')===0 || /\.(png|jpe?g|gif|webp)$/i.test(a.name);
+  return '<span class="att-chip" onclick="removeAttach('+i+')" title="点击移除">'+(isImg?'🖼':'📎')+' '+esc(a.name)+' ✕</span>';
+ }).join('');
+}
+window.removeAttach = function(i){ state.chatAttachments.splice(i,1); renderAttachPreview(); };
 window.sendChat = function(){
  var input = $('chatInput'); if(!input) return;
- var content = input.value.trim(); if(!content) return;
+ var content = input.value.trim();
+ var atts = state.chatAttachments||[];
+ if(!content && !atts.length) return;
  if(window._chatBusy) return;
  window._chatBusy = true;
  var convId = state.currentChatConv || 0;
  var model = $('chatModel').value || 'qtai-sj';
  state.chatModel = model;
  var msgs = $('chatMsgs');
- msgs.innerHTML += '<div class="msg-row user"><div class="bubble">'+esc(content)+'<div class="msg-time">'+fmtTime2(Date.now())+'</div></div></div>'+
-  '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble" id="waitBubble">思考中...</div></div>';
+ // 组装发送文本：附件作为引用附在末尾
+ var sendText = content;
+ if(atts.length){
+  sendText += (content?'\n\n':'') + atts.map(function(a){ return '[附件:'+a.name+']('+a.url+')'; }).join('\n');
+ }
+ msgs.innerHTML += '<div class="msg-row user"><div class="bubble">'+renderMd(content)+
+   (atts.length?'<div class="chat-attach-preview">'+atts.map(function(a){return '<span class="att-chip">📎 '+esc(a.name)+'</span>';}).join('')+'</div>':'')+
+   '<div class="msg-time">'+fmtTime2(Date.now())+'</div></div></div>'+
+  '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div id="assistantCol"></div></div>';
  msgs.scrollTop = msgs.scrollHeight;
- input.value = '';
- api('/api/chat', { method:'POST', body: { conversationId: convId, content: content, model: model } }).then(function(r){
-  var wb = $('waitBubble');
-  if(wb){
+ input.value = ''; state.chatAttachments=[]; renderAttachPreview();
+ api('/api/chat', { method:'POST', body: { conversationId: convId, content: sendText, model: model } }).then(function(r){
+  var col = $('assistantCol');
+  if(col){
    if(r.code === 0){
     var reply = r.data.reply || '(无响应)';
+    var reasoning = r.data.reasoning || '';
+    var html = '';
+    if(reasoning){
+     html += '<div class="chat-reason" onclick="this.classList.toggle(\'open\')">💭 思考过程（点击展开）<div class="cr-body">'+esc(reasoning)+'</div></div>';
+    }
+    html += '<div class="bubble" id="waitBubble">思考中...</div><div class="msg-time">'+fmtTime2(Date.now())+'</div>';
+    col.innerHTML = html;
+    var wb = $('waitBubble');
     var full = reply; var i = 0;
     var tick = setInterval(function(){
      i += 2;
-     if(wb){ wb.textContent = full.slice(0, i) + (i < full.length ? '▍' : ''); msgs.scrollTop = msgs.scrollHeight; }
-     if(i >= full.length){ clearInterval(tick); if(wb) wb.textContent = full; msgs.scrollTop = msgs.scrollHeight; }
+     if(wb){ wb.innerHTML = renderMd(full.slice(0,i)) + (i<full.length?'▍':''); msgs.scrollTop = msgs.scrollHeight; }
+     if(i >= full.length){ clearInterval(tick); if(wb) wb.innerHTML = renderMd(full); msgs.scrollTop = msgs.scrollHeight; }
     }, 16);
     if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, full.length * 2 + 200); }
    } else {
-    wb.textContent = ' ' + (r.msg || '失败');
+    col.innerHTML = '<div class="bubble">⚠️ '+(r.msg||'失败')+'</div>';
    }
   }
  }).finally(function(){ window._chatBusy = false; });

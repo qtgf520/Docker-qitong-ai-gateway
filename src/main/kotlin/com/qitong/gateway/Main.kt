@@ -27,6 +27,7 @@ import io.ktor.server.routing.options
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.http.content.staticResources
+import io.ktor.server.http.content.staticFiles
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
@@ -1900,6 +1901,27 @@ fun Application.moduleWeb(database: Database) {
             val body = call.receive<JsonObject>()
             AdminApi.ok(call, AdminApi.chat(database, body, u), "完成")
         }
+        // 上传图片/文件（base64），返回可访问 URL
+        post("/api/upload") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val filename = body["filename"]?.jsonPrimitive?.content?.trim().orEmpty().ifBlank { "file" }
+            val b64 = body["data"]?.jsonPrimitive?.content.orEmpty()
+            val mime = body["mime"]?.jsonPrimitive?.content.orEmpty()
+            if (b64.length < 4) { AdminApi.fail(call, "内容为空", 400); return@post }
+            val uploadDir = java.io.File(System.getenv("DATA_DIR") ?: "/data/qitong", "uploads")
+            uploadDir.mkdirs()
+            val safeName = filename.replace(Regex("[^a-zA-Z0-9._\\-\\u4e00-\\u9fa5]"), "_")
+            val out = java.io.File(uploadDir, "${System.currentTimeMillis()}_$safeName")
+            runCatching {
+                val clean = b64.replace(Regex("^data:.*;base64,"), "")
+                val bytes = java.util.Base64.getDecoder().decode(clean)
+                out.writeBytes(bytes)
+            }.onFailure { AdminApi.fail(call, "上传失败: ${it.message}", 500); return@post }
+            AdminApi.ok(call, mapOf("url" to "/uploads/${out.name}", "name" to safeName, "size" to out.length(), "mime" to mime), "上传成功")
+        }
+        // 静态访问上传的文件
+        staticFiles("/uploads", java.io.File(System.getenv("DATA_DIR") ?: "/data/qitong", "uploads"))
 
         // 状态
         get("/api/status") {

@@ -859,6 +859,7 @@ private fun providerToMap(p: Provider) = mapOf(
         if (attemptModels.isEmpty()) return mapOf("conversationId" to conversationId, "error" to "No available model", "reply" to "没有可用模型，请先测速或添加服务商")
 
         var lastResult: String? = null
+        var lastReasoning: String? = null
         for (targetModel in attemptModels) {
             val provider = database.getProviderById(targetModel.providerId) ?: continue
             if (!provider.isEnabled) continue
@@ -879,14 +880,19 @@ private fun providerToMap(p: Provider) = mapOf(
                 if (resp.isSuccessful) {
                     val respBody = resp.body?.string() ?: "{}"
                     resp.close()
-                    val content = try {
+                    val msgObj = try {
                         strictJson.parseToJsonElement(respBody).jsonObject["choices"]?.jsonArray?.get(0)?.jsonObject
-                            ?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.content
+                            ?.get("message")?.jsonObject
                     } catch (_: Exception) { null }
+                    val content = msgObj?.get("content")?.jsonPrimitive?.content
                     val answer = content ?: runCatching {
                         strictJson.parseToJsonElement(respBody).jsonObject["choices"]?.jsonArray?.get(0)?.jsonObject
                             ?.get("text")?.jsonPrimitive?.content
                     }.getOrNull() ?: "(空响应)"
+                    // 抓取思考链（DeepSeek/Qwen 等返回 reasoning_content）
+                    val reasoning = msgObj?.get("reasoning_content")?.jsonPrimitive?.content
+                        ?: msgObj?.get("reasoning")?.jsonPrimitive?.content
+                    if (!reasoning.isNullOrBlank()) lastReasoning = reasoning
                     lastResult = answer
                     database.addMessage(ChatMessage(
                         conversationId = conversationId, role = "assistant", content = answer, modelId = targetModel.modelId
@@ -920,6 +926,7 @@ private fun providerToMap(p: Provider) = mapOf(
         return mapOf(
             "conversationId" to conversationId,
             "reply" to (lastResult ?: "所有上游模型均不可用，请检查服务商配置"),
+            "reasoning" to (lastReasoning ?: ""),
             "skills" to skillResults
         )
     }

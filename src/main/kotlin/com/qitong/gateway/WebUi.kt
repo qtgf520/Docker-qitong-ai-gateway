@@ -373,6 +373,16 @@ input[type=range]{accent-color:var(--primary)}
 .chat-input{display:flex;gap:10px;padding:12px 14px;border-top:1px solid var(--border);flex-shrink:0;background:var(--surface)}
 .chat-input .input{flex:1;min-width:0;border-radius:20px;padding:10px 16px}
 .chat-input .btn{border-radius:20px;padding:10px 22px}
+.chat-att{width:38px;height:38px;border-radius:20px;border:1px solid var(--border);background:var(--surface);color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;font-size:16px}
+.chat-att:hover{background:var(--surface2)}
+.chat-reason{margin:0 0 6px;padding:6px 10px;background:rgba(120,120,120,.08);border:1px dashed var(--border);border-radius:10px;font-size:12px;color:var(--muted);cursor:pointer;max-width:72%}
+.chat-reason .cr-body{display:none;white-space:pre-wrap;line-height:1.6;margin-top:4px}
+.chat-reason.open .cr-body{display:block}
+.bubble pre{background:#1e1e2e;color:#e6e6e6;border-radius:8px;padding:10px 12px;margin:6px 0;overflow-x:auto;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}
+.bubble code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.bubble img{max-width:200px;border-radius:8px;margin:4px 0;display:block}
+.bubble .att-chip{display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:3px 8px;font-size:12px;margin:2px 0}
+.chat-attach-preview{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
 /* ===== 地址行 / 代码 ===== */
 .addr-line{background:var(--inset);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text);cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;transition:.15s}
 .addr-line:hover{border-color:var(--primary)}
