@@ -547,6 +547,11 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             val reply = when (cmd["action"]) {
                 "http" -> httpGet(cmd["content"] as String)
                 "ai" -> askModel(bot, key, "${cmd["content"]} $text", userOpenid)
+                // ★ 插件强化：支持终端命令/网关技能/工作流/AI画图
+                "terminal" -> runTerminal(cmd["content"] as String)
+                "skill" -> runSkillCode(cmd["content"] as String, text)
+                "workflow" -> runWorkflowByName(cmd["content"] as String, text)
+                "image" -> runImageGen(cmd["content"] as String, text)
                 else -> cmd["content"] as String
             }
             if (!reply.isNullOrBlank()) {
@@ -645,6 +650,61 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         2 -> "操作(2级)"
         3 -> "管理(3级)"
         else -> "操作"
+    }
+
+    /** 插件动作：终端命令（需管理级3+） */
+    private fun runTerminal(content: String): String {
+        val cmd = content.trim().ifBlank { "ls" }
+        val s = com.qitong.gateway.http.TerminalManager.create("QQ插件终端")
+        val (ok, out) = com.qitong.gateway.http.TerminalManager.exec(s.id, cmd)
+        com.qitong.gateway.http.TerminalManager.close(s.id)
+        return if (ok) "🖥 $cmd\n\n$out".take(900) else "⚠️ $out"
+    }
+
+    /** 插件动作：网关技能编码（如 600001=查状态） */
+    private fun runSkillCode(content: String, text: String): String {
+        val code = content.trim().substringBefore(" ").ifBlank { return "⚠️ 未配置技能编码" }
+        val param = text.substringAfter(" ").trim()
+        val result = kotlinx.coroutines.runBlocking {
+            com.qitong.gateway.http.SkillExecutor.execute(db, code, param, 0)
+        }
+        return result
+    }
+
+    /** 插件动作：执行工作流（按名称） */
+    private fun runWorkflowByName(content: String, text: String): String {
+        val name = content.trim().ifBlank { return "⚠️ 未配置工作流名称" }
+        val wf = try { db.getWorkflows(0).firstOrNull { (it["name"] as? String) == name || (it["name"] as? String)?.contains(name, true) == true } } catch (e: Exception) { null }
+            ?: return "⚠️ 工作流「$name」不存在"
+        val stepsJson = try { org.json.JSONArray(wf["steps"] as? String ?: "[]") } catch (e: Exception) { org.json.JSONArray() }
+        val sb = StringBuilder("⚙️ 工作流「${wf["name"]}」执行：\n")
+        for (i in 0 until stepsJson.length()) {
+            val st = stepsJson.getJSONObject(i)
+            val r = com.qitong.gateway.http.WorkflowEngine.runStep(db, st.optString("type", "reply"), st.optString("content", ""))
+            sb.append("${i + 1}. ${st.optString("type", "reply")}: $r\n")
+        }
+        return sb.toString().take(900)
+    }
+
+    /** 插件动作：AI 画图（调用网关画图模型 /v1/images/generations） */
+    private fun runImageGen(content: String, text: String): String {
+        val prompt = if (content.isNotBlank()) "$content $text" else text
+        return try {
+            val req = okhttp3.Request.Builder()
+                .url("http://127.0.0.1:$gatewayPort/v1/images/generations")
+                .addHeader("Content-Type", "application/json")
+                .post("{\"model\":\"\",\"prompt\":${org.json.JSONObject.quote(prompt)},\"n\":1}".toRequestBody("application/json".toMediaType()))
+                .build()
+            http.newCall(req).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) "🎨 画图失败（HTTP ${resp.code}）"
+                else {
+                    val b64 = org.json.JSONObject(body).optJSONArray("data")?.optJSONObject(0)?.optString("b64_json")
+                    if (b64.isNullOrBlank()) "🎨 画图完成，但未返回图片（模型可能不支持）"
+                    else "🎨 画图成功（b64 图片 ${b64.length / 1024}KB，可在管理后台查看）"
+                }
+            }
+        } catch (e: Exception) { "🎨 画图失败：${e.message}" }
     }
 
     /** 按优先级匹配一条启用指令。 */

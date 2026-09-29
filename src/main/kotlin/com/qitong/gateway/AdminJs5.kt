@@ -160,10 +160,14 @@ function qqCmdForm(c){
    '<option value="exact"'+(c.matchType==='exact'?' selected':'')+'">完全等于</option>'+
    '<option value="contains"'+(c.matchType==='contains'?' selected':'')+'">包含关键词</option>'+
    '<option value="regex"'+(c.matchType==='regex'?' selected':'')+'">正则表达式</option></select></div>'+
-  '<div class="form-row"><label>动作</label><select class="input" id="ccAction" onchange="qqCmdHint()">'+
-   '<option value="reply"'+(c.action==='reply'?' selected':'')+'>回复固定文案</option>'+
-   '<option value="http"'+(c.action==='http'?' selected':'')+'>HTTP 接口（GET 返回内容）</option>'+
-   '<option value="ai"'+(c.action==='ai'?' selected':'')+'>AI 角色扮演（内容为人设前缀）</option></select></div>'+
+'<div class="form-row"><label>动作</label><select class="input" id="ccAction" onchange="qqCmdHint()">'+
+    '<option value="reply"'+(c.action==='reply'?' selected':'')+'>💬 回复固定文案</option>'+
+    '<option value="http"'+(c.action==='http'?' selected':'')+'>🌐 HTTP 接口（GET 返回内容）</option>'+
+    '<option value="ai"'+(c.action==='ai'?' selected':'')+'>🤖 AI 角色扮演（内容为人设前缀）</option>'+
+    '<option value="terminal"'+(c.action==='terminal'?' selected':'')+'>🖥 终端命令（内容为命令，管理级）</option>'+
+    '<option value="skill"'+(c.action==='skill'?' selected':'')+'>⚙️ 网关技能（内容为技能编码如600001）</option>'+
+    '<option value="workflow"'+(c.action==='workflow'?' selected':'')+'>⚡ 工作流（内容为工作流名称）</option>'+
+    '<option value="image"'+(c.action==='image'?' selected':'')+'>🎨 AI 画图（内容为提示词前缀）</option></select></div>'+
   '<div class="form-row"><label id="ccContentLabel">内容</label><textarea class="input" id="ccContent" rows="3">'+esc(c.content||'')+'</textarea></div>'+
   '<div class="form-row"><label>每用户冷却（秒）</label><input class="input" id="ccCd" type="number" value="'+(c.cooldown!=null?c.cooldown:5)+'"></div>'+
   '<div class="form-row"><label>优先级（越大越先匹配）</label><input class="input" id="ccPri" type="number" value="'+(c.priority||0)+'"></div>';
@@ -179,14 +183,23 @@ function qqCmdForm(c){
 }
 function qqCmdDel(id){ if(!confirm('删除该指令？'))return;
  api('/api/qq/commands/'+id,{method:'DELETE'}).then(function(r){ if(r.code===0){toast('已删除',true);qqLoadCmds();}else toast(r.msg,false); }); }
+function qqCmdHint(){
+ var a = $('ccAction') ? $('ccAction').value : '';
+ var hints = {reply:'内容：触发后原样发送的文案', http:'内容：要 GET 的接口 URL（返回纯文本）', ai:'内容：AI 人设前缀（拼接用户原话）', terminal:'内容：要执行的 Linux 命令（需管理级3+权限）', skill:'内容：网关技能编码（如 600001=查状态 / 600002=测速排行）', workflow:'内容：工作流名称（触发后执行整条工作流）', image:'内容：画图提示词前缀（拼接用户原话）'};
+ var el = $('ccContentLabel'); if(el) el.textContent = hints[a] || '内容';
+}
 function qqCmdHelp(){
- var html = '<div style="font-size:13px;line-height:1.8;color:var(--text)">'+
-  '<p><b>三种动作：</b></p>'+
-  '<p>1. <b>回复固定文案</b>：触发后把「内容」原样发到群里。例：触发词=帮助，内容="发任意问题@我即可聊天"</p>'+
-  '<p>2. <b>HTTP 插件</b>：触发后 GET 你填的 URL，把返回文本（前500字）发到群里。例：接一个天气/签到/机器人接口。</p>'+
-  '<p>3. <b>AI 角色扮演</b>：把「内容」当人设前缀，拼上用户原话交给大模型。例：内容="你是一个毒舌吐槽王，请简短吐槽："</p>'+
-  '<p style="margin-top:8px"><b>匹配方式：</b>完全等于 / 包含关键词 / 正则表达式。</p>'+
-  '<p><b>内置指令</b>（无需配置）：签到、我的积分、全员禁言、解除全员禁言。</p>'+
+var html = '<div style="font-size:13px;line-height:1.8;color:var(--text)">'+
+   '<p><b>七种动作（插件强化版）：</b></p>'+
+   '<p>1. <b>💬 回复固定文案</b>：触发后把「内容」原样发到群里。例：触发词=帮助，内容="发任意问题@我即可聊天"</p>'+
+   '<p>2. <b>🌐 HTTP 插件</b>：触发后 GET 你填的 URL，把返回文本（前500字）发到群里。例：接一个天气/签到/机器人接口。</p>'+
+   '<p>3. <b>🤖 AI 角色扮演</b>：把「内容」当人设前缀，拼上用户原话交给大模型。例：内容="你是一个毒舌吐槽王，请简短吐槽："</p>'+
+   '<p>4. <b>🖥 终端命令</b>：触发后执行「内容」里的 Linux 命令，返回输出（需用户管理级权限3+）。例：内容="df -h"</p>'+
+   '<p>5. <b>⚙️ 网关技能</b>：触发后执行「内容」里的技能编码。例：内容="600001"（查状态）/"600002"（测速排行）</p>'+
+   '<p>6. <b>⚡ 工作流</b>：触发后执行「内容」里的工作流名称。例：内容="每日早报"</p>'+
+   '<p>7. <b>🎨 AI 画图</b>：触发后调画图模型生成图片（内容为提示词前缀+用户原话）。</p>'+
+   '<p style="margin-top:8px"><b>匹配方式：</b>完全等于 / 包含关键词 / 正则表达式。</p>'+
+   '<p><b>内置指令</b>（无需配置）：签到、我的积分、全员禁言、解除全员禁言。</p>'+
   '<div class="code-block" style="margin-top:8px">HTTP 插件示例 URL：<br>https://你的接口/api/qq?msg=用户原话<br>要求返回纯文本，会原样发到群里</div>'+
   '</div>';
  openModal('插件开发说明', html, null, {hideFooter:true});
