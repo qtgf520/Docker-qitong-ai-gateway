@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-38
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-39
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-38    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-39    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -184,7 +184,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-38"))
+                put("version", JsonPrimitive("3.18.22-39"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -728,7 +728,8 @@ fun Application.moduleWeb(database: Database) {
             val adminKick = body["adminKick"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
             val adminManage = body["adminManage"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
             val groupName = body["groupName"]?.jsonPrimitive?.content
-            database.updateQqGroup(groupOpenid, aiEnabled, welcomeEnabled, greeting, adminMute, adminKick, adminManage, groupName)
+            val groupPrompt = body["groupPrompt"]?.jsonPrimitive?.content
+            database.updateQqGroup(groupOpenid, aiEnabled, welcomeEnabled, greeting, adminMute, adminKick, adminManage, groupName, groupPrompt)
             AdminApi.ok(call, null, "群配置已保存")
         }
         // 删除群配置（含该群下用户记录）
@@ -739,14 +740,7 @@ fun Application.moduleWeb(database: Database) {
             database.deleteQqGroup(openid)
             AdminApi.ok(call, null, "群已删除")
         }
-        // 按群查询用户（群隔离）
-        get("/api/qq/groups/users") {
-            val u = call.requireAuth(database) ?: return@get
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
-            val groupOpenid = call.queryParameters["group"].orEmpty()
-            AdminApi.ok(call, database.getQqUsersByGroup(groupOpenid), "ok")
-        }
-        // 删除单个用户（所有群）
+        // 删除单个用户
         delete("/api/qq/users/{openid}") {
             val openid = call.parameters["openid"].orEmpty()
             val u = call.requireAuth(database) ?: return@delete
@@ -1356,7 +1350,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-38"))
+                put("version", JsonPrimitive("3.18.22-39"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -1978,7 +1972,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-38"))
+                    put("version", JsonPrimitive("3.18.22-39"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

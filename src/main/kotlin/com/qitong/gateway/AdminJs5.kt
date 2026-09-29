@@ -238,6 +238,7 @@ function qqGroupEdit(openid){
   '<div class="form-row"><label><input type="checkbox" id="ggWelcome" '+(g.welcomeEnabled?'checked':'')+'> 启用入群欢迎</label></div>'+
   '<div class="form-row"><label>欢迎语/备注</label><input class="input" id="ggGreeting" value="'+esc(g.greeting||'')+'"></div>'+
   '<div class="form-row"><label>群名称/备注</label><input class="input" id="ggName" value="'+esc(g.groupName||'')+'" placeholder="如：綦桐开发群"></div>'+
+  '<div class="form-row"><label>群专属提示词（System Prompt，覆盖机器人默认人设，留空用默认）</label><textarea class="input" id="ggPrompt" rows="3">'+esc(g.groupPrompt||'')+'</textarea></div>'+
   '<hr style="border-color:var(--border);margin:10px 0"><div style="font-size:12px;color:var(--muted);margin-bottom:6px">🛠 群管权限开关（机器人需为本群管理员才生效）</div>'+
   '<div class="form-row"><label><input type="checkbox" id="ggMute" '+(g.adminMute!==false?'checked':'')+'> 允许全员禁言/解除</label></div>'+
   '<div class="form-row"><label><input type="checkbox" id="ggKick" '+(g.adminKick!==false?'checked':'')+'> 允许群员管理</label></div>'+
@@ -245,7 +246,7 @@ function qqGroupEdit(openid){
   openModal('群配置', html, function(){
    api('/api/qq/groups/update',{method:'POST',body:{groupOpenid:g.groupOpenid,
     aiEnabled:$('ggAi').checked, welcomeEnabled:$('ggWelcome').checked, greeting:$('ggGreeting').value,
-    groupName:$('ggName').value, adminMute:$('ggMute').checked, adminKick:$('ggKick').checked, adminManage:$('ggManage').checked}})
+    groupName:$('ggName').value, adminMute:$('ggMute').checked, adminKick:$('ggKick').checked, adminManage:$('ggManage').checked, groupPrompt:$('ggPrompt').value}})
    .then(function(r){ if(r.code===0){toast('已保存',true);closeModal();qqLoadGroups();}else toast(r.msg,false); });
   });
  });

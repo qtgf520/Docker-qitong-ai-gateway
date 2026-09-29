@@ -790,9 +790,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     private fun askModel(bot: QqBot, key: String, userText: String, userOpenid: String, groupOpenid: String = ""): String? {
         val hist = history.getOrPut(key) { mutableListOf() }
         val msgs = JSONArray()
-        // ★ 按群取人设（群隔离）：群内用群记录，私聊 group 为空
-        val userPersona = (db.getQqUserByGroup(userOpenid, groupOpenid) ?: db.getQqUser(userOpenid))?.get("persona") as? String?
+        // ★ 按群取人设（群隔离兼容：全局用户），群专属提示词优先
+        val groupCfg = if (groupOpenid.isNotBlank()) db.getQqGroupConfig(groupOpenid) else null
+        val groupPrompt = groupCfg?.get("groupPrompt") as? String
+        val userPersona = db.getQqUser(userOpenid)?.get("persona") as? String?
         val sys = when {
+            !groupPrompt.isNullOrBlank() -> groupPrompt  // 群专属提示词最高优先
             !userPersona.isNullOrBlank() -> userPersona
             bot.systemPrompt.isNotBlank() -> bot.systemPrompt
             else -> ""
