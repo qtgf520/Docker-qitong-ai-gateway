@@ -207,8 +207,27 @@ loaders.profile = function(){
     '<div class="card"><h3>账户</h3><div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div><div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div></div>',
     '<div class="card"><h3>邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag"></span></div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
    '</div>',
-   '<div class="card"><h3>限流设置 <span style="font-size:12px;color:var(--muted)">QPS + 每日配额，0=不限</span></h3><div id="rateBox">加载中...</div></div>'
+   '<div class="card"><h3>余额账单 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadBalanceLogs()">刷新</button></h3><div id="balLogBox" style="color:var(--muted);font-size:12px">加载中...</div></div>',
+    '<div class="card"><h3>限流设置 <span style="font-size:12px;color:var(--muted)">QPS + 每日配额，0=不限</span></h3><div id="rateBox">加载中...</div></div>'
   ].join('');
+
+  // 加载余额账单
+  loadBalanceLogs();
+ };
+ window.loadBalanceLogs = function(){
+  api('/api/me/balance-logs').then(function(r){
+   var el = $('balLogBox'); if(!el) return;
+   var list = (r && r.data) || [];
+   if(!list.length){ el.innerHTML = '<div style="color:var(--muted);padding:8px">暂无账单记录。充值/模型扣费后会显示在这里。</div>'; return; }
+   var rows = list.map(function(b){
+    var sign = (b.type === 'recharge' || b.type === 'commission') ? '+' : '';
+    var color = (b.type === 'recharge' || b.type === 'commission') ? 'var(--green)' : 'var(--red)';
+    var t = {recharge:'充值', consume:'扣费', commission:'返佣', admin_deduct:'管理员扣款'}[b.type] || b.type;
+    return '<tr><td>' + t + '</td><td style="color:' + color + ';font-weight:600">' + sign + '¥' + (b.amount||0).toFixed(2) + '</td><td style="color:var(--muted)">' + esc(b.remark||'') + '</td><td style="font-size:11px;color:var(--muted)">' + new Date(b.createdAt).toLocaleString('zh-CN',{hour12:false}) + '</td></tr>';
+   }).join('');
+   el.innerHTML = '<div class="table-wrap"><table style="min-width:520px"><thead><tr><th>类型</th><th>金额</th><th>说明</th><th>时间</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  });
+ };
   // 加载限流配置
   api('/api/me/rate').then(function(rr){
    if(rr.code === 0 && rr.data){

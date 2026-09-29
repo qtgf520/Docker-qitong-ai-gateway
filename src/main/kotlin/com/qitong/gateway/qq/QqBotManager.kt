@@ -192,6 +192,26 @@ object QqBotManager {
             }
             println("[QQBot] 已尝试启动 ${bots.count { (it["enabled"] as? Boolean) == true }} 个机器人")
         }
+        // ★ 掉线自动重登监控：每 5 分钟检查所有已启用机器人，掉线（ERROR/OFFLINE 且重试后仍离线）自动重启
+        scope.launch(Dispatchers.IO) {
+            while (true) {
+                kotlinx.coroutines.delay(5 * 60 * 1000L)
+                runCatching {
+                    val bots = database.getQqBots().filter { (it["enabled"] as? Boolean) == true }
+                    bots.forEach { row ->
+                        val b = botFromRow(row)
+                        val st = statusOf(b.id)
+                        val s = st.status
+                        val lastErr = st.lastError
+                        // ERROR/OFFLINE 说明网关已掉线且重连机制没救回来 → 强制重启（重新拉连接+换token）
+                        if (s == QqBotStatus.ERROR || s == QqBotStatus.OFFLINE) {
+                            println("[QQBot] ${b.appid} 掉线自动重登（status=$s lastErr=$lastErr）")
+                            startBot(b)
+                        }
+                    }
+                }.onFailure { e -> System.err.println("[QQBot] 掉线重登检查异常: ${e.message}") }
+            }
+        }
     }
 
     private fun botFromRow(row: Map<String, Any?>): QqBot = QqBot(
@@ -218,7 +238,9 @@ object QqBotManager {
                 state.status = s
                 state.lastError = err
                 if (s == QqBotStatus.ONLINE) state.readyAt = System.currentTimeMillis()
-            }
+            },
+            // ★ 掉线自动重登：重连时用 AppID+AppSecret 重新换 AccessToken，防止 token 过期后永远连不上
+            onTokenRefresh = { api.getAccessToken(bot) }
         )
         clients[bot.id] = client
         // 新版鉴权：先换 AccessToken（AppID+AppSecret），失败则直接报错不连接

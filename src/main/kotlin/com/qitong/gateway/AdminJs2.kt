@@ -324,7 +324,8 @@ loaders.chat = function(){
      '<div class="chat-toolbar">'+
       '<button class="chat-burger" onclick="toggleChatSide()" title="会话列表">☰</button>'+
       '<span class="chat-toolbar-title" id="chatCurTitle">💬 聊天</span>'+
-      '<select id="chatModel" class="input" style="width:190px;border-radius:16px;padding:6px 10px">'+modelOpts+'</select>'+
+      '<select id="chatModel" class="input" style="width:170px;border-radius:16px;padding:6px 10px">'+modelOpts+'</select>'+
+      '<button class="chat-toggle" id="thinkBtn" onclick="toggleThink()" title="开启后模型进行深度推理（思考型模型生效）">🧠 深度思考</button>'+
       '<button class="btn-ghost btn-sm" onclick="deleteConv()" title="删除当前会话">🗑</button>'+
      '</div>'+
      '<div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">👋 点 ☰ 打开会话列表，输入框固定在底部，📎可发图片/文件</div></div></div>',
@@ -385,23 +386,64 @@ window.loadConvMsgs = function(){
   }
  });
 };
-// 轻量 Markdown 渲染：转义 HTML -> 代码块 -> 图片 -> 换行
+// ===== 深度思考开关（开启后请求带 thinking，思考型模型生效） =====
+window._thinkOn = function(){ try{ return localStorage.getItem('qt_think')==='1'; }catch(e){ return false; } };
+window.toggleThink = function(){
+ var on = !window._thinkOn();
+ try{ localStorage.setItem('qt_think', on?'1':'0'); }catch(e){}
+ var tb = $('thinkBtn'); if(tb) tb.classList.toggle('on', on);
+ toast(on ? '🧠 深度思考已开启' : '深度思考已关闭', true);
+};
+// 轻量 Markdown 渲染：转义 HTML -> 代码壳(复制/下载) -> think剥离 -> 图片 -> 换行
+window._codeStore = window._codeStore || [];
+var CODE_EXT = {js:'.js',javascript:'.js',ts:'.ts',typescript:'.ts',python:'.py',py:'.py',bash:'.sh',sh:'.sh',shell:'.sh',html:'.html',css:'.css',json:'.json',java:'.java',kotlin:'.kt',kt:'.kt',sql:'.sql',go:'.go',rust:'.rs',rs:'.rs',c:'.c',cpp:'.cpp',yaml:'.yml',yml:'.yml',md:'.md',markdown:'.md',xml:'.xml',dockerfile:'.Dockerfile'};
 function renderMd(t){
- var s = esc(t||'');
- // 代码块 ```lang\n...```
- s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, function(m,lang,code){
-  return '<pre><code>'+code+'</code></pre>';
+ var codes = [];
+ var s = String(t||'');
+ // 先抽离代码块（避免 esc 破坏）
+ s = s.replace(/```([\w+#.-]*)[^\S\n]*\n?([\s\S]*?)```/g, function(m, lang, code){
+  codes.push({lang:(lang||'text').toLowerCase(), code:code.replace(/\n+$/,'')});
+  return '\u0000C' + (codes.length-1) + '\u0000';
  });
+ s = esc(s);
+ // 保险：剥离残余 think 标签
+ s = s.replace(/&lt;think&gt;[\s\S]*?(&lt;\/think&gt;|$)/g, '');
  // 行内 `code`
- s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+ s = s.replace(/`([^`\n]+)`/g, '<code class="ic">$1</code>');
  // 图片 URL
- s = s.replace(/(https?:\/\/[^\s<>\)]+\.(png|jpe?g|gif|webp|svg))/gi, '<img src="$1" alt="img">');
+ s = s.replace(/(https?:\/\/[^\s<>\)]+\.(png|jpe?g|gif|webp|svg))/gi, '<img src="$1" alt="img" style="max-width:100%;border-radius:6px">');
  // /uploads/ 本地图片
- s = s.replace(/(\/uploads\/[^\s<>\)]+)/g, '<img src="$1" alt="img">');
+ s = s.replace(/(\/uploads\/[^\s<>\)]+)/g, '<img src="$1" alt="img" style="max-width:100%;border-radius:6px">');
+ // 加粗
+ s = s.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
  // 换行
  s = s.replace(/\n/g, '<br>');
+ // 还原代码壳
+ s = s.replace(/\u0000C(\d+)\u0000/g, function(m, i){
+  var c = codes[+i]; if(!c) return '';
+  window._codeStore.push({code:c.code, ext:CODE_EXT[c.lang]||'.txt'});
+  var si = window._codeStore.length - 1;
+  return '<div class="code-shell"><div class="code-head"><span class="code-lang">'+esc(c.lang)+'</span>'+
+   '<span class="code-ops"><button class="code-btn" onclick="copyCodeBlock('+si+',this)">复制</button>'+
+   '<button class="code-btn" onclick="downloadCodeBlock('+si+')">下载</button></span></div>'+
+   '<pre><code>'+esc(c.code)+'</code></pre></div>';
+ });
  return s;
 }
+window.copyCodeBlock = function(i, btn){
+ var c = window._codeStore[i]; if(!c) return;
+ copyText(c.code);
+ if(btn){ btn.textContent = '已复制'; setTimeout(function(){ btn.textContent = '复制'; }, 1200); }
+};
+window.downloadCodeBlock = function(i){
+ var c = window._codeStore[i]; if(!c) return;
+ var blob = new Blob([c.code], {type:'text/plain;charset=utf-8'});
+ var a = document.createElement('a');
+ a.href = URL.createObjectURL(blob);
+ a.download = 'snippet-' + Date.now() + c.ext;
+ document.body.appendChild(a); a.click();
+ setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+};
 // 待发送附件
 state.chatAttachments = state.chatAttachments || [];
 window.pickChatFile = function(){
@@ -457,7 +499,7 @@ window.sendChat = function(){
  var col = aRow.querySelector('.assistant-col');
  msgs.scrollTop = msgs.scrollHeight;
  input.value = ''; state.chatAttachments=[]; renderAttachPreview();
- api('/api/chat', { method:'POST', body: { conversationId: convId, content: sendText, model: model } }).then(function(r){
+ api('/api/chat', { method:'POST', body: { conversationId: convId, content: sendText, model: model, thinking: window._thinkOn() } }).then(function(r){
   if(!col) return;
   if(r.code === 0){
    var reply = r.data.reply || '(无响应)';

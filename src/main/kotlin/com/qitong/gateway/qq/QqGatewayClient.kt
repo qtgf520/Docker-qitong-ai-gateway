@@ -26,7 +26,8 @@ class QqGatewayClient(
     val bot: QqBot,
     private val onGroupMessage: (QqGroupMessage) -> Unit,
     private val onC2cMessage: (QqC2cMessage) -> Unit,
-    private val onStatusChange: (QqBotStatus, String) -> Unit
+    private val onStatusChange: (QqBotStatus, String) -> Unit,
+    private val onTokenRefresh: () -> String? = { null }
 ) {
     private val client = OkHttpClient.Builder()
         .pingInterval(0, TimeUnit.SECONDS) // 用业务心跳，不用 OkHttp ping
@@ -69,6 +70,19 @@ class QqGatewayClient(
 
     private fun connect() {
         if (stopped.get()) return
+        // ★ 掉线重连：每次连接前尝试重新换取 AccessToken（AppID+AppSecret），避免用过期 token 重连失败
+        //   未提供 onTokenRefresh（返回 null）时保持原行为用旧 token；提供但换取失败则暂缓重连
+        val fresh = onTokenRefresh()
+        if (fresh != null) {
+            if (fresh.isNotBlank()) {
+                this.accessToken = fresh
+            } else {
+                // 换取失败：保持离线，等待下次重试（指数退避）
+                System.err.println("[QQBot] ${bot.appid} 重连时刷新 AccessToken 失败，稍后重试")
+                scheduleReconnect()
+                return
+            }
+        }
         onStatusChange(QqBotStatus.CONNECTING, "连接中…")
         val url = if (bot.useSandbox) URL_SANDBOX else URL_PROD
         val req = Request.Builder().url(url).build()

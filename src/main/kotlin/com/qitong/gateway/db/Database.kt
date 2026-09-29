@@ -116,6 +116,18 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
+            // 余额账单（充值/扣费/返佣流水，用户可查）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS balance_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    type TEXT NOT NULL,
+                    amount REAL NOT NULL DEFAULT 0,
+                    balance_after REAL NOT NULL DEFAULT 0,
+                    remark TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )"""
+            )
             // 测速历史
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS speed_history (
@@ -967,11 +979,32 @@ class Database(private val dbPath: String) {
 
     // ============ 商业化：余额/充值/扣费 ============
 
-    /** 充值（增加余额 + 累计充值 + 给邀请人返佣） */
+    /** 写余额账单流水（充值/扣费/返佣） */
+    fun addBalanceLog(userId: Long, type: String, amount: Double, remark: String) {
+        val bal = getUserBalance(userId)
+        stmt("INSERT INTO balance_log (user_id,type,amount,balance_after,remark,created_at) VALUES (?,?,?,?,?,?)",
+            userId, type, amount, bal, remark, System.currentTimeMillis())
+    }
+
+    /** 查询某用户余额账单（按时间倒序） */
+    fun getBalanceLogs(userId: Long, limit: Int = 100): List<Map<String, Any?>> =
+        query("SELECT * FROM balance_log WHERE user_id=? ORDER BY created_at DESC LIMIT $limit", userId).map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "type" to (row["type"] as? String ?: ""),
+                "amount" to ((row["amount"] as? Number)?.toDouble() ?: 0.0),
+                "balanceAfter" to ((row["balance_after"] as? Number)?.toDouble() ?: 0.0),
+                "remark" to (row["remark"] as? String ?: ""),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+
+    /** 充值（增加余额 + 累计充值 + 给邀请人返佣 + 记流水） */
     fun rechargeBalance(userId: Long, amount: Double): Boolean {
         val user = getUserById(userId) ?: return false
         if (amount < 0) return false
         stmt("UPDATE users SET balance = balance + ?, total_recharge = total_recharge + ? WHERE id=?", amount, amount, userId)
+        addBalanceLog(userId, "recharge", amount, "余额充值")
         // 分销返佣：邀请人获得 amount * commissionRate 佣金
         if (user.inviterId > 0 && user.inviterId != userId) {
             val inviter = getUserById(user.inviterId)
@@ -979,6 +1012,7 @@ class Database(private val dbPath: String) {
                 val commission = amount * (inviter.commissionRate.takeIf { it in 0.0..1.0 } ?: 0.1)
                 if (commission > 0) {
                     stmt("UPDATE users SET balance = balance + ? WHERE id=?", commission, user.inviterId)
+                    addBalanceLog(user.inviterId, "commission", commission, "下级 ${user.username} 充值返佣")
                 }
             }
         }
@@ -989,6 +1023,7 @@ class Database(private val dbPath: String) {
     fun deductBalanceAdmin(userId: Long, amount: Double): Boolean {
         if (amount <= 0) return false
         stmt("UPDATE users SET balance = balance - ? WHERE id=?", amount, userId)
+        addBalanceLog(userId, "admin_deduct", -amount, "管理员扣款")
         return true
     }
 
@@ -1002,6 +1037,7 @@ class Database(private val dbPath: String) {
         if (bal.compareTo(amt) < 0) return false  // 余额不足
         val newBal = bal.subtract(amt)
         stmt("UPDATE users SET balance = ? WHERE id=?", newBal.toDouble(), userId)
+        addBalanceLog(userId, "consume", -amount, "模型调用扣费")
         return true
     }
 

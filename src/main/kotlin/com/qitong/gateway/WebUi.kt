@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v3.18.22-32"
+    private const val VER = "v3.18.22-33"
 
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -376,6 +376,17 @@ input[type=range]{accent-color:var(--primary)}
 .chat-att{width:38px;height:38px;border-radius:20px;border:1px solid var(--border);background:var(--surface);color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;font-size:16px}
 .chat-att:hover{background:var(--surface2)}
 .chat-reason{margin:0 0 6px;padding:6px 10px;background:rgba(120,120,120,.08);border:1px dashed var(--border);border-radius:10px;font-size:12px;color:var(--muted);cursor:pointer;max-width:72%}
+.chat-toggle{flex-shrink:0;padding:6px 12px;border-radius:16px;border:1px solid var(--border);background:var(--surface);color:var(--muted);font-size:12px;cursor:pointer;transition:.15s}
+.chat-toggle:hover{border-color:var(--primary);color:var(--text)}
+.chat-toggle.on{border-color:var(--primary);background:rgba(var(--primary-rgb),.14);color:var(--primary)}
+.code-shell{margin:6px 0;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--inset)}
+.code-head{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)}
+.code-lang{font-family:ui-monospace,monospace;text-transform:lowercase}
+.code-ops{display:flex;gap:6px}
+.code-btn{padding:2px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:11px;cursor:pointer}
+.code-btn:hover{border-color:var(--primary);color:var(--primary)}
+.code-shell pre{margin:0;padding:10px;overflow-x:auto;font-size:12px;line-height:1.5;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#e2e8f0}
+.code-shell code{font-family:inherit;background:none;color:inherit}
 .chat-reason .cr-body{display:none;white-space:pre-wrap;line-height:1.6;margin-top:4px}
 .chat-reason.open .cr-body{display:block}
 .bubble pre{background:#1e1e2e;color:#e6e6e6;border-radius:8px;padding:10px 12px;margin:6px 0;overflow-x:auto;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}
