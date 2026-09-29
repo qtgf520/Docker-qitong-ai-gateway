@@ -27,13 +27,25 @@ function skillLoad(){
     '<td>'+(s.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
     '<td style="white-space:nowrap">'+
      '<button class="btn-ghost btn-sm" onclick="skillRun('+s.id+')">执行</button> '+
-     '<button class="btn-ghost btn-sm" onclick="skillForm('+JSON.stringify(s).replace(/"/g,'"')+')">编辑</button> '+
+     '<button class="btn-ghost btn-sm" onclick="skillForm('+s.id+')">编辑</button> '+
      '<button class="btn-ghost btn-sm danger" onclick="skillDel('+s.id+')">删</button></td></tr>';
   }).join('');
   el.innerHTML='<div class="card" style="box-shadow:none"><div class="table-wrap"><table><thead><tr><th>名称</th><th>触发器</th><th>动作</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
  });
 }
-function skillForm(s){
+function skillForm(id){
+ if(!id){ // 新建
+  openSkillModal({});
+  return;
+ }
+ api('/api/skills').then(function(r){
+  var list=(r&&r.data)||[];
+  var s=list.filter(function(x){return x.id===id;})[0];
+  if(!s){ toast('技能不存在',false); return; }
+  openSkillModal(s);
+ });
+}
+function openSkillModal(s){
  s=s||{};
  var html='<div class="form-row"><label>技能名称</label><input class="input" id="skName" value="'+esc(s.name||'')+'" placeholder="如：查状态"></div>'+
   '<div class="form-row"><label>触发器（QQ机器人发这个词触发）</label><input class="input" id="skTrigger" value="'+esc(s.trigger||'')+'" placeholder="如：网关状态"></div>'+
@@ -84,13 +96,22 @@ function wfLoad(){
     '<td>'+(w.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
     '<td style="white-space:nowrap">'+
      '<button class="btn-ghost btn-sm" onclick="wfRun('+w.id+')">运行</button> '+
-     '<button class="btn-ghost btn-sm" onclick="wfForm('+JSON.stringify(w).replace(/"/g,'"')+')">编辑</button> '+
+     '<button class="btn-ghost btn-sm" onclick="wfForm('+w.id+')">编辑</button> '+
      '<button class="btn-ghost btn-sm danger" onclick="wfDel('+w.id+')">删</button></td></tr>';
   }).join('');
   el.innerHTML='<div class="card" style="box-shadow:none"><div class="table-wrap"><table><thead><tr><th>名称</th><th>触发</th><th>步骤</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
  });
 }
-function wfForm(w){
+function wfForm(id){
+ if(!id){ openWfModal({}); return; }
+ api('/api/workflows').then(function(r){
+  var list=(r&&r.data)||[];
+  var w=list.filter(function(x){return x.id===id;})[0];
+  if(!w){ toast('工作流不存在',false); return; }
+  openWfModal(w);
+ });
+}
+function openWfModal(w){
  w=w||{};
  var steps=[]; try{ steps=JSON.parse(w.steps||'[]'); }catch(e){}
  var stepHtml = steps.map(function(st,i){
@@ -174,13 +195,22 @@ function mcpLoad(){
     '<td>'+(m.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
     '<td style="white-space:nowrap">'+
      '<button class="btn-ghost btn-sm" onclick="mcpTest('+m.id+')">测试</button> '+
-     '<button class="btn-ghost btn-sm" onclick="mcpForm('+JSON.stringify(m).replace(/"/g,'"')+')">编辑</button> '+
+     '<button class="btn-ghost btn-sm" onclick="mcpForm('+m.id+')">编辑</button> '+
      '<button class="btn-ghost btn-sm danger" onclick="mcpDel('+m.id+')">删</button></td></tr>';
   }).join('');
   el.innerHTML='<div class="card" style="box-shadow:none"><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>地址</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
  });
 }
-function mcpForm(m){
+function mcpForm(id){
+ if(!id){ openMcpModal({}); return; }
+ api('/api/mcp').then(function(r){
+  var list=(r&&r.data)||[];
+  var m=list.filter(function(x){return x.id===id;})[0];
+  if(!m){ toast('MCP不存在',false); return; }
+  openMcpModal(m);
+ });
+}
+function openMcpModal(m){
  m=m||{};
  var html='<div class="form-row"><label>服务器名称</label><input class="input" id="mcpName" value="'+esc(m.name||'')+'" placeholder="如：数据库 MCP"></div>'+
   '<div class="form-row"><label>类型</label><select class="input" id="mcpType"><option value="http"'+(m.serverType!=='sse'?' selected':'')+'>HTTP</option><option value="sse"'+(m.serverType==='sse'?' selected':'')+'>SSE 流式</option></select></div>'+
