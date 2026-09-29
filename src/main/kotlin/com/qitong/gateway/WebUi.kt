@@ -335,17 +335,30 @@ input[type=range]{accent-color:var(--primary)}
 .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
 .modal-head h3{font-size:14px;color:var(--text)}
 .modal-close{background:none;border:0;color:var(--muted);font-size:20px;cursor:pointer}
-/* ===== 聊天 ===== */
-.chat-box{display:flex;flex-direction:column;height:calc(100vh - 190px);min-height:360px}
-.chat-msgs{flex:1;overflow-y:auto;padding:14px;background:var(--inset);border:1px solid var(--border);border-radius:8px;margin-bottom:10px}
-.msg-row{display:flex;margin-bottom:10px}
+/* ===== 聊天（自适应：消息区可滚动，输入框固定底部不滑走） ===== */
+.chat-layout{display:flex;gap:12px;height:calc(100dvh - 260px);min-height:340px}
+.chat-side{width:220px;flex-shrink:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;overflow:hidden}
+.chat-side-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px}
+.chat-side-list{flex:1;overflow-y:auto;padding:6px}
+.chat-conv-item{padding:9px 10px;border-radius:6px;cursor:pointer;margin-bottom:4px;transition:.15s}
+.chat-conv-item:hover{background:var(--surface2)}
+.chat-conv-item.active{background:rgba(var(--primary-rgb),.12)}
+.chat-conv-title{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-conv-time{font-size:11px;color:var(--muted);margin-top:2px}
+.chat-main{flex:1;display:flex;flex-direction:column;min-width:0}
+.chat-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-shrink:0}
+.chat-box{display:flex;flex-direction:column;flex:1;min-height:0}
+.chat-msgs{flex:1;overflow-y:auto;padding:14px;background:var(--inset);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;min-height:0}
+.msg-row{display:flex;margin-bottom:12px;align-items:flex-start}
 .msg-row.user{justify-content:flex-end}
-.msg-row .bubble{max-width:72%;padding:9px 13px;border-radius:8px;font-size:13px;line-height:1.6;word-break:break-word}
-.msg-row.user .bubble{background:var(--primary);color:#fff}
-.msg-row.assistant .bubble{background:var(--surface2);border:1px solid var(--border)}
+.chat-ava{width:28px;height:28px;border-radius:50%;background:rgba(var(--primary-rgb),.15);display:flex;align-items:center;justify-content:center;font-size:14px;margin-right:8px;flex-shrink:0}
+.msg-row .bubble{max-width:76%;padding:9px 13px;border-radius:12px;font-size:13px;line-height:1.6;word-break:break-word;white-space:pre-wrap}
+.msg-row.user .bubble{background:var(--primary);color:#fff;border-bottom-right-radius:4px}
+.msg-row.assistant .bubble{background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:4px}
 .msg-row.system .bubble{background:transparent;color:var(--muted);text-align:center;max-width:100%;font-size:12px}
-.chat-input{display:flex;gap:8px}
-.chat-input .input{flex:1}
+.msg-time{font-size:10px;opacity:.65;margin-top:3px;text-align:right}
+.chat-input{display:flex;gap:8px;flex-shrink:0;padding-top:2px}
+.chat-input .input{flex:1;min-width:0}
 /* ===== 地址行 / 代码 ===== */
 .addr-line{background:var(--inset);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text);cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;transition:.15s}
 .addr-line:hover{border-color:var(--primary)}
@@ -389,6 +402,10 @@ input[type=range]{accent-color:var(--primary)}
   .topbar-right{flex-shrink:0}
   .topbar-title .ver{display:none}
   .user-name{display:none}
+  /* 移动端聊天：会话列表窄栏 */
+  .chat-layout{height:calc(100dvh - 300px)}
+  .chat-side{width:110px}
+  .chat-main .chat-toolbar select{width:150px!important}
 }
 /* ===== 主题外观设置控件 ===== */
 .swatch-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}

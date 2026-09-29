@@ -291,77 +291,102 @@ window.runSpeedTest = function(){
     }
   });
 };
-// ===== 聊天 =====
+// ===== 聊天（现代双栏：左会话列表 + 右消息区，输入框固定底部，含 qtai-sj） =====
 loaders.chat = function(){
  var box = $('view-chat');
  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
  Promise.all([api('/api/conversations'), api('/api/models')]).then(function(res){
   state.conversations = res[0].data || []; state.models = res[1].data || [];
-  var convOpts = '<option value="0">新对话</option>' + state.conversations.map(function(c){ return '<option value="'+c.id+'">'+esc(c.title)+'</option>'; }).join('');
-  var modelOpts = state.models.map(function(m){ return '<option value="'+esc(m.modelId)+'">'+esc(m.displayName)+'</option>'; }).join('') || '<option value="qtai-sj">自动化切换</option>';
+  var convList = (state.conversations||[]).map(function(c){
+   return '<div class="chat-conv-item'+(state.currentChatConv===c.id?' active':'')+'" onclick="openConv('+c.id+')">'+
+    '<div class="chat-conv-title">'+esc(c.title||('会话'+c.id))+'</div>'+
+    '<div class="chat-conv-time">'+convTime(c.updatedAt||c.createdAt)+'</div></div>';
+  }).join('') || '<div style="color:var(--muted);font-size:12px;padding:10px">暂无会话</div>';
+  var modelOpts = state.models.map(function(m){ return '<option value="'+esc(m.modelId)+'"'+(state.chatModel===m.modelId?' selected':'')+'>'+esc(m.displayName)+'</option>'; }).join('');
+  if(!modelOpts) modelOpts = '<option value="qtai-sj" selected>🔄 自动化切换</option>';
   box.innerHTML = [
-   '<div class="card" style="padding:12px 16px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">',
-    '<select id="chatConv" class="input" style="width:160px" onchange="loadConvMsgs()">'+convOpts+'</select>',
-    '<select id="chatModel" class="input" style="width:180px">'+modelOpts+'</select>',
-    '<button class="btn" onclick="newChat()">+ 新聊天</button>',
-    '<button class="btn-ghost" onclick="deleteConv()">删除会话</button>',
-   '</div></div>',
-   '<div class="card chat-box"><div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">选择或新建会话开始聊天</div></div></div>',
-    '<div class="chat-input"><input id="chatInput" class="input" placeholder="输入消息... (Enter发送)" onkeydown="if(event.key===\'Enter\')sendChat()"><button class="btn" onclick="sendChat()">发送</button></div>',
+   '<div class="chat-layout">',
+    '<div class="chat-side">',
+     '<div class="chat-side-head"><b>💬 会话</b><button class="btn-ghost btn-sm" onclick="newChat()" title="新聊天">+ 新</button></div>',
+     '<div class="chat-side-list">'+convList+'</div>',
+    '</div>',
+    '<div class="chat-main">',
+     '<div class="chat-toolbar"><select id="chatModel" class="input" style="width:220px">'+modelOpts+'</select><span style="flex:1"></span><button class="btn-ghost btn-sm danger" onclick="deleteConv()">删除会话</button></div>',
+     '<div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">👋 选择或新建会话开始聊天，输入框固定在底部</div></div></div>',
+     '<div class="chat-input"><input id="chatInput" class="input" placeholder="输入消息... (Enter发送)" onkeydown="if(event.key===\'Enter\')sendChat()"><button class="btn" onclick="sendChat()">发送</button></div>',
+    '</div>',
    '</div>'
   ].join('');
+  if(state.conversations.length && !state.currentChatConv){
+   state.currentChatConv = state.conversations[0].id;
+   loadConvMsgs();
+  }
  });
 };
+function convTime(ts){
+ if(!ts) return '';
+ var d = new Date(ts); var now = new Date();
+ if(d.toDateString()===now.toDateString()) return d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');
+ return (d.getMonth()+1)+'/'+d.getDate();
+}
+function fmtTime2(ts){
+ if(!ts) return '';
+ var d = new Date(ts);
+ return d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');
+}
+window.openConv = function(id){
+ state.currentChatConv = id;
+ document.querySelectorAll('.chat-conv-item').forEach(function(x){ x.classList.remove('active'); });
+ var el2 = document.querySelector('.chat-conv-item[onclick="openConv('+id+')"]');
+ if(el2) el2.classList.add('active');
+ loadConvMsgs();
+};
 window.loadConvMsgs = function(){
- var sel = $('chatConv'); if(!sel) return;
- var id = sel.value;
- state.currentChatConv = parseInt(id) || 0;
- if(!id || id === '0'){ $('chatMsgs').innerHTML = '<div class="msg-row system"><div class="bubble">新对话</div></div>'; return; }
- api('/api/conversations/' + id).then(function(r){
+ api('/api/conversations/'+(state.currentChatConv||0)).then(function(r){
   if(r.code === 0){
    var msgs = r.data.messages || [];
    $('chatMsgs').innerHTML = msgs.map(function(m){
-    return '<div class="msg-row '+m.role+'"><div class="bubble">'+esc(m.content)+'</div></div>';
+    var t = fmtTime2(m.createdAt);
+    if(m.role==='user') return '<div class="msg-row user"><div class="bubble">'+esc(m.content)+'<div class="msg-time">'+t+'</div></div></div>';
+    return '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble">'+esc(m.content)+'<div class="msg-time">'+t+'</div></div></div>';
    }).join('') || '<div class="msg-row system"><div class="bubble">空对话</div></div>';
-   var el = $('chatMsgs'); el.scrollTop = el.scrollHeight;
+   var e3 = $('chatMsgs'); if(e3) e3.scrollTop = e3.scrollHeight;
   }
  });
 };
 window.sendChat = function(){
  var input = $('chatInput'); if(!input) return;
  var content = input.value.trim(); if(!content) return;
- if(window._chatBusy) return;   // 防重复发送：新会话并发提交会创建多个会话
+ if(window._chatBusy) return;
  window._chatBusy = true;
  var convId = state.currentChatConv || 0;
  var model = $('chatModel').value || 'qtai-sj';
+ state.chatModel = model;
  var msgs = $('chatMsgs');
- msgs.innerHTML += '<div class="msg-row user"><div class="bubble">'+esc(content)+'</div></div><div class="msg-row assistant"><div class="bubble" id="waitBubble">思考中...</div></div>';
+ msgs.innerHTML += '<div class="msg-row user"><div class="bubble">'+esc(content)+'<div class="msg-time">'+fmtTime2(Date.now())+'</div></div></div>'+
+  '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble" id="waitBubble">思考中...</div></div>';
  msgs.scrollTop = msgs.scrollHeight;
  input.value = '';
  api('/api/chat', { method:'POST', body: { conversationId: convId, content: content, model: model } }).then(function(r){
   var wb = $('waitBubble');
-  if(r.code === 0){
-   var reply = r.data.reply || '(无响应)';
-   // 打字机逐字显示效果
-   var full = reply;
-   var i = 0;
-   var tick = setInterval(function(){
-    i += 2; // 每次2字，流畅
-    if(wb){
-     wb.textContent = full.slice(0, i) + (i < full.length ? '▍' : '');
-     msgs.scrollTop = msgs.scrollHeight;
-    }
-    if(i >= full.length){ clearInterval(tick); if(wb) wb.textContent = full; msgs.scrollTop = msgs.scrollHeight; }
-   }, 16);
-   if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, full.length * 2 + 200); }
-  } else {
-   if(wb) wb.textContent = ' ' + (r.msg || '失败');
+  if(wb){
+   if(r.code === 0){
+    var reply = r.data.reply || '(无响应)';
+    var full = reply; var i = 0;
+    var tick = setInterval(function(){
+     i += 2;
+     if(wb){ wb.textContent = full.slice(0, i) + (i < full.length ? '▍' : ''); msgs.scrollTop = msgs.scrollHeight; }
+     if(i >= full.length){ clearInterval(tick); if(wb) wb.textContent = full; msgs.scrollTop = msgs.scrollHeight; }
+    }, 16);
+    if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, full.length * 2 + 200); }
+   } else {
+    wb.textContent = ' ' + (r.msg || '失败');
+   }
   }
  }).finally(function(){ window._chatBusy = false; });
 };
 window.newChat = function(){
  state.currentChatConv = 0;
- var sel = $('chatConv'); if(sel) sel.value = '0';
  var msgs = $('chatMsgs'); if(msgs) msgs.innerHTML = '<div class="msg-row system"><div class="bubble">新对话，开始输入吧</div></div>';
  var inp = $('chatInput'); if(inp) inp.focus();
  toast('已开始新聊天', true);

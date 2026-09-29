@@ -263,27 +263,37 @@ private fun providerToMap(p: Provider) = mapOf(
 
     // ============ 模型 CRUD（多租户） ============
 
-    /** 获取可见模型：admin=全部；普通用户=系统公用+公用+自己私有（含属主用户名） */
+    /** 获取可见模型：admin=全部；普通用户=系统公用+公用+自己私有（含属主用户名）；末尾附 qtai-sj 自动化切换 */
     fun getVisibleModels(database: Database, user: User): List<Map<String, Any?>> {
+        val qtaiVirtual = mutableMapOf<String, Any>(
+            "id" to -1L, "modelId" to "qtai-sj", "displayName" to "🔄 自动化切换",
+            "providerId" to 0L, "isPublic" to true, "isEnabled" to true, "isDefault" to false,
+            "ownerId" to 0L, "ownerName" to "系统", "price" to 0.0, "contextWindow" to 0,
+            "customAlias" to "", "virtual" to true
+        )
         if (user.role == "admin") {
-            return database.getModels().map { m ->
+            val list = database.getModels().map { m ->
                 modelToMap(m).toMutableMap().apply {
                     val owner = if (m.ownerId > 0) database.getUserById(m.ownerId) else null
                     this["ownerName"] = owner?.username ?: (if (m.ownerId == 0L) "系统" else "未知")
                 }
-            }
+            }.toMutableList()
+            list.add(qtaiVirtual)
+            return list
         }
         val providerIds = database.getVisibleProviders(user.id)
             .filter { it.isPublic || it.ownerId == user.id || it.ownerId == 0L && hasPerm(user, Perm.P_MANAGE) }
             .map { it.id }
-        return database.getVisibleModels(user.id)
+        val list = database.getVisibleModels(user.id)
             .filter { m -> m.ownerId == user.id || m.isPublic || m.ownerId == 0L && m.isPublic || m.providerId in providerIds }
             .map { m ->
                 modelToMap(m).toMutableMap().apply {
                     val owner = if (m.ownerId > 0) database.getUserById(m.ownerId) else null
                     this["ownerName"] = owner?.username ?: (if (m.ownerId == 0L) "系统" else "未知")
                 }
-            }
+            }.toMutableList()
+        list.add(qtaiVirtual)
+        return list
     }
 
     fun saveModel(database: Database, body: JsonObject, user: User): Long {
