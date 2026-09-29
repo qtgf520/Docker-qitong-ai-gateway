@@ -213,6 +213,18 @@ loaders.profile = function(){
 
   // 加载余额账单
   loadBalanceLogs();
+  // 加载限流配置
+  api('/api/me/rate').then(function(rr){
+   if(rr.code === 0 && rr.data){
+    var rq = $('rateBox'); if(!rq) return;
+    rq.innerHTML = '<div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">' +
+     '<div><label>每秒 QPS</label><input id="rateQps" class="input" type="number" min="0" value="' + (rr.data.qps || 60) + '" style="width:100px"></div>' +
+     '<div><label>每日配额（次）</label><input id="rateDaily" class="input" type="number" min="0" value="' + (rr.data.daily || 10000) + '" style="width:140px"></div>' +
+     '<button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="saveRate()">保存限流</button>' +
+     '</div>';
+   }
+  });
+ });
  };
  window.loadBalanceLogs = function(){
   api('/api/me/balance-logs').then(function(r){
@@ -228,19 +240,6 @@ loaders.profile = function(){
    el.innerHTML = '<div class="table-wrap"><table style="min-width:520px"><thead><tr><th>类型</th><th>金额</th><th>说明</th><th>时间</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   });
  };
-  // 加载限流配置
-  api('/api/me/rate').then(function(rr){
-   if(rr.code === 0 && rr.data){
-    var rq = $('rateBox'); if(!rq) return;
-    rq.innerHTML = '<div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">' +
-     '<div><label>每秒 QPS</label><input id="rateQps" class="input" type="number" min="0" value="' + (rr.data.qps || 60) + '" style="width:100px"></div>' +
-     '<div><label>每日配额（次）</label><input id="rateDaily" class="input" type="number" min="0" value="' + (rr.data.daily || 10000) + '" style="width:140px"></div>' +
-     '<button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="saveRate()">保存限流</button>' +
-     '</div>';
-   }
-  });
- });
-};
 window.saveProfile = function(){
  var email = $('pfEmail').value.trim();
  if(email && email.indexOf('@') < 0){ toast('邮箱格式不正确', false); return; }
