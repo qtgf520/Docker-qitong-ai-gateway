@@ -889,9 +889,11 @@ private fun providerToMap(p: Provider) = mapOf(
                         strictJson.parseToJsonElement(respBody).jsonObject["choices"]?.jsonArray?.get(0)?.jsonObject
                             ?.get("text")?.jsonPrimitive?.content
                     }.getOrNull() ?: "(空响应)"
-                    // 抓取思考链（DeepSeek/Qwen 等返回 reasoning_content）
+                    // 抓取思考链（DeepSeek/Qwen 等返回 reasoning_content / reasoning / think）
                     val reasoning = msgObj?.get("reasoning_content")?.jsonPrimitive?.content
                         ?: msgObj?.get("reasoning")?.jsonPrimitive?.content
+                        ?: msgObj?.get("think")?.jsonPrimitive?.content
+                        ?: msgObj?.get("thinking")?.jsonPrimitive?.content
                     if (!reasoning.isNullOrBlank()) lastReasoning = reasoning
                     lastResult = answer
                     database.addMessage(ChatMessage(
@@ -928,7 +930,17 @@ private fun providerToMap(p: Provider) = mapOf(
             "reply" to (lastResult ?: "所有上游模型均不可用，请检查服务商配置"),
             "reasoning" to (lastReasoning ?: ""),
             "skills" to skillResults
-        )
+        ).also {
+            // ★ 操作日志全记录：每次 AI 对话都记录（管理员可查）
+            if (userId > 0) {
+                val u = database.getUserById(userId)
+                database.addOpLog(
+                    userId, u?.username ?: "user$userId",
+                    "AI对话", "模型[$effectiveModel] 提问:${userContent.take(50)} → 回复:${(lastResult ?: "").take(30)}",
+                    ""
+                )
+            }
+        }
     }
 
     private val JSON_CT = "application/json".toMediaType()

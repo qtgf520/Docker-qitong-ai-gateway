@@ -499,29 +499,29 @@ window.sendChat = function(){
  var col = aRow.querySelector('.assistant-col');
  msgs.scrollTop = msgs.scrollHeight;
  input.value = ''; state.chatAttachments=[]; renderAttachPreview();
- api('/api/chat', { method:'POST', body: { conversationId: convId, content: sendText, model: model, thinking: window._thinkOn() } }).then(function(r){
-  if(!col) return;
-  if(r.code === 0){
-   var reply = r.data.reply || '(无响应)';
-   var reasoning = r.data.reasoning || '';
-   var html = '';
-   if(reasoning){
-    html += '<div class="chat-reason" onclick="this.classList.toggle(\'open\')">💭 思考过程（点击展开）<div class="cr-body">'+esc(reasoning)+'</div></div>';
+api('/api/chat', { method:'POST', body: { conversationId: convId, content: sendText, model: model, thinking: window._thinkOn() } }).then(function(r){
+   if(!col) return;
+   if(r.code === 0 && r.data){
+    var reply = r.data.reply || '(无响应)';
+    var reasoning = r.data.reasoning || '';
+    var html = '';
+    if(reasoning){
+     html += '<div class="chat-reason" onclick="this.classList.toggle(\'open\')">💭 思考过程（点击展开）<div class="cr-body">'+esc(reasoning)+'</div></div>';
+    }
+    html += '<div class="bubble chat-wait-bubble">思考中...</div><div class="msg-time">'+fmtTime2(Date.now())+'</div>';
+    col.innerHTML = html;
+    var wb = col.querySelector('.chat-wait-bubble');
+    var full = reply; var i = 0;
+    var tick = setInterval(function(){
+     i += 2;
+     if(wb){ wb.innerHTML = renderMd(full.slice(0,i)) + (i<full.length?'▍':''); msgs.scrollTop = msgs.scrollHeight; }
+     if(i >= full.length){ clearInterval(tick); if(wb) wb.innerHTML = renderMd(full); msgs.scrollTop = msgs.scrollHeight; }
+    }, 16);
+    if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, full.length * 2 + 200); }
+   } else {
+    col.innerHTML = '<div class="bubble">⚠️ '+(r.msg||'请求失败，请重试')+'</div>';
    }
-   html += '<div class="bubble chat-wait-bubble">思考中...</div><div class="msg-time">'+fmtTime2(Date.now())+'</div>';
-   col.innerHTML = html;
-   var wb = col.querySelector('.chat-wait-bubble');
-   var full = reply; var i = 0;
-   var tick = setInterval(function(){
-    i += 2;
-    if(wb){ wb.innerHTML = renderMd(full.slice(0,i)) + (i<full.length?'▍':''); msgs.scrollTop = msgs.scrollHeight; }
-    if(i >= full.length){ clearInterval(tick); if(wb) wb.innerHTML = renderMd(full); msgs.scrollTop = msgs.scrollHeight; }
-   }, 16);
-   if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, full.length * 2 + 200); }
-  } else {
-   col.innerHTML = '<div class="bubble">⚠️ '+(r.msg||'失败')+'</div>';
-  }
- }).finally(function(){ window._chatBusy = false; });
+  }).finally(function(){ window._chatBusy = false; });
 };
 window.newChat = function(){
  state.currentChatConv = 0;
