@@ -314,18 +314,20 @@ loaders.chat = function(){
   var modelOpts = state.models.map(function(m){ return '<option value="'+esc(m.modelId)+'"'+(state.chatModel===m.modelId?' selected':'')+'>'+esc(m.displayName)+'</option>'; }).join('');
   if(!modelOpts) modelOpts = '<option value="qtai-sj" selected>🔄 自动化切换</option>';
   box.innerHTML = [
-   '<div class="chat-layout">',
-    '<div class="chat-side">',
+   '<div class="chat-layout" id="chatLayout">',
+    '<div class="chat-overlay" id="chatOverlay" onclick="closeChatSide()"></div>',
+    '<div class="chat-side" id="chatSide">',
      '<div class="chat-side-head"><b>💬 会话</b><button class="btn-ghost btn-sm" onclick="newChat()" title="新聊天">+ 新</button></div>',
      '<div class="chat-side-list">'+convList+'</div>',
     '</div>',
 '<div class="chat-main">'+
      '<div class="chat-toolbar">'+
+      '<button class="chat-burger" onclick="toggleChatSide()" title="会话列表">☰</button>'+
       '<span class="chat-toolbar-title" id="chatCurTitle">💬 聊天</span>'+
       '<select id="chatModel" class="input" style="width:190px;border-radius:16px;padding:6px 10px">'+modelOpts+'</select>'+
       '<button class="btn-ghost btn-sm" onclick="deleteConv()" title="删除当前会话">🗑</button>'+
      '</div>'+
-     '<div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">👋 选择或新建会话开始聊天，输入框固定在底部</div></div></div>',
+     '<div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">👋 点 ☰ 打开会话列表，输入框固定在底部</div></div></div>',
      '<div class="chat-input"><input id="chatInput" class="input" placeholder="输入消息... (Enter发送)" onkeydown="if(event.key===\'Enter\')sendChat()"><button class="btn" onclick="sendChat()">发送</button></div>',
     '</div>',
    '</div>'
@@ -347,6 +349,17 @@ function fmtTime2(ts){
  var d = new Date(ts);
  return d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');
 }
+window.toggleChatSide = function(){
+ var s = $('chatSide'); var o = $('chatOverlay');
+ if(!s) return;
+ var open = s.classList.toggle('open');
+ if(o) o.classList.toggle('show', open);
+};
+window.closeChatSide = function(){
+ var s = $('chatSide'); var o = $('chatOverlay');
+ if(s) s.classList.remove('open');
+ if(o) o.classList.remove('show');
+};
 window.openConv = function(id){
  state.currentChatConv = id;
  document.querySelectorAll('.chat-conv-item').forEach(function(x){ x.classList.remove('active'); });
@@ -356,6 +369,7 @@ window.openConv = function(id){
  var title = '💬 聊天';
  (state.conversations||[]).forEach(function(c){ if(c.id===id) title = c.title || ('会话'+c.id); });
  var tt = $('chatCurTitle'); if(tt) tt.textContent = title;
+ closeChatSide();
  loadConvMsgs();
 };
 window.loadConvMsgs = function(){
@@ -404,7 +418,9 @@ window.sendChat = function(){
 };
 window.newChat = function(){
  state.currentChatConv = 0;
+ closeChatSide();
  var msgs = $('chatMsgs'); if(msgs) msgs.innerHTML = '<div class="msg-row system"><div class="bubble">新对话，开始输入吧</div></div>';
+ var tt = $('chatCurTitle'); if(tt) tt.textContent = '💬 新聊天';
  var inp = $('chatInput'); if(inp) inp.focus();
  toast('已开始新聊天', true);
 };

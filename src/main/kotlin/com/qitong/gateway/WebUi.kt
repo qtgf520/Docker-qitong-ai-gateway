@@ -337,8 +337,11 @@ input[type=range]{accent-color:var(--primary)}
 .modal-head h3{font-size:14px;color:var(--text)}
 .modal-close{background:none;border:0;color:var(--muted);font-size:20px;cursor:pointer}
 /* ===== 聊天（全屏沉浸式聊天应用：左会话列表+右消息区，输入固定底部） ===== */
-.chat-layout{display:flex;gap:0;height:calc(100dvh - 118px);min-height:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.14)}
-.chat-side{width:250px;flex-shrink:0;background:var(--inset);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.chat-layout{position:relative;display:flex;gap:0;height:calc(100dvh - 118px);min-height:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.14)}
+.chat-side{position:absolute;top:0;left:0;bottom:0;width:260px;max-width:82vw;z-index:30;background:var(--inset);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transform:translateX(-100%);transition:transform .25s ease;box-shadow:0 0 0 rgba(0,0,0,0)}
+.chat-side.open{transform:translateX(0);box-shadow:6px 0 24px rgba(0,0,0,.18)}
+.chat-overlay{position:absolute;inset:0;background:rgba(0,0,0,.32);z-index:25;opacity:0;pointer-events:none;transition:opacity .25s}
+.chat-overlay.show{opacity:1;pointer-events:auto}
 .chat-side-head{display:flex;justify-content:space-between;align-items:center;padding:14px 14px;border-bottom:1px solid var(--border);font-size:15px;font-weight:600;background:var(--surface)}
 .chat-side-head .btn-ghost{border-radius:20px;padding:3px 10px}
 .chat-side-list{flex:1;overflow-y:auto;padding:8px}
@@ -354,6 +357,8 @@ input[type=range]{accent-color:var(--primary)}
 .chat-conv-ops .btn-ghost{padding:1px 5px;font-size:10px}
 .chat-main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--surface)}
 .chat-toolbar{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
+.chat-burger{width:38px;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;font-size:18px}
+.chat-burger:hover{background:var(--surface2)}
 .chat-toolbar .chat-toolbar-title{font-size:14px;font-weight:600;color:var(--text);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chat-box{display:flex;flex-direction:column;flex:1;min-height:0}
 .chat-msgs{flex:1;overflow-y:auto;padding:18px 16px;background:var(--inset);min-height:0}
@@ -411,9 +416,8 @@ input[type=range]{accent-color:var(--primary)}
   .topbar-right{flex-shrink:0}
   .topbar-title .ver{display:none}
   .user-name{display:none}
-  /* 移动端聊天：会话列表变窄，消息区更大 */
+  /* 移动端聊天：抽屉式会话列表，消息区全宽 */
   .chat-layout{height:calc(100dvh - 300px);min-height:380px}
-  .chat-side{width:130px}
   .chat-main .chat-toolbar select{width:130px!important;font-size:11px!important}
   .chat-toolbar-title{font-size:12px!important}
   .chat-msgs{padding:12px 10px}
