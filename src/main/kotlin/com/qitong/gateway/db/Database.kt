@@ -474,16 +474,20 @@ class Database(private val dbPath: String) {
                 )"""
             )
             try { st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_qq_logs_time ON qq_logs(created_at DESC)") } catch (_: Exception) {}
-            // QQ 用户积分（签到系统）
+            // QQ 用户积分（签到系统，按群独立：同一用户在不同群积分隔离）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_points (
-                    openid TEXT PRIMARY KEY,
+                    openid TEXT NOT NULL,
+                    group_openid TEXT NOT NULL DEFAULT '',
                     points INTEGER NOT NULL DEFAULT 0,
                     sign_count INTEGER NOT NULL DEFAULT 0,
                     last_sign_date TEXT NOT NULL DEFAULT '',
-                    updated_at INTEGER NOT NULL DEFAULT 0
+                    updated_at INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (openid, group_openid)
                 )"""
             )
+            // 旧库迁移：补群字段（已存在则忽略）；旧表是 openid 单主键 → 若已建旧表则加列
+            runCatching { st.executeUpdate("ALTER TABLE qq_points ADD COLUMN group_openid TEXT NOT NULL DEFAULT ''") }
         }
     }
 
@@ -1892,48 +1896,52 @@ class Database(private val dbPath: String) {
 
     // ============ QQ 积分/签到 ============
 
-    fun getQqPoints(openid: String): Map<String, Any?> {
-        val row = query("SELECT * FROM qq_points WHERE openid=?", openid).firstOrNull()
-        if (row == null) return mapOf("openid" to openid, "points" to 0, "signCount" to 0, "lastSignDate" to "")
+    fun getQqPoints(openid: String, groupOpenid: String = ""): Map<String, Any?> {
+        val row = query("SELECT * FROM qq_points WHERE openid=? AND group_openid=?", openid, groupOpenid).firstOrNull()
+        if (row == null) return mapOf("openid" to openid, "groupOpenid" to groupOpenid, "points" to 0, "signCount" to 0, "lastSignDate" to "")
         return mapOf(
             "openid" to (row["openid"] as String),
+            "groupOpenid" to (row["group_openid"] as? String ?: ""),
             "points" to ((row["points"] as? Number)?.toInt() ?: 0),
             "signCount" to ((row["sign_count"] as? Number)?.toInt() ?: 0),
             "lastSignDate" to (row["last_sign_date"] as? String ?: "")
         )
     }
 
-    fun getAllQqPoints(limit: Int = 200): List<Map<String, Any?>> =
-        query("SELECT * FROM qq_points ORDER BY points DESC LIMIT $limit").map { row ->
+    /** 按群查询积分排行（群隔离） */
+    fun getAllQqPoints(groupOpenid: String = "", limit: Int = 200): List<Map<String, Any?>> =
+        query("SELECT * FROM qq_points WHERE group_openid=? ORDER BY points DESC LIMIT $limit", groupOpenid).map { row ->
             mapOf(
                 "openid" to (row["openid"] as String),
+                "groupOpenid" to (row["group_openid"] as? String ?: ""),
                 "points" to ((row["points"] as? Number)?.toInt() ?: 0),
                 "signCount" to ((row["sign_count"] as? Number)?.toInt() ?: 0),
                 "lastSignDate" to (row["last_sign_date"] as? String ?: "")
             )
         }
 
-    /** 签到：今日已签返回 null；否则返回本次获得积分。 */
-    fun signQqUser(openid: String, reward: Int): Int? {
+    /** 签到（按群独立）：今日已签返回 null；否则返回本次获得积分。 */
+    fun signQqUser(openid: String, reward: Int, groupOpenid: String = ""): Int? {
         val today = java.time.LocalDate.now().toString()
-        val cur = query("SELECT last_sign_date, points, sign_count FROM qq_points WHERE openid=?", openid).firstOrNull()
+        val cur = query("SELECT last_sign_date, points, sign_count FROM qq_points WHERE openid=? AND group_openid=?", openid, groupOpenid).firstOrNull()
         if (cur != null) {
             if ((cur["last_sign_date"] as? String) == today) return null
-            stmt("UPDATE qq_points SET points=points+?, sign_count=sign_count+1, last_sign_date=?, updated_at=? WHERE openid=?",
-                reward, today, System.currentTimeMillis(), openid)
+            stmt("UPDATE qq_points SET points=points+?, sign_count=sign_count+1, last_sign_date=?, updated_at=? WHERE openid=? AND group_openid=?",
+                reward, today, System.currentTimeMillis(), openid, groupOpenid)
         } else {
-            stmt("INSERT INTO qq_points (openid,points,sign_count,last_sign_date,updated_at) VALUES (?,?,?,?,?)",
-                openid, reward, 1, today, System.currentTimeMillis())
+            stmt("INSERT INTO qq_points (openid,group_openid,points,sign_count,last_sign_date,updated_at) VALUES (?,?,?,?,?,?)",
+                openid, groupOpenid, reward, 1, today, System.currentTimeMillis())
         }
         return reward
     }
 
-    fun adjustQqPoints(openid: String, delta: Int) {
-        val exists = queryOne("SELECT COUNT(*) FROM qq_points WHERE openid=?", openid) ?: 0
+    /** 按群调整积分 */
+    fun adjustQqPoints(openid: String, delta: Int, groupOpenid: String = "") {
+        val exists = queryOne("SELECT COUNT(*) FROM qq_points WHERE openid=? AND group_openid=?", openid, groupOpenid) ?: 0
         if (exists == 0L) {
-            stmt("INSERT INTO qq_points (openid,points,updated_at) VALUES (?,?,?)", openid, delta, System.currentTimeMillis())
+            stmt("INSERT INTO qq_points (openid,group_openid,points,updated_at) VALUES (?,?,?,?)", openid, groupOpenid, delta, System.currentTimeMillis())
         } else {
-            stmt("UPDATE qq_points SET points=points+?, updated_at=? WHERE openid=?", delta, System.currentTimeMillis(), openid)
+            stmt("UPDATE qq_points SET points=points+?, updated_at=? WHERE openid=? AND group_openid=?", delta, System.currentTimeMillis(), openid, groupOpenid)
         }
     }
 

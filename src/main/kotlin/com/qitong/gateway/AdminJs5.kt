@@ -215,7 +215,7 @@ function qqLoadGroups(){
 return '<tr><td><b>'+esc(g.groupName||'-')+'</b><br><code style="font-size:11px">'+esc(g.groupOpenid)+'</code></td>'+
     '<td>'+(g.aiEnabled?'<span class="badge green">AI开</span>':'<span class="badge gray">AI关</span>')+'</td>'+
     '<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(g.greeting||'-')+'</td>'+
-    '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="qqGroupEdit('+JSON.stringify(g).replace(/"/g,'"')+')">配置</button> '+
+    '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="qqGroupEdit(\''+esc(g.groupOpenid)+'\')">配置</button> '+
     '<button class="btn-ghost btn-sm danger" onclick="qqGroupDel(\''+esc(g.groupOpenid)+'\')">删</button></td></tr>';
   }).join('');
   el.innerHTML='<div class="table-wrap"><table><thead><tr><th>群 openid</th><th>AI</th><th>备注</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
@@ -227,8 +227,13 @@ function qqGroupDel(openid){
   if(r.code===0){ toast('群已删除',true); qqLoadGroups(); } else toast(r.msg||'删除失败',false);
  });
 }
-function qqGroupEdit(g){
- var html='<div class="form-row"><label>群 openid</label><input class="input" value="'+esc(g.groupOpenid)+'" readonly></div>'+
+function qqGroupEdit(openid){
+ // 从列表重新拉群数据（避免 JSON 传对象引号问题）
+ api('/api/qq/groups').then(function(r){
+  var list=(r&&r.data)||[];
+  var g=list.filter(function(x){return x.groupOpenid===openid;})[0];
+  if(!g){ toast('群不存在',false); return; }
+  var html='<div class="form-row"><label>群 openid</label><input class="input" value="'+esc(g.groupOpenid)+'" readonly></div>'+
   '<div class="form-row"><label><input type="checkbox" id="ggAi" '+(g.aiEnabled?'checked':'')+'> 启用 AI 回复</label></div>'+
   '<div class="form-row"><label><input type="checkbox" id="ggWelcome" '+(g.welcomeEnabled?'checked':'')+'> 启用入群欢迎</label></div>'+
   '<div class="form-row"><label>欢迎语/备注</label><input class="input" id="ggGreeting" value="'+esc(g.greeting||'')+'"></div>'+
@@ -237,11 +242,12 @@ function qqGroupEdit(g){
   '<div class="form-row"><label><input type="checkbox" id="ggMute" '+(g.adminMute!==false?'checked':'')+'> 允许全员禁言/解除</label></div>'+
   '<div class="form-row"><label><input type="checkbox" id="ggKick" '+(g.adminKick!==false?'checked':'')+'> 允许群员管理</label></div>'+
   '<div class="form-row"><label><input type="checkbox" id="ggManage" '+(g.adminManage!==false?'checked':'')+'> 允许管理操作</label></div>';
- openModal('群配置', html, function(){
-  api('/api/qq/groups/update',{method:'POST',body:{groupOpenid:g.groupOpenid,
-   aiEnabled:$('ggAi').checked, welcomeEnabled:$('ggWelcome').checked, greeting:$('ggGreeting').value,
-   groupName:$('ggName').value, adminMute:$('ggMute').checked, adminKick:$('ggKick').checked, adminManage:$('ggManage').checked}})
-  .then(function(r){ if(r.code===0){toast('已保存',true);closeModal();qqLoadGroups();}else toast(r.msg,false); });
+  openModal('群配置', html, function(){
+   api('/api/qq/groups/update',{method:'POST',body:{groupOpenid:g.groupOpenid,
+    aiEnabled:$('ggAi').checked, welcomeEnabled:$('ggWelcome').checked, greeting:$('ggGreeting').value,
+    groupName:$('ggName').value, adminMute:$('ggMute').checked, adminKick:$('ggKick').checked, adminManage:$('ggManage').checked}})
+   .then(function(r){ if(r.code===0){toast('已保存',true);closeModal();qqLoadGroups();}else toast(r.msg,false); });
+  });
  });
 }
 

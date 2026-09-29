@@ -335,14 +335,16 @@ object QqBotManager {
                 "sign" -> {
                     if (onCooldown(userOpenid, 3)) return
                     val reward = (5..20).random()
-                    val got = db.signQqUser(userOpenid, reward)
+                    // ★ 积分按群独立：群内签到记入本群，私聊记入空群
+                    val got = db.signQqUser(userOpenid, reward, groupOpenid)
                     val reply = if (got != null) "签到成功 +$got 积分" else "今天已经签过到啦，明天再来～"
                     send(reply); lastReplyTs[userOpenid] = System.currentTimeMillis()
                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "签到", System.currentTimeMillis() - t0)
                     return
                 }
                 "points" -> {
-                    val p = db.getQqPoints(userOpenid)
+                    // ★ 积分按群独立：查本群积分
+                    val p = db.getQqPoints(userOpenid, groupOpenid)
                     send("当前积分：${p["points"]}（累计签到 ${p["signCount"]} 次）")
                     return
                 }
