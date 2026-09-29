@@ -131,4 +131,38 @@ class QqApiClient {
             return resp.isSuccessful
         }
     }
+
+    /** 获取群成员列表（机器人需为群主/管理员；返回 openid 数组，可能需分页） */
+    fun getGroupMembers(bot: QqBot, accessToken: String, groupOpenid: String, limit: Int = 200): List<String> {
+        return try {
+            val req = Request.Builder()
+                .url("${base(bot)}/v2/groups/$groupOpenid/members?limit=$limit")
+                .addHeader("Authorization", bot.authHeader(accessToken))
+                .get()
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use emptyList<String>()
+                val body = resp.body?.string().orEmpty()
+                val arr = JSONObject(body).optJSONArray("members") ?: JSONObject(body).optJSONArray("data") ?: return@use emptyList<String>()
+                (0 until arr.length()).map { arr.optJSONObject(it)?.optString("member_openid") ?: "" }
+                    .filter { it.isNotBlank() }
+            }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /** 踢出群成员（机器人需为群主/管理员） */
+    fun kickGroupMember(bot: QqBot, accessToken: String, groupOpenid: String, memberOpenid: String): Boolean {
+        val req = Request.Builder()
+            .url("${base(bot)}/v2/groups/$groupOpenid/members/$memberOpenid")
+            .addHeader("Authorization", bot.authHeader(accessToken))
+            .delete()
+            .build()
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                System.err.println("[QQBot] 踢人失败 ${bot.appid} -> $memberOpenid : HTTP ${resp.code} $body")
+            }
+            return resp.isSuccessful
+        }
+    }
 }

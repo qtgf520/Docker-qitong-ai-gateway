@@ -400,6 +400,36 @@ object QqBotManager {
                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "解除全员禁言", System.currentTimeMillis() - t0)
                     return
                 }
+                "members" -> {
+                    // ★ 群成员列表（需管理级3+ + 群管权限 adminKick）
+                    if (groupOpenid.isBlank()) return
+                    val gc = db.getQqGroupConfig(groupOpenid)
+                    if (gc != null && (gc["adminKick"] as? Boolean) != true) { send("⛔ 本群已关闭「群员管理」权限"); return }
+                    val qqU = db.getQqUserByGroup(userOpenid, groupOpenid)
+                    val perm = (qqU?.get("permLevel") as? Number)?.toInt() ?: 1
+                    if (perm < 3) { send("⛔ 群成员管理需要管理级权限(3级)"); return }
+                    val at = api.getAccessToken(bot) ?: run { send("获取凭证失败"); return }
+                    val members = api.getGroupMembers(bot, at, groupOpenid)
+                    if (members.isEmpty()) send("📋 群成员列表（空或需机器人是群管理员）")
+                    else send("📋 群成员 ${members.size} 人：\n" + members.take(50).joinToString("\n") { "· $it" })
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "查群成员 ${members.size}人", System.currentTimeMillis() - t0)
+                    return
+                }
+                "kick" -> {
+                    // ★ 踢出群成员（需管理级3+ + 群管权限 adminKick）
+                    if (groupOpenid.isBlank()) return
+                    val gc = db.getQqGroupConfig(groupOpenid)
+                    if (gc != null && (gc["adminKick"] as? Boolean) != true) { send("⛔ 本群已关闭「群员管理」权限"); return }
+                    val qqU = db.getQqUserByGroup(userOpenid, groupOpenid)
+                    val perm = (qqU?.get("permLevel") as? Number)?.toInt() ?: 1
+                    if (perm < 3) { send("⛔ 踢人需要管理级权限(3级)"); return }
+                    val targetOpenid = builtin.second.trim()
+                    if (targetOpenid.isBlank()) { send("⚠️ 语法：踢 用户openid"); return }
+                    val at = api.getAccessToken(bot) ?: run { send("获取凭证失败"); return }
+                    if (api.kickGroupMember(bot, at, groupOpenid, targetOpenid)) send("✅ 已踢出 $targetOpenid") else send("踢人失败（需机器人是群主/管理员）")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "踢出 $targetOpenid", System.currentTimeMillis() - t0)
+                    return
+                }
             }
         }
         // 0.5) 网关技能指令（内置：查状态/排行/余额/充值/启停/切模型等，按 openid 权限控制）
@@ -621,6 +651,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (groupOpenid.isNotBlank()) {
             if (t.equals("全员禁言", true)) return "mute_on" to t
             if (t.equals("解除全员禁言", true) || t.equals("取消全员禁言", true)) return "mute_off" to t
+            if (t.startsWith("群成员", true) || t.startsWith("成员列表", true)) return "members" to t
+            if (t.startsWith("踢", true) || t.startsWith("踢出", true)) return "kick" to t.substringAfter(" ").trim()
         }
         return null
     }
