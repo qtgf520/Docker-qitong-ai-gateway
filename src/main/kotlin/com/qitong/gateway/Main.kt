@@ -1884,6 +1884,17 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.deleteConversation(database, id)
             AdminApi.ok(call, null, "已删除")
         }
+        // 重命名会话（自定义标题）
+        post("/api/conversations/{id}/rename") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val title = body["title"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (title.isBlank()) { AdminApi.fail(call, "标题不能为空", 400); return@post }
+            AdminApi.renameConversation(database, id, title.take(40))
+            database.addOpLog(u.id, u.username, "重命名会话", "会话$id → $title", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "标题已更新")
+        }
         post("/api/chat") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()

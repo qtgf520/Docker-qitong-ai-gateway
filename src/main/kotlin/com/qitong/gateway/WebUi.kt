@@ -238,7 +238,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 #app{min-height:100vh;display:flex;flex-direction:column}
 /* ===== 顶栏 ===== */
 .topbar{position:fixed;top:0;left:0;right:0;height:52px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 14px;z-index:1000;max-width:100vw;overflow:hidden}
-.burger{display:none;background:none;border:0;color:var(--muted);cursor:pointer;padding:6px 8px;margin-right:4px}
+.burger{background:none;border:0;color:var(--muted);cursor:pointer;padding:6px 8px;margin-right:4px}
 .burger svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
 .topbar-title{font-size:14px;font-weight:600;color:var(--text)}
 .topbar-title .ver{font-size:11px;color:var(--muted);margin-left:8px;font-weight:400}
@@ -254,10 +254,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .global-search{width:180px;padding:6px 12px;background:var(--inset);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;outline:none;transition:.15s}
 .global-search:focus{border-color:var(--primary)}
 /* ===== 遮罩 ===== */
-.mask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:900}
+.mask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:950}
 .mask.show{display:block}
-/* ===== 侧边栏 ===== */
-.sidebar{position:fixed;top:52px;left:0;bottom:0;width:212px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;z-index:950;transition:transform .22s ease}
+/* ===== 侧边栏（默认收起，三道杠展开悬浮最前） ===== */
+.sidebar{position:fixed;top:52px;left:0;bottom:0;width:212px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;z-index:951;transform:translateX(-100%);transition:transform .24s ease;box-shadow:6px 0 28px rgba(0,0,0,.22)}
+.sidebar.open{transform:translateX(0)}
 .side-brand{padding:16px 18px 14px;font-size:14px;font-weight:700;color:var(--text);border-bottom:1px solid var(--border)}
 .side-brand-sub{font-size:10px;color:var(--muted);font-weight:400;margin-top:2px;letter-spacing:.3px}
 .nav-group{padding:14px 18px 5px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
@@ -265,8 +266,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .sidebar nav a svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .sidebar nav a:hover{background:var(--surface2);color:var(--text)}
 .sidebar nav a.active{background:var(--surface2);color:var(--primary);border-left-color:var(--primary);font-weight:600}
-/* ===== 内容区 ===== */
-.content{margin-left:212px;padding:68px 24px 24px;flex:1;min-height:100vh;max-width:calc(100vw - 212px)}
+/* ===== 内容区（全宽，侧边栏悬浮） ===== */
+.content{margin-left:0;padding:68px 24px 24px;flex:1;min-height:100vh;max-width:100vw;transition:padding .22s ease}
 .view{display:none}
 .view.active{display:block}
 /* ===== 卡片 ===== */
@@ -340,11 +341,14 @@ input[type=range]{accent-color:var(--primary)}
 .chat-side{width:220px;flex-shrink:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;overflow:hidden}
 .chat-side-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px}
 .chat-side-list{flex:1;overflow-y:auto;padding:6px}
-.chat-conv-item{padding:9px 10px;border-radius:6px;cursor:pointer;margin-bottom:4px;transition:.15s}
+.chat-conv-item{position:relative;padding:9px 10px;border-radius:6px;cursor:pointer;margin-bottom:4px;transition:.15s}
 .chat-conv-item:hover{background:var(--surface2)}
+.chat-conv-item:hover .chat-conv-ops{display:flex}
 .chat-conv-item.active{background:rgba(var(--primary-rgb),.12)}
-.chat-conv-title{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-conv-title{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:20px}
 .chat-conv-time{font-size:11px;color:var(--muted);margin-top:2px}
+.chat-conv-ops{display:none;position:absolute;top:4px;right:4px;gap:2px}
+.chat-conv-ops .btn-ghost{padding:1px 4px;font-size:10px;background:var(--surface)}
 .chat-main{flex:1;display:flex;flex-direction:column;min-width:0}
 .chat-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-shrink:0}
 .chat-box{display:flex;flex-direction:column;flex:1;min-height:0}

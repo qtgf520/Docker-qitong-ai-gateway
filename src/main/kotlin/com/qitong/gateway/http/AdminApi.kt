@@ -739,6 +739,12 @@ private fun providerToMap(p: Provider) = mapOf(
         val modelId = body["model"]?.jsonPrimitive?.content ?: ""
         val stream = body["stream"]?.let { parseBool(it) } ?: false
 
+        // 自动生成标题：新建会话且标题仍是"新对话"时，用用户首条消息前 18 字作标题
+        if (rawConvId <= 0 && userContent.isNotBlank()) {
+            val title = userContent.trim().replace(Regex("\\s+"), " ").take(18)
+            database.updateConversationTitle(conversationId, title)
+        }
+
         // 保存用户消息
         database.addMessage(ChatMessage(conversationId = conversationId, role = "user", content = userContent, modelId = modelId))
 

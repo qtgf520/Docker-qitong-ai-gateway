@@ -300,7 +300,11 @@ loaders.chat = function(){
   var convList = (state.conversations||[]).map(function(c){
    return '<div class="chat-conv-item'+(state.currentChatConv===c.id?' active':'')+'" onclick="openConv('+c.id+')">'+
     '<div class="chat-conv-title">'+esc(c.title||('会话'+c.id))+'</div>'+
-    '<div class="chat-conv-time">'+convTime(c.updatedAt||c.createdAt)+'</div></div>';
+    '<div class="chat-conv-time">'+convTime(c.updatedAt||c.createdAt)+'</div>'+
+    '<div class="chat-conv-ops">'+
+     '<button class="btn-ghost btn-sm" title="重命名" onclick="event.stopPropagation();renameConv('+c.id+',\''+esc((c.title||'').replace(/'/g,''))+'\')">✏️</button>'+
+     '<button class="btn-ghost btn-sm danger" title="删除" onclick="event.stopPropagation();deleteConv('+c.id+')">🗑</button>'+
+    '</div></div>';
   }).join('') || '<div style="color:var(--muted);font-size:12px;padding:10px">暂无会话</div>';
   var modelOpts = state.models.map(function(m){ return '<option value="'+esc(m.modelId)+'"'+(state.chatModel===m.modelId?' selected':'')+'>'+esc(m.displayName)+'</option>'; }).join('');
   if(!modelOpts) modelOpts = '<option value="qtai-sj" selected>🔄 自动化切换</option>';
@@ -391,11 +395,21 @@ window.newChat = function(){
  var inp = $('chatInput'); if(inp) inp.focus();
  toast('已开始新聊天', true);
 };
-window.deleteConv = function(){
- var id = state.currentChatConv;
- if(!id){ toast('请先选择会话', false); return; }
+window.renameConv = function(id, oldTitle){
+ openModal('重命名会话', '<div class="form-row"><label>输入自定义标题（或让 AI 生成后自行修改）</label><input class="input" id="renameInput" value="'+esc(oldTitle||'')+'"></div>'+
+  '<div class="form-row" style="font-size:12px;color:var(--muted)">💡 新对话已自动用首条消息生成标题，这里可自由修改</div>', function(){
+  var t = $('renameInput').value.trim();
+  if(!t){ toast('标题不能为空',false); return; }
+  api('/api/conversations/'+id+'/rename',{method:'POST',body:{title:t}}).then(function(r){
+   if(r.code===0){ toast('标题已更新',true); closeModal(); api('/api/conversations').then(function(rr){ state.conversations=(rr&&rr.data)||[]; loaders.chat(); }); } else toast(r.msg,false);
+  });
+ });
+};
+window.deleteConv = function(id){
+ var cid = id || state.currentChatConv;
+ if(!cid){ toast('请先选择会话', false); return; }
  if(!confirm('删除该会话？')) return;
- api('/api/conversations/' + id, { method:'DELETE' }).then(function(r){
+ api('/api/conversations/' + cid, { method:'DELETE' }).then(function(r){
   if(r.code === 0){ toast('已删除', true); state.currentChatConv = 0; loaders.chat(); } else toast(r.msg, false);
  });
 };
