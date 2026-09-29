@@ -357,9 +357,10 @@ loaders.terminal = function(){
  var box = $('view-terminal');
  box.innerHTML = '<div class="action-bar">'+
   '<button class="btn" onclick="termCreate()">+ 创建终端</button>'+
+  '<button class="btn" onclick="termAiHelp()">🤖 AI 智能操作</button>'+
   '<button class="btn-ghost" onclick="loaders.terminal()">刷新</button>'+
   '<button class="btn-ghost danger" onclick="termCloseAll()">关闭全部</button>'+
-  '<span style="font-size:12px;color:var(--muted)">临时会话：30分钟无操作自动清理，进程用完即焚</span></div>'+
+  '<span style="font-size:12px;color:var(--muted)">临时会话：默认30分钟无操作自动清理；可设永久（ttl=0）</span></div>'+
   '<div id="termList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  termLoad();
 };
@@ -369,20 +370,54 @@ function termLoad(){
   var list=(r&&r.data)||[];
   if(!list.length){ el.innerHTML='<div class="card" style="color:var(--muted);text-align:center;padding:30px">暂无终端会话，点「+ 创建终端」开始（自建沙盒 Linux，可跑任何命令）</div>'; return; }
   var rows=list.map(function(s){
+   var ttlTxt = s.ttlMinutes===0 ? '<span class="badge purple">永久</span>' : '<span class="badge gray">'+s.ttlMinutes+'分钟</span>';
    return '<tr>'+
     '<td><b>'+esc(s.label)+'</b><br><code style="font-size:10px">'+esc(s.id)+'</code></td>'+
+    '<td>'+ttlTxt+'</td>'+
     '<td>'+(s.commands||0)+'</td>'+
     '<td style="font-size:11px;color:var(--muted)">'+qqTime(s.lastActiveAt)+'</td>'+
     '<td style="white-space:nowrap">'+
      '<button class="btn-ghost btn-sm" onclick="termOpen(\''+esc(s.id)+'\')">打开</button> '+
+     '<button class="btn-ghost btn-sm" onclick="termSetTtl(\''+esc(s.id)+'\')">时长</button> '+
      '<button class="btn-ghost btn-sm danger" onclick="termClose(\''+esc(s.id)+'\')">关闭</button></td></tr>';
   }).join('');
-  el.innerHTML='<div class="card" style="box-shadow:none"><div class="table-wrap"><table><thead><tr><th>会话</th><th>命令数</th><th>最后活跃</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  el.innerHTML='<div class="card" style="box-shadow:none"><div class="table-wrap"><table><thead><tr><th>会话</th><th>时长</th><th>命令数</th><th>最后活跃</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+ });
+}
+function termAiHelp(){
+ api('/api/terminal/sessions').then(function(r){
+  var opts='<option value="">自动创建新会话</option>';
+  (r&&r.data||[]).forEach(function(s){ opts+='<option value="'+s.id+'">'+esc(s.label)+' ('+s.id+')</option>'; });
+  openModal('🤖 AI 智能操作终端', '<div style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:10px">告诉 AI 你想干什么，它自动生成 Linux 命令并执行。例如：<br>· 看看磁盘占用<br>· 查看当前目录文件<br>· 装一个 python 库<br>· 查看 nginx 配置<br>· 查某个进程</div><div class="form-row"><label>选择会话（留空自动创建）</label><select class="input" id="aiTermSel">'+opts+'</select></div><div class="form-row"><label>你的需求（自然语言）</label><textarea class="input" id="aiTermReq" rows="3" placeholder="例如：查看当前目录所有文件大小排序"></textarea></div>', function(){
+  var sel=$('aiTermSel'); var req=$('aiTermReq').value.trim();
+  if(!req){ toast('请输入需求',false); return; }
+  var sid = sel && sel.value ? sel.value : '';
+  toast('🤖 AI 思考中…', false);
+  api('/api/terminal/ai-exec',{method:'POST',body:{req:req, id:sid}}).then(function(r){
+   if(r.code===0){
+    openModal('AI 执行结果', '<div style="font-family:monospace;background:#0b1120;color:#e2e8f0;border-radius:6px;padding:10px;font-size:12px;max-height:280px;overflow-y:auto;white-space:pre-wrap">'+
+     '<div style="color:var(--cyan)">$ '+esc(r.data.cmd)+'</div>\n\n'+esc(r.data.output)+'</div>'+
+     '<div style="font-size:12px;color:var(--muted);margin-top:8px">会话：'+esc(r.data.sessionId)+'（可在下方终端列表打开继续操作）</div>');
+   } else toast(r.msg||'执行失败', false);
+  });
+ });
+ });
+}
+function termSetTtl(id){
+ openModal('设置会话时长', '<div class="form-row"><label>无操作保留时长</label><select class="input" id="ttlSel">'+
+  '<option value="0">永久（不自动清理）</option><option value="30" selected>30分钟</option><option value="60">1小时</option>'+
+  '<option value="180">3小时</option><option value="720">12小时</option><option value="1440">24小时</option></select></div>', function(){
+  api('/api/terminal/set-ttl',{method:'POST',body:{id:id, ttlMinutes:parseInt($('ttlSel').value)||30}}).then(function(r){
+   toast(r.msg||'', r.code===0); if(r.code===0) loaders.terminal();
+  });
  });
 }
 function termCreate(){
- openModal('创建终端', '<div class="form-row"><label>会话名称（可选）</label><input class="input" id="termLabel" placeholder="如：测试环境"></div>', function(){
-  api('/api/terminal/create',{method:'POST',body:{label:$('termLabel').value.trim()}}).then(function(r){
+ openModal('创建终端', '<div class="form-row"><label>会话名称（可选）</label><input class="input" id="termLabel" placeholder="如：测试环境"></div>'+
+  '<div class="form-row"><label>保留时长</label><select class="input" id="termTtl">'+
+  '<option value="30" selected>30分钟（默认）</option><option value="0">永久（不清理）</option><option value="60">1小时</option>'+
+  '<option value="180">3小时</option><option value="720">12小时</option><option value="1440">24小时</option></select></div>', function(){
+  api('/api/terminal/create',{method:'POST',body:{label:$('termLabel').value.trim(), ttlMinutes:parseInt($('termTtl').value)||30}}).then(function(r){
    if(r.code===0){ toast(r.msg,true); closeModal(); loaders.terminal(); } else toast(r.msg,false);
   });
  });

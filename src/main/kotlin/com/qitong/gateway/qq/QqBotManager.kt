@@ -47,6 +47,51 @@ object QqBotManager {
     // ============ 文字游戏状态（每用户独立） ============
     private val gameState = ConcurrentHashMap<String, MutableMap<String, Any>>()
 
+    // ============ 提醒（每用户独立，内存定时） ============
+    data class ReminderItem(
+        val userOpenid: String,
+        val groupOpenid: String,
+        val content: String,
+        val delayMs: Long,
+        val bot: QqBot,
+        val createdAt: Long = System.currentTimeMillis()
+    ) {
+        fun dueAt(): Long = createdAt + delayMs
+        fun remainText(): String {
+            val remain = (dueAt() - System.currentTimeMillis()).coerceAtLeast(0)
+            return if (remain >= 3600_000L) "${remain / 3600_000L}小时${(remain % 3600_000L) / 60_000L}分"
+            else "${remain / 60_000L}分${(remain % 60_000L) / 1000}秒"
+        }
+    }
+    private val reminders = java.util.concurrent.CopyOnWriteArrayList<ReminderItem>()
+    @Volatile private var reminderSchedulerStarted = false
+    private fun ensureReminderScheduler() {
+        if (reminderSchedulerStarted) return
+        synchronized(this) {
+            if (reminderSchedulerStarted) return
+            reminderSchedulerStarted = true
+            CoroutineScope(Dispatchers.IO).launch {
+                while (true) {
+                    kotlinx.coroutines.delay(5000)
+                    val now = System.currentTimeMillis()
+                    val due = reminders.filter { it.dueAt() <= now }
+                    due.forEach { r ->
+                        try {
+                            val at = api.getAccessToken(r.bot)
+                            if (!at.isNullOrBlank()) {
+                                val target = if (r.groupOpenid.isNotBlank()) {
+                                    api.sendGroupMessage(r.bot, at, r.groupOpenid, "⏰ 提醒 @${r.userOpenid.take(6)}：${r.content}", null)
+                                } else false
+                                db.addQqLog(r.bot.appid, r.groupOpenid, r.userOpenid, "remind", "提醒触发: ${r.content}", 0)
+                            }
+                        } catch (_: Exception) {}
+                        reminders.remove(r)
+                    }
+                }
+            }
+        }
+    }
+
     /** 游戏指令：开始猜数字 / 猜数字 50 / 开始成语接龙 / 成语 xxx / 骰子 / 抽卡 */
     private fun matchGame(text: String): String? {
         val t = text.trim()
@@ -130,6 +175,8 @@ object QqBotManager {
     fun startAll(scope: CoroutineScope, database: Database, gatewayPort: Int) {
         this.db = database
         this.gatewayPort = gatewayPort
+        // 启动提醒调度器（定时触发到点提醒）
+        ensureReminderScheduler()
         // 记忆自动过期：每 6 小时清理一次 30 天前的 QQ 记忆
         scope.launch(Dispatchers.IO) {
             runCatching { db.cleanOldQqMemories(30) }
@@ -318,6 +365,80 @@ object QqBotManager {
         if (game != null) { send(game); db.addQqLog(bot.appid, groupOpenid, userOpenid, "game", text, System.currentTimeMillis() - t0); return }
 
         // 0.7) 沙盒 Linux 终端操控（需管理级权限，远程执行 shell 命令）
+        // 0.7a) AI 智能终端：自然语言直接操作
+        if (t.startsWith("AI终端", true) || t.startsWith("智能终端", true) || t.startsWith("ai终端", true)) {
+            val qqUser = db.getQqUser(userOpenid)
+            val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1
+            if (perm < 3) { send("⛔ 终端操控需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }
+            val req = t.substringAfter(" ").trim()
+            if (req.isBlank()) { send("⚠️ 语法：AI终端 你的需求（如：AI终端 查看磁盘占用）"); return }
+            send("🤖 AI 思考中…")
+            val cmd = com.qitong.gateway.http.AiTermHelper.genCommand(req)
+            if (cmd.isBlank()) { send("😵 AI 无法生成安全命令，换个说法试试"); return }
+            val dangerous = listOf("rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", ":(){", "format", "fdisk")
+            if (dangerous.any { cmd.contains(it) }) { send("⛔ 生成命令涉及危险操作已拦截"); return }
+            val sessions = com.qitong.gateway.http.TerminalManager.list()
+            val sid = if (sessions.isNotEmpty()) sessions.first().id
+                else com.qitong.gateway.http.TerminalManager.create("QQ-AI终端-" + userOpenid.take(6)).id
+            val (ok, out) = com.qitong.gateway.http.TerminalManager.exec(sid, cmd)
+            if (!ok) { send("⚠️ $out"); return }
+            send("🤖 AI 智能终端 [${sid}]\n💡 需求：$req\n$ cmd\n\n" + out.take(700))
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "ai_term", "[$req] -> $cmd", System.currentTimeMillis() - t0)
+            return
+        }
+        // 0.7b) 提醒（提醒我 X分钟后 内容）
+        if (t.startsWith("提醒", true) && (t.contains("分钟后", true) || t.contains("小时后", true) || t.contains("秒后", true))) {
+            val qqUser = db.getQqUser(userOpenid)
+            val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1
+            if (perm < 1) { send("⛔ 没有权限使用提醒功能"); return }
+            val m = Regex("""提醒我?\s*(\d+)\s*(秒|分钟|小时)后\s*(.*)""").find(t)
+            if (m == null) { send("⚠️ 语法：提醒我 10分钟后 喝水"); return }
+            val num = m.groupValues[1].toLongOrNull() ?: 10
+            val unit = m.groupValues[2]
+            val content = m.groupValues[3].ifBlank { "时间到！" }
+            val delayMs = when (unit) { "秒" -> num * 1000; "小时" -> num * 3600_000L; else -> num * 60_000L }
+            if (delayMs < 5000) { send("⚠️ 提醒时间太短（至少5秒）"); return }
+            val remind = ReminderItem(userOpenid, groupOpenid, content, delayMs, bot)
+            reminders.add(remind)
+            send("⏰ 好的，${num}${unit}后提醒你：$content（可发「查看提醒」/「取消提醒」管理）")
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "remind", "设置提醒 $content", System.currentTimeMillis() - t0)
+            return
+        }
+        if (t.equals("查看提醒", true) || t.equals("我的提醒", true)) {
+            val mine = reminders.filter { it.userOpenid == userOpenid }
+            if (mine.isEmpty()) send("📭 你当前没有提醒")
+            else send("📋 我的提醒（${mine.size}条）：\n" + mine.mapIndexed { i, r -> "${i+1}. ${r.content}（剩余${r.remainText()}）" }.joinToString("\n"))
+            return
+        }
+        if (t.startsWith("取消提醒", true)) {
+            val n = t.substringAfter("取消提醒").trim().toIntOrNull()
+            val mine = reminders.filter { it.userOpenid == userOpenid }
+            if (n == null || n < 1 || n > mine.size) { send("⚠️ 请输入有效序号，如「取消提醒 1」"); return }
+            val removed = mine[n-1]
+            reminders.remove(removed)
+            send("✅ 已取消提醒：${removed.content}")
+            return
+        }
+        // 0.7c) 群发（管理级：群发 内容）
+        if (t.startsWith("群发", true) || t.startsWith("广播", true)) {
+            val qqUser = db.getQqUser(userOpenid)
+            val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1
+            if (perm < 3) { send("⛔ 群发需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }
+            val content = t.substringAfter(" ").trim()
+            if (content.isBlank()) { send("⚠️ 语法：群发 内容"); return }
+            val groups = db.getQqGroups()
+            if (groups.isEmpty()) { send("⚠️ 暂无可广播的群（还没有群触发过机器人）"); return }
+            send("📢 正在向 ${groups.size} 个群广播…")
+            var okCount = 0
+            groups.forEach { g ->
+                val gid = g["groupOpenid"] as? String ?: return@forEach
+                val at = api.getAccessToken(bot)
+                if (!at.isNullOrBlank() && api.sendGroupMessage(bot, at, gid, content, null)) okCount++
+            }
+            send("✅ 群发完成：成功 $okCount/${groups.size} 个群")
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "broadcast", "群发到 $okCount/${groups.size} 群", System.currentTimeMillis() - t0)
+            return
+        }
         if (t.equals("创建终端", true) || t.startsWith("创建终端 ", true)) {
             val qqUser = db.getQqUser(userOpenid)
             val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1

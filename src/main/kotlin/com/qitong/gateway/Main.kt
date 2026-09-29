@@ -748,7 +748,7 @@ fun Application.moduleWeb(database: Database) {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
             val list = com.qitong.gateway.http.TerminalManager.list().map { s ->
-                mapOf("id" to s.id, "label" to s.label, "createdAt" to s.createdAt, "lastActiveAt" to s.lastActiveAt, "commands" to s.commands, "output" to s.output.toString())
+                mapOf("id" to s.id, "label" to s.label, "createdAt" to s.createdAt, "lastActiveAt" to s.lastActiveAt, "commands" to s.commands, "output" to s.output.toString(), "ttlMinutes" to s.ttlMinutes)
             }
             AdminApi.ok(call, list, "ok")
         }
@@ -757,8 +757,46 @@ fun Application.moduleWeb(database: Database) {
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
             val body = call.receive<JsonObject>()
             val label = body["label"]?.jsonPrimitive?.content?.trim().orEmpty()
-            val s = com.qitong.gateway.http.TerminalManager.create(label)
-            AdminApi.ok(call, mapOf("id" to s.id, "label" to s.label), "终端已创建（临时会话，30分钟无操作自动清理）")
+            val ttl = body["ttlMinutes"]?.jsonPrimitive?.content?.toIntOrNull() ?: 30
+            val s = com.qitong.gateway.http.TerminalManager.create(label, ttl)
+            val ttlTxt = if (ttl == 0) "永久" else "${ttl} 分钟"
+            val msg = if (ttl == 0) "终端已创建（永久会话，不会自动清理）" else "终端已创建（$ttlTxt 无操作自动清理）"
+            AdminApi.ok(call, mapOf("id" to s.id, "label" to s.label, "ttlMinutes" to s.ttlMinutes), msg)
+        }
+        // 调整终端会话时长（0=永久；>0=分钟）
+        post("/api/terminal/set-ttl") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content.orEmpty()
+            val ttl = body["ttlMinutes"]?.jsonPrimitive?.content?.toIntOrNull() ?: 30
+            if (id.isBlank()) { AdminApi.fail(call, "会话ID无效", 400); return@post }
+            if (com.qitong.gateway.http.TerminalManager.setTtl(id, ttl)) {
+                AdminApi.ok(call, mapOf("ttlMinutes" to ttl), if (ttl == 0) "已设为永久会话（不会自动清理）" else "已设为 $ttl 分钟无操作自动清理")
+            } else AdminApi.fail(call, "会话不存在", 404)
+        }
+        // AI 智能操作终端：自然语言 -> 大模型生成命令 -> 执行
+        post("/api/terminal/ai-exec") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val req = body["req"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val id = body["id"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (req.isBlank()) { AdminApi.fail(call, "请描述你的需求", 400); return@post }
+            // 1) 创建或复用会话
+            val sessionId = if (id.isNotBlank() && com.qitong.gateway.http.TerminalManager.get(id) != null) id
+                else com.qitong.gateway.http.TerminalManager.create("AI终端-" + u.username).id
+            // 2) 大模型把自然语言转成 Linux 命令（网关本机 /v1/chat/completions）
+            val cmd = com.qitong.gateway.http.AiTermHelper.genCommand(req)
+            if (cmd.isBlank()) { AdminApi.fail(call, "AI 无法生成命令，换个说法试试", 400); return@post }
+            // 3) 危险拦截
+            val dangerous = listOf("rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", ":(){", "format", "fdisk")
+            if (dangerous.any { cmd.contains(it) }) { AdminApi.fail(call, "⛔ 生成命令涉及危险操作已拦截", 400); return@post }
+            // 4) 执行
+            val (ok, out) = com.qitong.gateway.http.TerminalManager.exec(sessionId, cmd)
+            if (!ok) { AdminApi.fail(call, out, 400); return@post }
+            database.addOpLog(u.id, u.username, "AI终端", "需求:$req -> 命令:$cmd", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("cmd" to cmd, "sessionId" to sessionId, "output" to out), "ok")
         }
         post("/api/terminal/exec") {
             val u = call.requireAuth(database) ?: return@post
