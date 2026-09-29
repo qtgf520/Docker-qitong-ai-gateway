@@ -444,35 +444,40 @@ window.sendChat = function(){
  if(atts.length){
   sendText += (content?'\n\n':'') + atts.map(function(a){ return '[附件:'+a.name+']('+a.url+')'; }).join('\n');
  }
- msgs.innerHTML += '<div class="msg-row user"><div class="bubble">'+renderMd(content)+
+ // 构建用户消息（局部 DOM，不用 innerHTML 拼接全局）
+ var uRow = document.createElement('div'); uRow.className = 'msg-row user';
+ uRow.innerHTML = '<div class="bubble">'+renderMd(content)+
    (atts.length?'<div class="chat-attach-preview">'+atts.map(function(a){return '<span class="att-chip">📎 '+esc(a.name)+'</span>';}).join('')+'</div>':'')+
-   '<div class="msg-time">'+fmtTime2(Date.now())+'</div></div></div>'+
-  '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div id="assistantCol"></div></div>';
+   '<div class="msg-time">'+fmtTime2(Date.now())+'</div></div>';
+ msgs.appendChild(uRow);
+ // 构建助手占位（局部引用，不用全局 id，避免重复 id 导致覆盖上一条）
+ var aRow = document.createElement('div'); aRow.className = 'msg-row assistant';
+ aRow.innerHTML = '<div class="chat-ava">🤖</div><div class="assistant-col"></div>';
+ msgs.appendChild(aRow);
+ var col = aRow.querySelector('.assistant-col');
  msgs.scrollTop = msgs.scrollHeight;
  input.value = ''; state.chatAttachments=[]; renderAttachPreview();
  api('/api/chat', { method:'POST', body: { conversationId: convId, content: sendText, model: model } }).then(function(r){
-  var col = $('assistantCol');
-  if(col){
-   if(r.code === 0){
-    var reply = r.data.reply || '(无响应)';
-    var reasoning = r.data.reasoning || '';
-    var html = '';
-    if(reasoning){
-     html += '<div class="chat-reason" onclick="this.classList.toggle(\'open\')">💭 思考过程（点击展开）<div class="cr-body">'+esc(reasoning)+'</div></div>';
-    }
-    html += '<div class="bubble" id="waitBubble">思考中...</div><div class="msg-time">'+fmtTime2(Date.now())+'</div>';
-    col.innerHTML = html;
-    var wb = $('waitBubble');
-    var full = reply; var i = 0;
-    var tick = setInterval(function(){
-     i += 2;
-     if(wb){ wb.innerHTML = renderMd(full.slice(0,i)) + (i<full.length?'▍':''); msgs.scrollTop = msgs.scrollHeight; }
-     if(i >= full.length){ clearInterval(tick); if(wb) wb.innerHTML = renderMd(full); msgs.scrollTop = msgs.scrollHeight; }
-    }, 16);
-    if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, full.length * 2 + 200); }
-   } else {
-    col.innerHTML = '<div class="bubble">⚠️ '+(r.msg||'失败')+'</div>';
+  if(!col) return;
+  if(r.code === 0){
+   var reply = r.data.reply || '(无响应)';
+   var reasoning = r.data.reasoning || '';
+   var html = '';
+   if(reasoning){
+    html += '<div class="chat-reason" onclick="this.classList.toggle(\'open\')">💭 思考过程（点击展开）<div class="cr-body">'+esc(reasoning)+'</div></div>';
    }
+   html += '<div class="bubble chat-wait-bubble">思考中...</div><div class="msg-time">'+fmtTime2(Date.now())+'</div>';
+   col.innerHTML = html;
+   var wb = col.querySelector('.chat-wait-bubble');
+   var full = reply; var i = 0;
+   var tick = setInterval(function(){
+    i += 2;
+    if(wb){ wb.innerHTML = renderMd(full.slice(0,i)) + (i<full.length?'▍':''); msgs.scrollTop = msgs.scrollHeight; }
+    if(i >= full.length){ clearInterval(tick); if(wb) wb.innerHTML = renderMd(full); msgs.scrollTop = msgs.scrollHeight; }
+   }, 16);
+   if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, full.length * 2 + 200); }
+  } else {
+   col.innerHTML = '<div class="bubble">⚠️ '+(r.msg||'失败')+'</div>';
   }
  }).finally(function(){ window._chatBusy = false; });
 };
