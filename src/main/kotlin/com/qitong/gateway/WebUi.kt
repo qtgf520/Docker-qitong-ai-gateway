@@ -416,8 +416,8 @@ input[type=range]{accent-color:var(--primary)}
   .topbar-right{flex-shrink:0}
   .topbar-title .ver{display:none}
   .user-name{display:none}
-  /* 移动端聊天：抽屉式会话列表，消息区全宽 */
-  .chat-layout{height:calc(100dvh - 300px);min-height:380px}
+  /* 移动端聊天：抽屉式会话列表，消息区全宽，撑满到导航 */
+  .chat-layout{height:calc(100dvh - 150px);min-height:380px}
   .chat-main .chat-toolbar select{width:130px!important;font-size:11px!important}
   .chat-toolbar-title{font-size:12px!important}
   .chat-msgs{padding:12px 10px}
