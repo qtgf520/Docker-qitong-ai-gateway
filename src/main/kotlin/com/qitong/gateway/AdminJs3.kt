@@ -271,15 +271,13 @@ loaders.settings = function(){
    '<div class="form-row"><label>新密码</label><input id="chgNew" class="input" type="password" placeholder="至少6个字符"></div>',
    '<button class="btn" onclick="changePassword()">修改密码</button>',
    '</div>',
-   '<div class="card" id="distCard"><h3>分销中心</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-   '<div class="card" id="memCard"><h3>大脑记忆</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-   '<div class="card" id="memCfgCard"><h3>记忆配置</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-   '<div class="card" id="brainCard"><h3>qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-   '<div class="card" id="langCard"><h3>界面语言</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-   '<div class="card" id="bakCard"><h3>数据备份/恢复</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-   '<div class="card" id="skillCard"><h3>自定义技能</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-   (isAdmin ? '<div class="card" id="notifyCard"><h3>通知设置</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>' : '')
-  ].join('');
+'<div class="card" id="memCard"><h3>大脑记忆</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+    '<div class="card" id="memCfgCard"><h3>记忆配置</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+    '<div class="card" id="brainCard"><h3>qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+    '<div class="card" id="langCard"><h3>界面语言</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+    '<div class="card" id="bakCard"><h3>数据备份/恢复</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+    (isAdmin ? '<div class="card" id="notifyCard"><h3>通知设置</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>' : '')
+   ].join('');
   // 通知设置（仅管理员）
   if(isAdmin){
    api('/api/notify/config').then(function(nr){
@@ -303,20 +301,6 @@ loaders.settings = function(){
     }
    });
   }
-  // 分销信息
-  api('/api/me/distribution').then(function(dr){
-   if(dr && dr.code === 0 && dr.data){
-    var d = dr.data;
-    var dc = $('distCard');
-    if(dc) dc.innerHTML = '<h3>分销中心</h3>' +
-     '<div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\''+esc(d.inviteCode)+'\')"><b style="font-family:monospace">'+esc(d.inviteCode)+'</b> <span class="copy-tag">复制</span></div></div>' +
-     '<div class="form-row"><label>邀请人数</label><div><b style="color:var(--cyan)">'+d.inviteCount+'</b>人</div></div>' +
-     '<div class="form-row"><label>佣金比例</label><div><b style="color:var(--green)">'+d.commissionRate+'%</b>（被邀请人充值时自动返佣到你的余额）</div></div>' +
-     '<div class="form-row"><label>我的余额</label><div><b style="color:var(--green)">¥'+d.balance.toFixed(2)+'</b></div></div>' +
-     '<div class="form-row"><label>注册链接</label><div class="addr-line" onclick="copyText(location.origin+\'/login\')">' + location.origin + '/login <span class="copy-tag">复制</span></div></div>' +
-     '<small style="color:var(--muted)">分享邀请码给朋友，朋友注册时填写你的邀请码，Ta 充值后你将获得 '+d.commissionRate+'% 佣金</small>';
-   }
-  });
   // 大脑记忆
   api('/api/memory').then(function(mr){
    if(mr && mr.code === 0){
@@ -394,22 +378,6 @@ loaders.settings = function(){
      '<button class="btn-ghost" onclick="importData()">导入恢复</button>' +
      '</div>' +
      '<small style="color:var(--muted);display:block;margin-top:6px">导出：服务商/模型/人格/记忆/自定义技能；导入：JSON 文件互传（APP 与线上互传）</small>';
-   }
-  });
-  // 自定义技能（按用户隔离）
-  api('/api/skills').then(function(sr){
-   if(sr && sr.code === 0){
-    var skills = sr.data || [];
-    var sc = $('skillCard');
-    if(sc){
-     var rows = (skills || []).map(function(s,i){
-      return '<tr><td>'+(i+1)+'</td><td>'+esc(s.name||'')+'</td><td>'+esc(s.description||'')+'</td><td>' + ((s.triggers||[]).length ? '<span class="badge purple">'+esc((s.triggers||[]).join('、'))+'</span>' : '') + '</td><td><button class="btn-ghost" style="color:var(--red)" onclick="delSkill('+i+')">删</button></td></tr>';
-     }).join('');
-     sc.innerHTML = '<h3>自定义技能 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="addSkill()">添加</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="importSkillFromGit()">Git 导入</button></h3>' +
-      '<div class="table-wrap"><table><thead><tr><th>#</th><th>名称</th><th>描述</th><th>触发词</th><th>操作</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="5" style="text-align:center;color:var(--muted)">' + ((skills||[]).length ? '' : '暂无自定义技能，点击「添加」') + '</td></tr></tbody></table></div>' +
-      '<small style="color:var(--muted)">自定义技能会注入大脑，命中触发词时 AI 按你的描述自动执行（按用户独立存储）</small>';
-    }
    }
   });
   // 回填人格配置
@@ -562,34 +530,6 @@ window.importData = function(){
   reader.readAsText(f);
  };
  inp.click();
-};
-// ===== 自定义技能（按用户隔离） =====
-window.addSkill = function(){
- openModal('添加自定义技能', '<div class="form-row"><label>技能名称</label><input id="skName" class="input" placeholder="如：查天气"></div><div class="form-row"><label>触发词（逗号分隔）</label><input id="skTrig" class="input" placeholder="如：天气,今天天气"></div><div class="form-row"><label>执行描述</label><textarea id="skDesc" class="input" rows="3" placeholder="告诉大脑这个技能做什么"></textarea></div>', function(){
-  var name = $('skName').value.trim();
-  var trig = $('skTrig').value.trim();
-  var desc = $('skDesc').value.trim();
-  if(!name || !desc){ toast('请填写名称和描述', false); return; }
-  api('/api/skills', { method:'POST', body: { name: name, description: desc, triggers: trig.split(',').map(function(s){return s.trim();}).filter(Boolean) } }).then(function(r){
-   if(r.code === 0){ toast('技能已添加', true); closeModal(); loaders.settings(); } else toast(r.msg, false);
-  });
- });
-};
-window.delSkill = function(idx){
- if(!confirm('删除该技能？')) return;
- api('/api/skills/' + idx, { method:'DELETE' }).then(function(r){
-  if(r.code === 0){ toast('已删除', true); loaders.settings(); } else toast(r.msg, false);
- });
-};
-window.importSkillFromGit = function(){
- openModal('Git/URL 导入技能', '<div class="form-row"><label>技能文件 URL</label><input id="skUrl" class="input" placeholder="https://raw.githubusercontent.com/xxx/skills.json 或任意 JSON 技能地址"></div><small style="color:var(--muted)">支持 Git raw 链接或任意返回 JSON 数组的技能地址（每项含 name/description/triggers）</small>', function(){
-  var url = $('skUrl').value.trim();
-  if(!url){ toast('请输入URL', false); return; }
-  toast('正在导入...', true);
-  api('/api/skills/import', { method:'POST', body: { url: url } }).then(function(r){
-   if(r.code === 0){ toast(r.msg, true); closeModal(); loaders.settings(); } else toast(r.msg, false);
-  });
- });
 };
 window.changePassword = function(){
  var oldPwd = $('chgOld').value;

@@ -298,14 +298,19 @@ loaders.chat = function(){
  Promise.all([api('/api/conversations'), api('/api/models')]).then(function(res){
   state.conversations = res[0].data || []; state.models = res[1].data || [];
   var convList = (state.conversations||[]).map(function(c){
+   var title = c.title||('会话'+c.id);
+   var ava = title.charAt(0).toUpperCase();
    return '<div class="chat-conv-item'+(state.currentChatConv===c.id?' active':'')+'" onclick="openConv('+c.id+')">'+
-    '<div class="chat-conv-title">'+esc(c.title||('会话'+c.id))+'</div>'+
-    '<div class="chat-conv-time">'+convTime(c.updatedAt||c.createdAt)+'</div>'+
+    '<div class="chat-conv-ava">'+esc(ava)+'</div>'+
+    '<div class="chat-conv-body">'+
+     '<div class="chat-conv-title">'+esc(title)+'</div>'+
+     '<div class="chat-conv-time">'+convTime(c.updatedAt||c.createdAt)+'</div>'+
+    '</div>'+
     '<div class="chat-conv-ops">'+
      '<button class="btn-ghost btn-sm" title="重命名" onclick="event.stopPropagation();renameConv('+c.id+',\''+esc((c.title||'').replace(/'/g,''))+'\')">✏️</button>'+
      '<button class="btn-ghost btn-sm danger" title="删除" onclick="event.stopPropagation();deleteConv('+c.id+')">🗑</button>'+
     '</div></div>';
-  }).join('') || '<div style="color:var(--muted);font-size:12px;padding:10px">暂无会话</div>';
+  }).join('') || '<div style="color:var(--muted);font-size:12px;padding:14px">暂无会话，点「+ 新」开始</div>';
   var modelOpts = state.models.map(function(m){ return '<option value="'+esc(m.modelId)+'"'+(state.chatModel===m.modelId?' selected':'')+'>'+esc(m.displayName)+'</option>'; }).join('');
   if(!modelOpts) modelOpts = '<option value="qtai-sj" selected>🔄 自动化切换</option>';
   box.innerHTML = [
@@ -314,8 +319,12 @@ loaders.chat = function(){
      '<div class="chat-side-head"><b>💬 会话</b><button class="btn-ghost btn-sm" onclick="newChat()" title="新聊天">+ 新</button></div>',
      '<div class="chat-side-list">'+convList+'</div>',
     '</div>',
-    '<div class="chat-main">',
-     '<div class="chat-toolbar"><select id="chatModel" class="input" style="width:220px">'+modelOpts+'</select><span style="flex:1"></span><button class="btn-ghost btn-sm danger" onclick="deleteConv()">删除会话</button></div>',
+'<div class="chat-main">'+
+     '<div class="chat-toolbar">'+
+      '<span class="chat-toolbar-title" id="chatCurTitle">💬 聊天</span>'+
+      '<select id="chatModel" class="input" style="width:190px;border-radius:16px;padding:6px 10px">'+modelOpts+'</select>'+
+      '<button class="btn-ghost btn-sm" onclick="deleteConv()" title="删除当前会话">🗑</button>'+
+     '</div>'+
      '<div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">👋 选择或新建会话开始聊天，输入框固定在底部</div></div></div>',
      '<div class="chat-input"><input id="chatInput" class="input" placeholder="输入消息... (Enter发送)" onkeydown="if(event.key===\'Enter\')sendChat()"><button class="btn" onclick="sendChat()">发送</button></div>',
     '</div>',
@@ -343,6 +352,10 @@ window.openConv = function(id){
  document.querySelectorAll('.chat-conv-item').forEach(function(x){ x.classList.remove('active'); });
  var el2 = document.querySelector('.chat-conv-item[onclick="openConv('+id+')"]');
  if(el2) el2.classList.add('active');
+ // 更新顶部标题
+ var title = '💬 聊天';
+ (state.conversations||[]).forEach(function(c){ if(c.id===id) title = c.title || ('会话'+c.id); });
+ var tt = $('chatCurTitle'); if(tt) tt.textContent = title;
  loadConvMsgs();
 };
 window.loadConvMsgs = function(){
