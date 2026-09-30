@@ -113,6 +113,60 @@ class QqApiClient {
         }
     }
 
+    /** 发送群卡片消息（markdown 模板，msg_type=2）。content 为 markdown 原文 */
+    fun sendGroupCardMessage(bot: QqBot, accessToken: String, groupOpenid: String, content: String, msgId: String?): Boolean {
+        val payload = buildString {
+            append("{\"msg_type\":2,\"markdown\":{\"content\":")
+            append(org.json.JSONObject.quote(content.take(2000)))
+            append("}")
+            if (!msgId.isNullOrBlank()) {
+                append(",\"msg_id\":")
+                append(org.json.JSONObject.quote(msgId))
+            }
+            append("}")
+        }
+        val req = Request.Builder()
+            .url("${base(bot)}/v2/groups/$groupOpenid/messages")
+            .addHeader("Authorization", bot.authHeader(accessToken))
+            .addHeader("Content-Type", "application/json")
+            .post(payload.toRequestBody(jsonCt))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                System.err.println("[QQBot] 群卡片消息发送失败 ${bot.appid} -> $groupOpenid : HTTP ${resp.code} $body")
+            }
+            return resp.isSuccessful
+        }
+    }
+
+    /** 发送私聊卡片消息（markdown） */
+    fun sendC2cCardMessage(bot: QqBot, accessToken: String, userOpenid: String, content: String, msgId: String?): Boolean {
+        val payload = buildString {
+            append("{\"msg_type\":2,\"markdown\":{\"content\":")
+            append(org.json.JSONObject.quote(content.take(2000)))
+            append("}")
+            if (!msgId.isNullOrBlank()) {
+                append(",\"msg_id\":")
+                append(org.json.JSONObject.quote(msgId))
+            }
+            append("}")
+        }
+        val req = Request.Builder()
+            .url("${base(bot)}/v2/users/$userOpenid/messages")
+            .addHeader("Authorization", bot.authHeader(accessToken))
+            .addHeader("Content-Type", "application/json")
+            .post(payload.toRequestBody(jsonCt))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                System.err.println("[QQBot] 私聊卡片消息发送失败 ${bot.appid} -> $userOpenid : HTTP ${resp.code} $body")
+            }
+            return resp.isSuccessful
+        }
+    }
+
     /** 全员禁言/解除（机器人需为群管理员）。enable=true 开启全员禁言 */
     fun setGroupMute(bot: QqBot, accessToken: String, groupOpenid: String, enable: Boolean): Boolean {
         val mode = if (enable) "always" else "none"

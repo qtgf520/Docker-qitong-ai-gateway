@@ -369,6 +369,8 @@ class Database(private val dbPath: String) {
             runCatching { st.executeUpdate("ALTER TABLE qq_groups ADD COLUMN group_name TEXT NOT NULL DEFAULT ''") }
             // 群专属提示词（每群可独立 system prompt，覆盖机器人默认人设）
             runCatching { st.executeUpdate("ALTER TABLE qq_groups ADD COLUMN group_prompt TEXT NOT NULL DEFAULT ''") }
+            // 卡片模式（0=文本 1=卡片markdown，群内发「切换卡片/切换文本」切换）
+            runCatching { st.executeUpdate("ALTER TABLE qq_groups ADD COLUMN card_mode INTEGER NOT NULL DEFAULT 0") }
             // QQ 插件/自定义指令（小栗子风格：触发器 -> 回复/HTTP/AI）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_commands (
@@ -1670,7 +1672,8 @@ class Database(private val dbPath: String) {
                 "groupPrompt" to (row["group_prompt"] as? String ?: ""),
                 "adminMute" to ((row["admin_mute"] as? Number)?.toInt() == 1),
                 "adminKick" to ((row["admin_kick"] as? Number)?.toInt() == 1),
-                "adminManage" to ((row["admin_manage"] as? Number)?.toInt() == 1)
+                "adminManage" to ((row["admin_manage"] as? Number)?.toInt() == 1),
+                "cardMode" to ((row["card_mode"] as? Number)?.toInt() == 1)
             )
         }
 
@@ -1687,7 +1690,7 @@ class Database(private val dbPath: String) {
         }
     }
 
-    fun updateQqGroup(groupOpenid: String, aiEnabled: Boolean?, welcomeEnabled: Boolean?, greeting: String?, adminMute: Boolean?, adminKick: Boolean?, adminManage: Boolean?, groupName: String?, groupPrompt: String? = null) {
+    fun updateQqGroup(groupOpenid: String, aiEnabled: Boolean?, welcomeEnabled: Boolean?, greeting: String?, adminMute: Boolean?, adminKick: Boolean?, adminManage: Boolean?, groupName: String?, groupPrompt: String? = null, cardMode: Boolean? = null) {
         touchQqGroup(groupOpenid, "")
         aiEnabled?.let { stmt("UPDATE qq_groups SET ai_enabled=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
         welcomeEnabled?.let { stmt("UPDATE qq_groups SET welcome_enabled=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
@@ -1697,7 +1700,8 @@ class Database(private val dbPath: String) {
         adminManage?.let { stmt("UPDATE qq_groups SET admin_manage=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
         groupName?.let { stmt("UPDATE qq_groups SET group_name=? WHERE group_openid=?", it, groupOpenid) }
         groupPrompt?.let { stmt("UPDATE qq_groups SET group_prompt=? WHERE group_openid=?", it, groupOpenid) }
-    }
+        cardMode?.let { stmt("UPDATE qq_groups SET card_mode=? WHERE group_openid=?", if (it) 1 else 0, groupOpenid) }
+}
 
     /** 删除群配置（同时清空该群下用户记录） */
     fun deleteQqGroup(groupOpenid: String) {
@@ -1846,6 +1850,22 @@ class Database(private val dbPath: String) {
     }
 
     fun deleteQqPlugin(name: String) { stmt("DELETE FROM qq_plugins WHERE name=?", name) }
+
+    /** 插件启用/停用切换 */
+    fun setQqPluginEnabled(name: String, enabled: Boolean) {
+        stmt("UPDATE qq_plugins SET enabled=? WHERE name=?", if (enabled) 1 else 0, name)
+    }
+
+    /** 更新插件配置（标题/描述/版本/菜单/作者） */
+    fun updateQqPluginConfig(name: String, description: String?, version: String?, menu: String?, author: String?) {
+        val cur = getQqPluginByName(name) ?: return
+        stmt("UPDATE qq_plugins SET description=?, version=?, menu=?, author=? WHERE name=?",
+            description ?: (cur["description"] as? String ?: ""),
+            version ?: (cur["version"] as? String ?: "1.0.0"),
+            menu ?: (cur["menu"] as? String ?: ""),
+            author ?: (cur["author"] as? String ?: ""),
+            name)
+    }
 
     // ============ QQ 用户绑定（独立隔离） ============
 

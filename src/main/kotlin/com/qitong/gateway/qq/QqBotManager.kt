@@ -328,6 +328,18 @@ object QqBotManager {
     ) {
         val t0 = System.currentTimeMillis()
         val t = text.trim()
+        // ★ 群卡片模式：群内可切换（发「切换卡片/切换文本」），插件/AI 回复按模式用卡片或文本发送
+        val cardMode = if (groupOpenid.isNotBlank()) {
+            (db.getQqGroupConfig(groupOpenid)?.get("cardMode") as? Boolean) == true
+        } else false
+        // smartSend：按群卡片模式自动选择发送方式（群内卡片用 markdown，私聊/文本用纯文本）
+        val smartSend: (String) -> Boolean = { content ->
+            if (cardMode && groupOpenid.isNotBlank()) {
+                val at2 = api.getAccessToken(bot)
+                if (!at2.isNullOrBlank()) api.sendGroupCardMessage(bot, at2, groupOpenid, content, msgId)
+                else send(content)
+            } else send(content)
+        }
         // 0) 内置指令（签到/积分/全员禁言）
         val builtin = matchBuiltin(text, groupOpenid)
         if (builtin != null) {
@@ -428,6 +440,41 @@ object QqBotManager {
                     val at = api.getAccessToken(bot) ?: run { send("获取凭证失败"); return }
                     if (api.kickGroupMember(bot, at, groupOpenid, targetOpenid)) send("✅ 已踢出 $targetOpenid") else send("踢人失败（需机器人是群主/管理员）")
                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "踢出 $targetOpenid", System.currentTimeMillis() - t0)
+                    return
+                }
+                "card_on" -> {
+                    // 切换为卡片模式（markdown 卡片回复）
+                    if (groupOpenid.isBlank()) { send("卡片模式仅群内可用（私聊默认文本）"); return }
+                    val qqU = db.getQqUserByGroup(userOpenid, groupOpenid)
+                    val perm = (qqU?.get("permLevel") as? Number)?.toInt() ?: 1
+                    if (perm < 3) { send("⛔ 切换模式需要管理级权限(3级)"); return }
+                    db.updateQqGroup(groupOpenid, null, null, null, null, null, null, null, null, cardMode = true)
+                    send("✅ 本群已切换为 **卡片模式**，AI/插件回复将用 markdown 卡片发送")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "切换卡片模式", System.currentTimeMillis() - t0)
+                    return
+                }
+                "card_off" -> {
+                    if (groupOpenid.isBlank()) { send("文本模式仅群内可用"); return }
+                    val qqU = db.getQqUserByGroup(userOpenid, groupOpenid)
+                    val perm = (qqU?.get("permLevel") as? Number)?.toInt() ?: 1
+                    if (perm < 3) { send("⛔ 切换模式需要管理级权限(3级)"); return }
+                    db.updateQqGroup(groupOpenid, null, null, null, null, null, null, null, null, cardMode = false)
+                    send("✅ 本群已切换为 **文本模式**，回复将用普通文本发送")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "切换文本模式", System.currentTimeMillis() - t0)
+                    return
+                }
+                "group_note" -> {
+                    // 群里改当前群备注/群名（管理员3+）
+                    if (groupOpenid.isBlank()) { send("私聊无法修改群备注"); return }
+                    val qqU = db.getQqUserByGroup(userOpenid, groupOpenid)
+                    val perm = (qqU?.get("permLevel") as? Number)?.toInt() ?: 1
+                    if (perm < 3) { send("⛔ 修改群备注需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }
+                    val newName = builtin.second.trim()
+                    if (newName.isBlank()) { send("⚠️ 语法：修改群备注 新群名"); return }
+                    if (newName.length > 30) { send("⚠️ 群备注最多 30 字"); return }
+                    db.updateQqGroup(groupOpenid, null, null, null, null, null, null, newName)
+                    send("✅ 本群备注已改为「$newName」")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "修改群备注 $newName", System.currentTimeMillis() - t0)
                     return
                 }
             }
@@ -623,7 +670,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val pluginHit = matchPlugin(text, userOpenid)
         if (pluginHit != null) {
             val (pluginName, output) = pluginHit
-            send(output)
+            smartSend(output)
             lastReplyTs[userOpenid] = System.currentTimeMillis()
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "plugin", "[$pluginName] $text", System.currentTimeMillis() - t0)
             return
@@ -641,7 +688,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
 
         val reply = askModel(bot, key, text, userOpenid, groupOpenid)
         if (!reply.isNullOrBlank()) {
-            send(reply)
+            smartSend(reply)
             lastReplyTs[userOpenid] = System.currentTimeMillis()
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "ai", text, System.currentTimeMillis() - t0)
         }
@@ -658,6 +705,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (t.equals("签到", true) || t.equals("打卡", true)) return "sign" to t
         if (t.equals("我的积分", true) || t.equals("积分", true)) return "points" to t
         if (t.startsWith("改我名字", true) || t.startsWith("修改备注", true) || t.startsWith("改备注", true)) return "rename" to t.substringAfter(" ").trim()
+        if (t.equals("切换卡片", true) || t.equals("卡片模式", true)) return "card_on" to t
+        if (t.equals("切换文本", true) || t.equals("文本模式", true) || t.equals("切换文字", true)) return "card_off" to t
+        // 群里改当前群备注/群名（管理员3+）
+        if (t.startsWith("修改群备注", true) || t.startsWith("修改群名", true) || t.startsWith("改群名", true) || t.startsWith("改群备注", true)) return "group_note" to t.substringAfter(" ").trim()
         if (groupOpenid.isNotBlank()) {
             if (t.equals("全员禁言", true)) return "mute_on" to t
             if (t.equals("解除全员禁言", true) || t.equals("取消全员禁言", true)) return "mute_off" to t

@@ -214,14 +214,66 @@ function qqLoadPlugins(){
   var list=(r&&r.data)||[];
   if(!list.length){ el.innerHTML='<div style="color:var(--muted);padding:16px">还没有插件。点「📦 上传插件包」安装第一个（压缩包含游戏/菜单 txt）。</div>'; return; }
   var rows=list.map(function(p){
+   var st = p.enabled
+    ? '<span class="badge green">启用</span> <button class="btn-ghost btn-sm" onclick="qqPluginToggle(\''+esc(p.name)+'\',false)">停用</button>'
+    : '<span class="badge gray">停用</span> <button class="btn-ghost btn-sm" onclick="qqPluginToggle(\''+esc(p.name)+'\',true)">启用</button>';
    return '<tr><td><b>'+esc(p.name)+'</b> <span class="badge blue">v'+esc(p.version)+'</span></td>'+
-    '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(p.description||'-')+'</td>'+
-    '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">'+esc((p.menu||'').slice(0,50))+'</td>'+
-    '<td>'+(p.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
-    '<td><button class="btn-ghost btn-sm danger" onclick="qqPluginDel(\''+esc(p.name)+'\')">删</button></td></tr>';
+    '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(p.description||'-')+'</td>'+
+    '<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">'+esc((p.menu||'').slice(0,40))+'</td>'+
+    '<td>'+st+'</td>'+
+    '<td style="white-space:nowrap">'+
+     '<button class="btn-ghost btn-sm" onclick="qqPluginConfig(\''+esc(p.name)+'\')">⚙️配置</button> '+
+     '<button class="btn-ghost btn-sm" onclick="qqPluginFiles(\''+esc(p.name)+'\')">📁文件</button> '+
+     '<button class="btn-ghost btn-sm danger" onclick="qqPluginDel(\''+esc(p.name)+'\')">删</button></td></tr>';
   }).join('');
   el.innerHTML='<div class="table-wrap"><table><thead><tr><th>插件名</th><th>描述</th><th>菜单</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
-   '<div style="font-size:12px;color:var(--muted);margin-top:8px">QQ 里发「菜单」查看已装插件，发插件命令（如 抽奖/打怪/猜数字）触发游戏</div>';
+   '<div style="font-size:12px;color:var(--muted);margin-top:8px">QQ 里发「菜单」查看已装插件，发插件命令（如 抽奖/打怪/猜数字）触发游戏；「⚙️配置」改标题/菜单/指令，「📁文件」直接编辑游戏脚本</div>';
+ });
+}
+function qqPluginToggle(name,enabled){
+ api('/api/qq/plugins/'+encodeURIComponent(name)+'/toggle',{method:'POST',body:{enabled:enabled}}).then(function(r){
+  toast(r.msg||'', r.code===0); if(r.code===0) qqLoadPlugins();
+ });
+}
+function qqPluginConfig(name){
+ api('/api/qq/plugins').then(function(r){
+  var p=(r&&r.data||[]).filter(function(x){return x.name===name})[0];
+  if(!p){ toast('插件不存在',false); return; }
+  var html = '<div class="form-row"><label>插件标题（QQ「菜单」显示名）</label><input class="input" id="pcName" value="'+esc(p.name)+'"></div>'+
+   '<div class="form-row"><label>描述</label><input class="input" id="pcDesc" value="'+esc(p.description||'')+'"></div>'+
+   '<div class="form-row"><label>版本</label><input class="input" id="pcVer" value="'+esc(p.version||'1.0.0')+'"></div>'+
+   '<div class="form-row"><label>菜单说明（指令切换/玩法介绍）</label><textarea class="input" id="pcMenu" rows="4">'+esc(p.menu||'')+'</textarea></div>';
+  openModal('⚙️ 配置插件 · '+name, html, function(){
+   api('/api/qq/plugins/'+encodeURIComponent(name)+'/config',{method:'POST',body:{
+    description:$('pcDesc').value, version:$('pcVer').value||'1.0.0', menu:$('pcMenu').value
+   }}).then(function(r){
+    if(r.code===0){ toast('已保存',true); closeModal(); qqLoadPlugins(); } else toast(r.msg||'保存失败',false);
+   });
+  });
+ });
+}
+function qqPluginFiles(name){
+ api('/api/qq/plugins/'+encodeURIComponent(name)+'/files').then(function(r){
+  var files=(r&&r.data)||[];
+  if(!files.length){ toast('插件无文件',false); return; }
+  var body='<div style="max-height:60vh;overflow:auto">'+files.map(function(f){
+   return '<div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center">'+
+    '<span style="flex:1;font-size:12px;font-family:monospace">'+esc(f)+'</span>'+
+    '<button class="btn-ghost btn-sm" onclick="qqPluginFileEdit(\''+esc(name)+'\',\''+esc(f)+'\')">✏️编辑</button></div>';
+  }).join('')+'</div>';
+  openModal('📁 插件文件 · '+name, body, null, {hideFooter:true});
+ });
+}
+function qqPluginFileEdit(name,path){
+ api('/api/qq/plugins/'+encodeURIComponent(name)+'/file?path='+encodeURIComponent(path)).then(function(r){
+  var content=(r&&r.data&&r.data.content)||'';
+  var body='<div style="font-size:11px;color:var(--muted);margin-bottom:6px">编辑 '+esc(path)+'（UTF-8 保存，改动立即生效）</div>'+
+   '<textarea class="input" id="pfe" rows="14" style="font-family:monospace;font-size:12px">'+esc(content)+'</textarea>';
+  openModal('✏️ 编辑文件 · '+name+'/'+path, body, function(){
+   api('/api/qq/plugins/'+encodeURIComponent(name)+'/file',{method:'POST',body:{path:path, content:$('pfe').value}}).then(function(r){
+    if(r.code===0){ toast('已保存',true); closeModal(); } else toast(r.msg||'保存失败',false);
+   });
+  });
  });
 }
 function qqPluginUpload(){

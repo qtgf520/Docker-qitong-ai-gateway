@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-42
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-43
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-42    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-43    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -184,7 +184,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-42"))
+                put("version", JsonPrimitive("3.18.22-43"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1095,6 +1095,75 @@ fun Application.moduleWeb(database: Database) {
             }
             AdminApi.ok(call, null, "插件已删除")
         }
+        // 插件启停切换
+        post("/api/qq/plugins/{name}/toggle") {
+            val name = call.parameters["name"].orEmpty()
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+            database.setQqPluginEnabled(name, enabled)
+            database.addOpLog(u.id, u.username, "QQ插件", if (enabled) "启用插件 $name" else "停用插件 $name", call.request.local.remoteHost)
+            AdminApi.ok(call, null, if (enabled) "插件已启用" else "插件已停用")
+        }
+        // 插件配置更新（标题/描述/版本/菜单/作者）
+        post("/api/qq/plugins/{name}/config") {
+            val name = call.parameters["name"].orEmpty()
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            database.updateQqPluginConfig(name,
+                body["description"]?.jsonPrimitive?.content,
+                body["version"]?.jsonPrimitive?.content,
+                body["menu"]?.jsonPrimitive?.content,
+                body["author"]?.jsonPrimitive?.content)
+            database.addOpLog(u.id, u.username, "QQ插件", "更新插件配置 $name", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "插件配置已保存")
+        }
+        // 插件文件列表（游戏/菜单 txt 文件）
+        get("/api/qq/plugins/{name}/files") {
+            val name = call.parameters["name"].orEmpty()
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val dataDir = java.io.File(System.getenv("DATA_DIR") ?: "/data/qitong")
+            val pluginDir = java.io.File(dataDir, "plugins/${name.replace(Regex("[^a-zA-Z0-9_\\u4e00-\\u9fa5]"), "_")}")
+            if (!pluginDir.isDirectory) { AdminApi.fail(call, "插件目录不存在", 404); return@get }
+            val files = pluginDir.walkTopDown().filter { it.isFile && it.extension in setOf("txt", "json", "md") }
+                .map { it.relativeTo(pluginDir).path }
+                .toList().sorted()
+            AdminApi.ok(call, files, "ok")
+        }
+        // 读取插件文件内容
+        get("/api/qq/plugins/{name}/file") {
+            val name = call.parameters["name"].orEmpty()
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val rel = call.queryParameters["path"].orEmpty()
+            val dataDir = java.io.File(System.getenv("DATA_DIR") ?: "/data/qitong")
+            val pluginDir = java.io.File(dataDir, "plugins/${name.replace(Regex("[^a-zA-Z0-9_\\u4e00-\\u9fa5]"), "_")}")
+            val f = java.io.File(pluginDir, rel)
+            if (!f.isFile || !f.canonicalPath.startsWith(pluginDir.canonicalPath)) { AdminApi.fail(call, "文件不存在", 404); return@get }
+            val content = runCatching { f.readText(Charsets.UTF_8) }
+                .getOrElse { runCatching { f.readText(java.nio.charset.Charset.forName("GBK")) }.getOrDefault("") }
+            AdminApi.ok(call, mapOf("path" to rel, "content" to content), "ok")
+        }
+        // 保存插件文件内容
+        post("/api/qq/plugins/{name}/file") {
+            val name = call.parameters["name"].orEmpty()
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val rel = body["path"]?.jsonPrimitive?.content.orEmpty()
+            val content = body["content"]?.jsonPrimitive?.content.orEmpty()
+            val dataDir = java.io.File(System.getenv("DATA_DIR") ?: "/data/qitong")
+            val pluginDir = java.io.File(dataDir, "plugins/${name.replace(Regex("[^a-zA-Z0-9_\\u4e00-\\u9fa5]"), "_")}")
+            val f = java.io.File(pluginDir, rel)
+            if (!f.canonicalPath.startsWith(pluginDir.canonicalPath)) { AdminApi.fail(call, "非法路径", 400); return@post }
+            f.parentFile?.mkdirs()
+            f.writeText(content, Charsets.UTF_8)
+            database.addOpLog(u.id, u.username, "QQ插件", "修改插件文件 $name/$rel", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "文件已保存")
+        }
         // QQ 用户（独立隔离）
         get("/api/qq/users") {
             val u = call.requireAuth(database) ?: return@get
@@ -1432,7 +1501,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-42"))
+                put("version", JsonPrimitive("3.18.22-43"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2152,7 +2221,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-42"))
+                    put("version", JsonPrimitive("3.18.22-43"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()
