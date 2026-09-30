@@ -384,6 +384,19 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
+            // QQ 插件包（上传压缩包安装的独立插件：名字/描述/菜单/版本）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS qq_plugins (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT NOT NULL DEFAULT '',
+                    version TEXT NOT NULL DEFAULT '1.0.0',
+                    menu TEXT NOT NULL DEFAULT '',
+                    author TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
             // QQ 用户绑定（独立用户隔离：人设覆盖/AI开关/累计消息 + 权限控制）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_user_bindings (
@@ -1792,6 +1805,48 @@ class Database(private val dbPath: String) {
 
     fun deleteQqCommand(id: Long) { stmt("DELETE FROM qq_commands WHERE id=?", id) }
 
+    // ============ QQ 插件包（压缩包安装） ============
+
+    fun getQqPlugins(): List<Map<String, Any?>> =
+        query("SELECT * FROM qq_plugins ORDER BY id DESC").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "name" to (row["name"] as? String ?: ""),
+                "description" to (row["description"] as? String ?: ""),
+                "version" to (row["version"] as? String ?: "1.0.0"),
+                "menu" to (row["menu"] as? String ?: ""),
+                "author" to (row["author"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1)
+            )
+        }
+
+    fun getQqPluginByName(name: String): Map<String, Any?>? =
+        query("SELECT * FROM qq_plugins WHERE name=?", name).firstOrNull()?.let { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "name" to (row["name"] as? String ?: ""),
+                "description" to (row["description"] as? String ?: ""),
+                "version" to (row["version"] as? String ?: "1.0.0"),
+                "menu" to (row["menu"] as? String ?: ""),
+                "author" to (row["author"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1)
+            )
+        }
+
+    fun upsertQqPlugin(name: String, description: String, version: String, menu: String, author: String, enabled: Boolean = true): Long {
+        val exists = queryOne("SELECT id FROM qq_plugins WHERE name=?", name) ?: 0
+        if (exists > 0) {
+            stmt("UPDATE qq_plugins SET description=?, version=?, menu=?, author=?, enabled=? WHERE name=?",
+                description, version, menu, author, if (enabled) 1 else 0, name)
+            return exists
+        }
+        stmt("INSERT INTO qq_plugins (name,description,version,menu,author,enabled,created_at) VALUES (?,?,?,?,?,?,?)",
+            name, description, version, menu, author, if (enabled) 1 else 0, System.currentTimeMillis())
+        return queryOne("SELECT id FROM qq_plugins WHERE name=?") ?: 0
+    }
+
+    fun deleteQqPlugin(name: String) { stmt("DELETE FROM qq_plugins WHERE name=?", name) }
+
     // ============ QQ 用户绑定（独立隔离） ============
 
     fun getQqUser(openid: String): Map<String, Any?>? =
@@ -1879,6 +1934,9 @@ class Database(private val dbPath: String) {
     /** QQ 运行日志：清空全部 */
     fun clearQqLogs() { stmt("DELETE FROM qq_logs") }
 
+    /** 按群清理聊天记录（群聊天记录单独管理） */
+    fun clearQqLogsByGroup(groupOpenid: String) { stmt("DELETE FROM qq_logs WHERE group_openid=?", groupOpenid) }
+
     /** 概览统计：今日消息数 / 群数 / 用户数。 */
     fun qqOverview(): Map<String, Any?> {
         val dayStart = System.currentTimeMillis() / 86400000 * 86400000
@@ -1960,11 +2018,27 @@ class Database(private val dbPath: String) {
             openid, content.take(500), type, "neutral", 5, System.currentTimeMillis(), "qq:$openid"
         )
     }
-
-    /** 清空某 QQ 用户记忆。 */
+/** 清空某 QQ 用户记忆。 */
     fun clearQqBrainMemories(openid: String) {
         stmt("DELETE FROM brain_memory WHERE tags=?", "qq:$openid")
     }
+
+    /** 读取某 QQ 用户记忆明细（带 id/时间，供前端单条删除）。 */
+    fun getQqBrainMemoryItems(openid: String, limit: Int = 100): List<Map<String, Any?>> =
+        query("SELECT id, content, type, timestamp FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit", "qq:$openid").map { row ->
+            mapOf(
+                "id" to ((row["id"] as? Number)?.toLong() ?: 0L),
+                "content" to (row["content"] as? String).orEmpty(),
+                "type" to (row["type"] as? String).orEmpty(),
+                "timestamp" to ((row["timestamp"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    /** 删除单条 QQ 用户记忆。 */
+    fun deleteQqBrainMemoryById(id: Long) {
+        stmt("DELETE FROM brain_memory WHERE id=? AND tags LIKE 'qq:%'", id)
+    }
+
 
     /** 自动过期：清理 N 天前的 QQ 记忆。 */
     fun cleanOldQqMemories(days: Int = 30) {

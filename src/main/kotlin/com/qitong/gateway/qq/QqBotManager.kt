@@ -602,7 +602,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             if (onCooldown(userOpenid, (cmd["cooldown"] as? Number)?.toInt() ?: 5)) return
             val reply = when (cmd["action"]) {
                 "http" -> httpGet(cmd["content"] as String)
-                "ai" -> askModel(bot, key, "${cmd["content"]} $text", userOpenid)
+                "ai" -> askModel(bot, key, "${cmd["content"]} $text", userOpenid, groupOpenid)
                 // ★ 插件强化：支持终端命令/网关技能/工作流/AI画图
                 "terminal" -> runTerminal(cmd["content"] as String)
                 "skill" -> runSkillCode(cmd["content"] as String, text)
@@ -616,6 +616,16 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             }
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "command",
                 "命中[${cmd["trigger"]}] -> $text", System.currentTimeMillis() - t0)
+            return
+        }
+
+        // 1.5) ★ 上传的插件包（zip 安装的游戏/功能插件）：菜单 + 命令分发
+        val pluginHit = matchPlugin(text, userOpenid)
+        if (pluginHit != null) {
+            val (pluginName, output) = pluginHit
+            send(output)
+            lastReplyTs[userOpenid] = System.currentTimeMillis()
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "plugin", "[$pluginName] $text", System.currentTimeMillis() - t0)
             return
         }
 
@@ -765,6 +775,55 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 }
             }
         } catch (e: Exception) { "🎨 画图失败：${e.message}" }
+    }
+
+    /** 上传的插件包分发："菜单"显示已装插件菜单；其他文本匹配插件内命令（读插件目录 txt 脚本） */
+    private fun matchPlugin(text: String, userOpenid: String): Pair<String, String>? {
+        val t = text.trim()
+        if (t.isBlank()) return null
+        val dataDir = System.getenv("DATA_DIR") ?: "/data/qitong"
+        // "菜单" → 列出所有已装插件
+        if (t.equals("菜单", true) || t.equals("插件菜单", true)) {
+            val plugins = db.getQqPlugins().filter { (it["enabled"] as? Boolean) != false }
+            if (plugins.isEmpty()) return "插件菜单" to "📦 暂无已安装插件。管理员可在 QQ管理→插件 tab 上传压缩包安装。"
+            val sb = StringBuilder("📦 已安装插件（${plugins.size}个）：\n")
+            plugins.forEach { p ->
+                sb.append("▪ ${p["name"]} v${p["version"]}\n")
+                val menu = p["menu"] as? String
+                if (!menu.isNullOrBlank()) sb.append("   ${menu}\n")
+            }
+            return "插件菜单" to sb.toString().take(900)
+        }
+        // 匹配插件目录下的脚本文件（txt 命令脚本）
+        val pluginDirs = java.io.File(dataDir, "plugins").listFiles() ?: return null
+        for (dir in pluginDirs) {
+            if (!dir.isDirectory) continue
+            val pluginName = dir.name
+            // 读 plugin.json/描述（若有）
+            val scriptDir = java.io.File(dir, "游戏")
+            val files = if (scriptDir.exists()) scriptDir.listFiles() else dir.listFiles()
+            files ?: continue
+            // 匹配：命令前缀 = 文件名（去扩展名）
+            for (f in files) {
+                val base = f.name.substringBeforeLast(".").trim()
+                if (base.isBlank() || !f.name.endsWith(".txt")) continue
+                if (t.startsWith(base, true) || t.equals(base, true) || t.contains(base, true) && t.length <= base.length + 2) {
+                    // 读取脚本内容，随机选一行回复（支持 $变量$ 占位符简单替换；GBK 旧脚本双编码回退）
+                    val gbk = java.nio.charset.Charset.forName("GBK")
+                    val content = runCatching { f.readText(Charsets.UTF_8) }.getOrDefault("")
+                        .ifBlank { runCatching { f.readText(gbk) }.getOrDefault("") }
+                    val lines = content.split("\n").filter { it.isNotBlank() && !it.startsWith("//") }
+                    if (lines.isEmpty()) continue
+                    val line = lines.random()
+                    val out = line
+                        .replace("\$XX\$", userOpenid.take(4))
+                        .replace("\$名字\$", userOpenid.take(6))
+                        .take(500)
+                    return pluginName to "【$pluginName·$base】\n$out"
+                }
+            }
+        }
+        return null
     }
 
     /** 按优先级匹配一条启用指令。 */

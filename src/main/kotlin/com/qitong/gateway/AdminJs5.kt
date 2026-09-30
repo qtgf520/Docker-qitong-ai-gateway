@@ -9,30 +9,32 @@ var qqFeedTimer = null;
 function qqTabBtn(t){ qqTab=t; loaders.qqbot(); }
  loaders.qqbot = function(){
  var box = $('view-qqbot');
- var tabs = [
-  ['overview','动态概览'],['cmds','插件指令'],['groups','群配置'],
-  ['users','独立用户'],['points','积分排行'],['games','🎮游戏'],['logs','运行日志']
- ].map(function(x){
-  return '<button class="log-tab" style="'+(qqTab===x[0]?'color:var(--primary);border-bottom-color:var(--primary);font-weight:600':'')+'" onclick="qqTabBtn(\''+x[0]+'\')">'+x[1]+'</button>';
- }).join('');
- box.innerHTML = '<div class="card"><div class="qq-tabs">'+tabs+'</div>'+
-  '<div id="qqPane">'+qqTabHtml()+'</div></div>';
- if(qqTab==='overview') qqLoadOverview();
- if(qqTab==='cmds') qqLoadCmds();
- if(qqTab==='groups') qqLoadGroups();
- if(qqTab==='users') qqLoadUsers();
- if(qqTab==='points') qqLoadPoints();
- if(qqTab==='games') qqLoadGames();
- if(qqTab==='logs') qqLoadLogs();
- };
+var tabs = [
+   ['overview','动态概览'],['cmds','插件指令'],['plugins','📦插件包'],['groups','群配置'],
+   ['users','独立用户'],['points','积分排行'],['games','🎮游戏'],['logs','运行日志']
+  ].map(function(x){
+   return '<button class="log-tab" style="'+(qqTab===x[0]?'color:var(--primary);border-bottom-color:var(--primary);font-weight:600':'')+'" onclick="qqTabBtn(\''+x[0]+'\')">'+x[1]+'</button>';
+  }).join('');
+  box.innerHTML = '<div class="card"><div class="qq-tabs">'+tabs+'</div>'+
+   '<div id="qqPane">'+qqTabHtml()+'</div></div>';
+  if(qqTab==='overview') qqLoadOverview();
+  if(qqTab==='cmds') qqLoadCmds();
+  if(qqTab==='plugins') qqLoadPlugins();
+  if(qqTab==='groups') qqLoadGroups();
+  if(qqTab==='users') qqLoadUsers();
+  if(qqTab==='points') qqLoadPoints();
+  if(qqTab==='games') qqLoadGames();
+  if(qqTab==='logs') qqLoadLogs();
+  };
 function qqTabHtml(){
  if(qqTab==='overview') return '<div id="qqOverview"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  if(qqTab==='cmds') return '<div class="action-bar"><button class="btn" onclick="qqCmdForm()">+ 新建指令插件</button><button class="btn-ghost" onclick="qqCmdHelp()">插件开发说明</button><span style="font-size:12px;color:var(--muted)">小栗子式：触发词 -> 回复/HTTP/AI，按优先级匹配，命中即停</span></div><div id="qqCmdList"></div>';
+ if(qqTab==='plugins') return '<div class="action-bar"><button class="btn" onclick="qqPluginUpload()">📦 上传插件包(zip)</button><span style="font-size:12px;color:var(--muted)">上传压缩包安装插件，可起名+菜单；QQ 发「菜单」查看，发插件命令触发</span></div><div id="qqPluginList"></div>';
  if(qqTab==='groups') return '<div id="qqGroupList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  if(qqTab==='users') return '<div id="qqUserList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  if(qqTab==='points') return '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">群里发「签到」每日得 5-20 积分，「我的积分」查询。此处可查看排行并手动调整。</div><div id="qqPointsList"></div>';
  if(qqTab==='games') return '<div id="qqGames"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
- return '<div class="action-bar"><button class="btn-ghost" onclick="qqLoadLogs()">刷新</button><button class="btn-ghost danger" onclick="qqLogsClear()">清空全部</button><span style="font-size:12px;color:var(--muted)">实时动态最多保留最近 50 条，超出自动删除</span></div><div id="qqLogList"></div>';
+ return '<div class="action-bar"><button class="btn-ghost" onclick="qqLoadLogs()">刷新</button><button class="btn-ghost" onclick="qqClearGroupLogs()">🗑 按群清理</button><button class="btn-ghost danger" onclick="qqLogsClear()">清空全部</button><span style="font-size:12px;color:var(--muted)">实时动态最多保留最近 50 条，超出自动删除；按群清理可单独清某个群的聊天记录</span></div><div id="qqLogList"></div>';
 }
 function qqTime(ts){ if(!ts) return '-'; var d=new Date(ts); return d.toLocaleString('zh-CN',{hour12:false}); }
 
@@ -205,11 +207,58 @@ var html = '<div style="font-size:13px;line-height:1.8;color:var(--text)">'+
  openModal('插件开发说明', html, null, {hideFooter:true});
 }
 
-// ---- 群配置 ----
+// ---- 插件包（上传 zip 安装） ----
+function qqLoadPlugins(){
+ api('/api/qq/plugins').then(function(r){
+  var el=$('qqPluginList'); if(!el) return;
+  var list=(r&&r.data)||[];
+  if(!list.length){ el.innerHTML='<div style="color:var(--muted);padding:16px">还没有插件。点「📦 上传插件包」安装第一个（压缩包含游戏/菜单 txt）。</div>'; return; }
+  var rows=list.map(function(p){
+   return '<tr><td><b>'+esc(p.name)+'</b> <span class="badge blue">v'+esc(p.version)+'</span></td>'+
+    '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(p.description||'-')+'</td>'+
+    '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">'+esc((p.menu||'').slice(0,50))+'</td>'+
+    '<td>'+(p.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
+    '<td><button class="btn-ghost btn-sm danger" onclick="qqPluginDel(\''+esc(p.name)+'\')">删</button></td></tr>';
+  }).join('');
+  el.innerHTML='<div class="table-wrap"><table><thead><tr><th>插件名</th><th>描述</th><th>菜单</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+   '<div style="font-size:12px;color:var(--muted);margin-top:8px">QQ 里发「菜单」查看已装插件，发插件命令（如 抽奖/打怪/猜数字）触发游戏</div>';
+ });
+}
+function qqPluginUpload(){
+ var html = '<div class="form-row"><label>插件名称（压缩包起个名字）</label><input class="input" id="plName" placeholder="如：小游戏合集"></div>'+
+  '<div class="form-row"><label>描述</label><input class="input" id="plDesc" placeholder="如：含抽奖/打怪/猜数字等游戏"></div>'+
+  '<div class="form-row"><label>版本</label><input class="input" id="plVer" value="1.0.0"></div>'+
+  '<div class="form-row"><label>菜单说明（QQ发「菜单」显示）</label><textarea class="input" id="plMenu" rows="3" placeholder="抽奖-消耗积分抽奖\n打怪-打怪升级\n猜数字-猜数字游戏"></textarea></div>'+
+  '<div class="form-row"><label>压缩包(zip)</label><input class="input" type="file" id="plFile" accept=".zip"></div>';
+ openModal('📦 上传插件包', html, function(){
+  var name=$('plName').value.trim();
+  var f=$('plFile').files[0];
+  if(!name){ toast('插件名必填',false); return; }
+  if(!f){ toast('请选择zip压缩包',false); return; }
+  var reader=new FileReader();
+  reader.onload=function(){
+   var b64=reader.result;
+   api('/api/qq/plugins/upload',{method:'POST',body:{
+    name:name, description:$('plDesc').value, version:$('plVer').value||'1.0.0',
+    menu:$('plMenu').value, author:'', data:b64
+   }}).then(function(r){
+    if(r.code===0){ toast(r.msg,true); closeModal(); qqLoadPlugins(); } else toast(r.msg||'上传失败',false);
+   });
+  };
+  reader.readAsDataURL(f);
+ });
+}
+function qqPluginDel(name){
+ if(!confirm('确认删除插件「'+name+'」？')) return;
+ api('/api/qq/plugins/'+encodeURIComponent(name),{method:'DELETE'}).then(function(r){
+  if(r.code===0){ toast('已删除',true); qqLoadPlugins(); } else toast(r.msg||'删除失败',false);
+ });
+}
 function qqLoadGroups(){
  api('/api/qq/groups').then(function(r){
   var el=$('qqGroupList'); if(!el) return;
   var list=(r&&r.data)||[];
+  window._qqGroups = list;
   if(!list.length){ el.innerHTML='<div style="color:var(--muted);padding:16px">暂无群记录。让机器人进群并@它一次即可。</div>'; return; }
   var rows=list.map(function(g){
 return '<tr><td><b>'+esc(g.groupName||'-')+'</b><br><code style="font-size:11px">'+esc(g.groupOpenid)+'</code></td>'+
@@ -310,12 +359,22 @@ function qqUserEdit(openid){
  });
 }
 function qqUserMemory(openid){
- api('/api/qq/users/memory?openid='+encodeURIComponent(openid)).then(function(r){
+ api('/api/qq/users/memory/detail?openid='+encodeURIComponent(openid)).then(function(r){
   var list=(r&&r.data)||[];
   var body = list.length
-   ? list.map(function(m,i){return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">'+(i+1)+'. '+esc(m)+'</div>'}).join('')
+   ? '<div style="max-height:60vh;overflow:auto">'+list.map(function(m){
+      return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;display:flex;gap:8px;align-items:flex-start">'+
+       '<span style="flex:1">'+esc(m.content)+'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+qqTime(m.timestamp)+' · '+esc(m.type||'short')+'</div></span>'+
+       '<button class="btn-ghost btn-sm danger" onclick="qqMemoryDel('+(m.id||0)+',\''+esc(openid)+'\')">删</button></div>';
+     }).join('')+'</div>'
    : '<div style="color:var(--muted);padding:12px">该用户还没有长期记忆。</div>';
   openModal('长期记忆 · '+openid.substring(0,12), body, null, {hideFooter:true});
+ });
+}
+function qqMemoryDel(id,openid){
+ if(!confirm('确认删除这条记忆？')) return;
+ api('/api/qq/users/memory/'+id,{method:'DELETE'}).then(function(r){
+  toast(r.msg||'', r.code===0); if(r.code===0) qqUserMemory(openid);
  });
 }
 function qqUserMemoryClear(openid){
@@ -361,7 +420,30 @@ function qqLoadGames(){
  ].join('');
 }
 
-// ---- 运行日志：删除/清空 ----
+// ---- 运行日志：删除/清空/按群清理 ----
+function qqClearGroupLogs(){
+ var groups = window._qqGroups || [];
+ if(groups.length){
+  // 有群列表，弹出可选群
+  var opts = groups.map(function(g){ return '<option value="'+esc(g.groupOpenid)+'">'+esc(g.groupName||g.groupOpenid)+'</option>'; }).join('');
+  openModal('按群清理聊天记录','<div class="form-row"><label>选择群</label><select id="clrGroupSel">'+opts+'</select></div>', function(){
+   var sel=$('clrGroupSel'); if(!sel) return;
+   var groupOpenid=sel.value; if(!groupOpenid){ toast('请选择群',false); return; }
+   if(!confirm('确认清空该群的全部聊天记录？')) return;
+   api('/api/qq/logs/clear-group',{method:'POST',body:{groupOpenid:groupOpenid}}).then(function(r){
+    toast(r.msg||'', r.code===0); if(r.code===0){ closeModal(); qqLoadLogs(); }
+   });
+  });
+  return;
+ }
+ // 无群列表，直接输入群号
+ var gid = prompt('输入要清理的群 openid（可在群配置页查看）：');
+ if(!gid) return;
+ if(!confirm('确认清空该群的全部聊天记录？')) return;
+ api('/api/qq/logs/clear-group',{method:'POST',body:{groupOpenid:gid.trim()}}).then(function(r){
+  toast(r.msg||'', r.code===0); if(r.code===0) qqLoadLogs();
+ });
+}
 function qqLogsClear(){
  if(!confirm('确定清空全部运行日志？')) return;
  api('/api/qq/logs/clear',{method:'POST'}).then(function(r){

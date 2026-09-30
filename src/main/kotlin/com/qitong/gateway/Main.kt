@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-41
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-42
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-41    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-42    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -184,7 +184,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-41"))
+                put("version", JsonPrimitive("3.18.22-42"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1037,6 +1037,64 @@ fun Application.moduleWeb(database: Database) {
             database.deleteQqCommand(id)
             AdminApi.ok(call, null, "已删除")
         }
+        // ===== QQ 插件包（上传 zip 安装，含名字/描述/菜单） =====
+        get("/api/qq/plugins") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, database.getQqPlugins(), "ok")
+        }
+        post("/api/qq/plugins/upload") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val pluginName = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val description = body["description"]?.jsonPrimitive?.content.orEmpty()
+            val version = body["version"]?.jsonPrimitive?.content.orEmpty().ifBlank { "1.0.0" }
+            val menu = body["menu"]?.jsonPrimitive?.content.orEmpty()
+            val author = body["author"]?.jsonPrimitive?.content.orEmpty()
+            val b64 = body["data"]?.jsonPrimitive?.content.orEmpty()
+            if (pluginName.isBlank()) { AdminApi.fail(call, "插件名不能为空", 400); return@post }
+            if (b64.length < 4) { AdminApi.fail(call, "压缩包内容为空", 400); return@post }
+            // 解压到插件目录
+            val dataDir = java.io.File(System.getenv("DATA_DIR") ?: "/data/qitong")
+            val pluginDir = java.io.File(dataDir, "plugins/${pluginName.replace(Regex("[^a-zA-Z0-9_\\u4e00-\\u9fa5]"), "_")}")
+            pluginDir.mkdirs()
+            try {
+                val clean = b64.replace(Regex("^data:.*;base64,"), "")
+                val bytes = java.util.Base64.getDecoder().decode(clean)
+                val zipFile = java.io.File(pluginDir, "plugin.zip")
+                zipFile.writeBytes(bytes)
+                // 解压 zip
+                java.util.zip.ZipFile(zipFile).use { zf ->
+                    val entries = zf.entries()
+                    while (entries.hasMoreElements()) {
+                        val e = entries.nextElement()
+                        val outFile = java.io.File(pluginDir, e.name)
+                        if (e.isDirectory) { outFile.mkdirs(); continue }
+                        outFile.parentFile?.mkdirs()
+                        zf.getInputStream(e).use { input -> outFile.outputStream().use { output -> input.copyTo(output) } }
+                    }
+                }
+                zipFile.delete()
+            } catch (e: Exception) {
+                AdminApi.fail(call, "解压失败: ${e.message}", 400); return@post
+            }
+            database.upsertQqPlugin(pluginName, description, version, menu, author)
+            database.addOpLog(u.id, u.username, "QQ插件", "安装插件 $pluginName v$version", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("name" to pluginName), "插件「$pluginName」安装成功")
+        }
+        delete("/api/qq/plugins/{name}") {
+            val name = call.parameters["name"].orEmpty()
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            database.deleteQqPlugin(name)
+            // 删除插件目录
+            runCatching {
+                val dataDir = java.io.File(System.getenv("DATA_DIR") ?: "/data/qitong")
+                java.io.File(dataDir, "plugins/${name.replace(Regex("[^a-zA-Z0-9_\\u4e00-\\u9fa5]"), "_")}").deleteRecursively()
+            }
+            AdminApi.ok(call, null, "插件已删除")
+        }
         // QQ 用户（独立隔离）
         get("/api/qq/users") {
             val u = call.requireAuth(database) ?: return@get
@@ -1087,6 +1145,30 @@ fun Application.moduleWeb(database: Database) {
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
             database.clearQqLogs()
             AdminApi.ok(call, null, "日志已清空")
+        }
+        // ★ 按群清理聊天记录（群聊天记录单独管理）
+        post("/api/qq/logs/clear-group") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val groupOpenid = body["groupOpenid"]?.jsonPrimitive?.content.orEmpty()
+            if (groupOpenid.isBlank()) { AdminApi.fail(call, "群不能为空", 400); return@post }
+            database.clearQqLogsByGroup(groupOpenid)
+            AdminApi.ok(call, null, "该群聊天记录已清空")
+        }
+        // ★ 用户记忆管理：查某用户记忆明细（带 id）/ 删除单条 / 清空
+        get("/api/qq/users/memory/detail") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val openid = call.queryParameters["openid"].orEmpty()
+            AdminApi.ok(call, database.getQqBrainMemoryItems(openid, limit = 100), "ok")
+        }
+        delete("/api/qq/users/memory/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            database.deleteQqBrainMemoryById(id)
+            AdminApi.ok(call, null, "该条记忆已删除")
         }
         // QQ 积分排行/调整（按群隔离）
         get("/api/qq/points") {
@@ -1350,7 +1432,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-41"))
+                put("version", JsonPrimitive("3.18.22-42"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2070,7 +2152,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-41"))
+                    put("version", JsonPrimitive("3.18.22-42"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()
