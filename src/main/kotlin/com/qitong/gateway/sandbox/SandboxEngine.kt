@@ -93,24 +93,71 @@ $KNOWLEDGE_JSON
 4. 任务执行失败如实完整返回错误信息，不隐藏报错。
 """.trimIndent()
 
-    /** 解析文本中的沙盒调用指令，返回 (函数名, 参数Map) 列表 */
+    /** 解析文本中的沙盒调用指令，兼容 4 种格式：
+     *  1. [[沙盒:函数名(参数=值, ...)]]
+     *  2. <dots_function_call name="函数名"><dots_function_call name="参数名">值</dots_function_call></dots_function_call>
+     *  3. <function_call name="函数名"> 或 <invoke name="函数名">
+     *  4. <function_call>{"name":"函数名","arguments":{...}}</function_call>
+     */
     fun parseCalls(text: String): List<Pair<String, Map<String, String>>> {
         val result = mutableListOf<Pair<String, Map<String, String>>>()
-        val regex = Regex("\\[\\[沙盒:([a-zA-Z_]+)\\((.*?)\\)\\]\\]", RegexOption.DOT_MATCHES_ALL)
-        regex.findAll(text).forEach { m ->
+        if (text.isBlank()) return result
+        // 格式1：[[沙盒:函数(参数)]]
+        val regex1 = Regex("\\[\\[沙盒:([a-zA-Z_]+)\\((.*?)\\)\\]\\]", RegexOption.DOT_MATCHES_ALL)
+        regex1.findAll(text).forEach { m ->
             val fn = m.groupValues[1]
             val argsStr = m.groupValues[2]
+            result.add(fn to parseArgs(argsStr))
+        }
+        // 格式2/3：<dots_function_call name="fn"> / <function_call name="fn"> / <invoke name="fn">
+        // 捕获完整标签对（含嵌套参数值）
+        val regex2 = Regex("<(?:dots_function_call|function_call|invoke)\\s+name=\"([a-zA-Z_]+)\"[^>]*>([\\s\\S]*?)</(?:dots_function_call|function_call|invoke)>")
+        regex2.findAll(text).forEach { m ->
+            val fn = m.groupValues[1]
+            val inner = m.groupValues[2]
             val args = mutableMapOf<String, String>()
-            if (argsStr.isNotBlank()) {
-                // 解析 参数名=值, 参数名=值（值可能含中文/空格，按逗号分割但跳过括号内）
-                argsStr.split(",").forEach { seg ->
-                    val kv = seg.trim().split("=", limit = 2)
-                    if (kv.size == 2) args[kv[0].trim()] = kv[1].trim()
+            // 解析嵌套参数：<dots_function_call name="参数名">值</dots_function_call>
+            val paramRegex = Regex("<(?:dots_function_call|param|parameter)\\s+name=\"([^\"]+)\"[^>]*>([\\s\\S]*?)</(?:dots_function_call|param|parameter)>")
+            paramRegex.findAll(inner).forEach { pm ->
+                args[pm.groupValues[1].trim()] = pm.groupValues[2].trim()
+            }
+            // 也解析 name= 属性风格（<dots_function_call name="model_name" value="deepseek">）
+            val attrRegex = Regex("name=\"([^\"]+)\"\\s+value=\"([^\"]*)\"")
+            attrRegex.findAll(inner).forEach { am ->
+                args[am.groupValues[1].trim()] = am.groupValues[2].trim()
+            }
+            if (args.isEmpty() && fn.isNotBlank()) {
+                // 可能内嵌 JSON 参数 <function_call>{"name":"fn","arguments":{"k":"v"}}</function_call>
+                runCatching {
+                    val jo = JSONObject(inner.trim())
+                    if (jo.has("arguments")) {
+                        val a = jo.get("arguments")
+                        if (a is JSONObject) a.keys().forEach { k -> args[k] = a.getString(k) }
+                    }
                 }
             }
-            result.add(fn to args)
+            if (fn.isNotBlank()) result.add(fn to args)
         }
-        return result
+        // 格式4：<function_call>{"name":"fn","arguments":{...}}</function_call> 已在上面的 JSON 分支处理
+        // 格式5：非闭合单标签 <dots_function_call name="fn"/> 或 <function_call name="fn">（无配对闭合）
+        val regex5 = Regex("<(?:dots_function_call|function_call|invoke)\\s+name=\"([a-zA-Z_]+)\"\\s*/?>")
+        regex5.findAll(text).forEach { m ->
+            val fn = m.groupValues[1]
+            if (fn.isNotBlank() && result.none { it.first == fn }) result.add(fn to emptyMap())
+        }
+        return result.distinctBy { it.first to it.second }
+    }
+
+    /** 解析 参数名=值, 参数名=值 格式 */
+    private fun parseArgs(argsStr: String): Map<String, String> {
+        val args = mutableMapOf<String, String>()
+        if (argsStr.isNotBlank()) {
+            argsStr.split(",").forEach { seg ->
+                val kv = seg.trim().split("=", limit = 2)
+                if (kv.size == 2) args[kv[0].trim()] = kv[1].trim()
+            }
+        }
+        return args
     }
 
     /**

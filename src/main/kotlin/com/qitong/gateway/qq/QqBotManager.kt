@@ -935,6 +935,18 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     }
 
     /** 调本机网关大模型，带每用户独立上下文与人设覆盖。 */
+    /** 清洗回复里的函数调用标签（[[沙盒:...]]、<dots_function_call>、<function_call>、<invoke>），保留文本部分 */
+    private fun cleanFunctionTags(text: String): String {
+        var out = text
+        // 移除 [[沙盒:...]] 调用
+        out = out.replace(Regex("\\[\\[沙盒:[^\\]]*\\]\\]"), "（已调用）")
+        // 移除完整的 XML 函数调用标签对（含嵌套）
+        out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>[\\s\\S]*?</(?:dots_function_call|function_call|invoke)>"), "")
+        // 移除可能残留的单标签（<dots_function_call name="xxx"> 或 </dots_function_call>）
+        out = out.replace(Regex("</?(?:dots_function_call|function_call|invoke)\\s*[^>]*>"), "")
+        return out.trim()
+    }
+
     private fun askModel(bot: QqBot, key: String, userText: String, userOpenid: String, groupOpenid: String = ""): String? {
         val hist = history.getOrPut(key) { mutableListOf() }
         val msgs = JSONArray()
@@ -987,7 +999,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     ?.optJSONObject(0)
                     ?.optJSONObject("message")
                     ?.optString("content")?.trim().orEmpty()
-                // ★ 沙盒执行：qtai-sj 模式下解析回复中的 [[沙盒:函数(参数)]] 调用并执行，把结果回填
+                // ★ 沙盒执行：qtai-sj 模式下解析回复中的函数调用并执行（兼容 [[沙盒:]] 与 <dots_function_call> 原生格式）
                 if (sandboxOn && content.isNotBlank()) {
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
                     if (calls.isNotEmpty()) {
@@ -999,8 +1011,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             isFirst = false
                             db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args -> ${r.take(80)}", 0)
                         }
-                        // 把执行结果追加回给模型继续推理（把调用标记替换为结果）
-                        content = content.replace(Regex("\\[\\[沙盒:[^\\]]*\\]\\]"), "（已执行）") + "\n\n沙盒执行结果：\n" + results
+                        // 清洗回复里的函数调用标签，替换为已执行标记；追加真实执行结果
+                        content = cleanFunctionTags(content) + "\n\n" + results
                         // 沙盒结果作为下一轮上下文（追加到 hist 用于多步任务）
                         hist.add("assistant" to content)
                         return content
