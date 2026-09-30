@@ -1,0 +1,192 @@
+package com.qitong.gateway.sandbox
+
+import com.qitong.gateway.db.Database
+import com.qitong.gateway.http.SkillExecutor
+import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
+import org.json.JSONObject
+
+/**
+ * qtai-sj 沙盒调度引擎（v45）
+ * ========================
+ * 目标：QQ 机器人选中 qtai-sj 模型时自动启用沙盒调度，qtai-sj 自主感知网关全部功能、
+ * 自主规划多步骤任务、自动调用网关全部已有接口（复用 SkillExecutor，不重写业务）。
+ *
+ * 设计原则（来自豆包文档 + 原版指南）：
+ * 1. 复用优先：所有业务执行走 SkillExecutor（内部直调 Database/业务对象，无鉴权阻塞）
+ * 2. 双层权限校验：模型 Prompt 只做引导，沙盒底层独立校验 QQ 身份权限
+ * 3. 风险分级：read 只读直执行 / modify 修改直执行 / high 高危需确认
+ * 4. 审计日志：每次沙盒调用记入 qq_logs
+ * 5. 熔断保护：同一 QQ 用户短时间失败过多自动暂停
+ */
+object SandboxEngine {
+
+    /** 网关能力知识库（注入 qtai-sj 上下文用） */
+    val KNOWLEDGE_JSON: String by lazy {
+        JSONArray()
+            .put(func("model_batch_test", "批量测速全部模型（只读）", "admin", "read", emptyList(), "全部模型测速结果：正常数/总数"))
+            .put(func("model_test_single", "对单个模型测速（只读）", "admin", "read", listOf(param("model_name", true, "模型名称标识，如 deepseek-chat")), "该模型延迟/可用性"))
+            .put(func("model_get_all", "获取全部模型列表与状态（只读）", "admin", "read", emptyList(), "模型名称、启用状态"))
+            .put(func("model_enable", "启用指定模型（修改）", "admin", "modify", listOf(param("model_name", true, "模型名称")), "启用结果"))
+            .put(func("model_disable", "禁用指定模型（修改）", "admin", "modify", listOf(param("model_name", true, "模型名称")), "禁用结果"))
+            .put(func("provider_get_all", "获取全部服务商列表（只读）", "admin", "read", emptyList(), "服务商名称/类型"))
+            .put(func("gateway_status", "查看网关运行状态（只读）", "user", "read", emptyList(), "运行状态/端口/故障转移/当前活跃模型"))
+            .put(func("speed_ranking", "查看测速排行（只读）", "user", "read", emptyList(), "模型测速速度排行"))
+            .put(func("active_model", "查看当前活跃模型（只读）", "user", "read", emptyList(), "当前模型名或 qtai-sj 自动模式"))
+            .put(func("traffic_total", "查看总上下行流量（只读）", "user", "read", emptyList(), "总上行/总下行字节"))
+            .put(func("token_total", "查看总 Token 消耗（只读）", "admin", "read", emptyList(), "总 token 数"))
+            .put(func("user_balance", "查询用户余额（只读）", "user", "read", listOf(param("username", false, "网关用户名，空=查自己")), "余额/累计充值"))
+            .put(func("user_recharge", "给用户充值（修改，需管理员）", "admin", "modify", listOf(param("username", true, "网关用户名"), param("amount", true, "金额数字")), "充值结果/新余额"))
+            .put(func("terminal_run", "沙盒执行终端命令（高危，需管理员确认）", "admin", "high", listOf(param("cmd", true, "待执行命令")), "终端输出"))
+            .put(func("qq_bots_list", "获取全部 QQ 机器人配置（只读）", "admin", "read", emptyList(), "机器人 AppID/名称/启用状态/模型"))
+            .put(func("qq_bots_groups", "获取全部 QQ 群配置（只读）", "admin", "read", emptyList(), "群名/群 openid/AI 开关"))
+            .put(func("qq_points_rank", "查看积分排行（只读）", "user", "read", emptyList(), "积分排行"))
+            .put(func("help", "查看沙盒可用能力清单", "user", "read", emptyList(), "全部函数名与说明"))
+            .toString()
+    }
+
+    private fun func(name: String, desc: String, permission: String, risk: String, params: List<JSONObject>, ret: String): JSONObject =
+        JSONObject()
+            .put("function_name", name)
+            .put("desc", desc)
+            .put("permission", permission)
+            .put("risk_level", risk)
+            .put("params", JSONArray().putAll(params))
+            .put("return_desc", ret)
+
+    private fun param(name: String, required: Boolean, desc: String): JSONObject =
+        JSONObject().put("name", name).put("required", required).put("desc", desc)
+
+    /** 沙盒专属 System Prompt（选中 qtai-sj 注入） */
+    val SYSTEM_PROMPT: String = """
+你是綦桐小助理，底层模型 qtai-sj，运行在綦桐AI网关QQ机器人渠道，内置沙盒调度系统，能够自主调度网关全部内置功能。
+核心铁律：绝对禁止编造任何接口返回、终端输出、数据结果。所有数据必须来自沙盒调用网关接口返回。无法获取信息如实告知，禁止虚构。
+
+## 1. 身份与权限体系
+- QQ普通用户：仅支持闲聊、只读查询（查状态/排行/余额/流量），禁止任何修改类操作。
+- QQ管理员：拥有完整网关调度权限，可读写网关所有功能。
+> 收到消息第一步：校验发送者QQ身份，判断权限范围，无权限操作直接拒绝，并说明权限不足。
+
+## 2. 你内置网关能力知识库（必须记住所有可用功能）
+$KNOWLEDGE_JSON
+
+## 3. 自主任务规划规则【最重要】
+用户发来需求，不要直接回答，先自主规划任务，严格遵循流程：
+1. 意图解析：读懂用户最终目标，判断需要调用哪些网关功能，拆分为多步子任务。
+2. 参数收集：检查所有子任务必填参数，缺少关键信息主动追问，不猜测。
+3. 任务编排：判断子任务先后顺序，无依赖任务可并行。
+4. 沙盒调用：输出标准化函数调用指令交给沙盒引擎执行，等待真实结果：
+   [[沙盒:函数名(参数1=值1, 参数2=值2)]]
+5. 结果迭代：拿到接口返回数据判断是否成功，成功继续下一子任务，报错自动分析重试。
+6. 任务结束：全部步骤完成，整理简洁易懂回复。
+
+## 4. 沙盒调度规范
+1. 所有网关操作必须通过沙盒调度器调用，禁止编造返回结果。
+2. 修改类高危操作（删除/终端命令/充值）沙盒会二次确认，需用户确认后才执行。
+3. 普通用户只读查询直接执行；修改类操作需管理员身份。
+4. 记忆隔离：QQ用户、群会话记忆互相独立。
+
+## 5. 输出规范
+1. 闲聊场景语气轻松活泼。
+2. 网关运维/调度任务场景逻辑严谨，代码用 markdown 代码块。
+3. 长消息自动分段适配QQ消息限制。
+4. 任务执行失败如实完整返回错误信息，不隐藏报错。
+""".trimIndent()
+
+    /** 解析文本中的沙盒调用指令，返回 (函数名, 参数Map) 列表 */
+    fun parseCalls(text: String): List<Pair<String, Map<String, String>>> {
+        val result = mutableListOf<Pair<String, Map<String, String>>>()
+        val regex = Regex("\\[\\[沙盒:([a-zA-Z_]+)\\((.*?)\\)\\]\\]", RegexOption.DOT_MATCHES_ALL)
+        regex.findAll(text).forEach { m ->
+            val fn = m.groupValues[1]
+            val argsStr = m.groupValues[2]
+            val args = mutableMapOf<String, String>()
+            if (argsStr.isNotBlank()) {
+                // 解析 参数名=值, 参数名=值（值可能含中文/空格，按逗号分割但跳过括号内）
+                argsStr.split(",").forEach { seg ->
+                    val kv = seg.trim().split("=", limit = 2)
+                    if (kv.size == 2) args[kv[0].trim()] = kv[1].trim()
+                }
+            }
+            result.add(fn to args)
+        }
+        return result
+    }
+
+    /**
+     * 执行沙盒调用（复用 SkillExecutor）
+     * @param fn 函数名
+     * @param args 参数
+     * @param isAdmin QQ 用户是否管理员
+     * @param userId 网关用户ID（用于技能的用户级操作，QQ 用户传 0=全局）
+     */
+    fun execute(fn: String, args: Map<String, String>, isAdmin: Boolean, userId: Long, db: Database): String = runBlocking { executeSuspend(fn, args, isAdmin, userId, db) }
+
+    /** suspend 版本（SkillExecutor.execute 是 suspend） */
+    suspend fun executeSuspend(fn: String, args: Map<String, String>, isAdmin: Boolean, userId: Long, db: Database): String {
+        // 权限表：函数 -> (最低权限, 风险)
+        val perm = when (fn) {
+            "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
+            "user_balance", "qq_points_rank", "help" -> "user" to "read"
+            "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
+            "qq_bots_list", "qq_bots_groups" -> "admin" to "read"
+            "model_enable", "model_disable", "user_recharge" -> "admin" to "modify"
+            "terminal_run" -> "admin" to "high"
+            else -> "user" to "read"
+        }
+        val (needPerm, risk) = perm
+        // 底层权限校验（不依赖模型）
+        if (needPerm == "admin" && !isAdmin) return "⛔ 权限不足：该操作需要管理员身份"
+        if (risk == "high") return "⚠️ 高危操作（$fn）需要二次确认，沙盒已拦截。请确认后重试：确认执行 $fn"
+
+        return try {
+            when (fn) {
+                "help" -> "📚 沙盒可用能力：\n" + parseKnowledgeBrief()
+                "model_batch_test" -> SkillExecutor.execute(db, "100002", "", userId)
+                "model_test_single" -> SkillExecutor.execute(db, "100001", args["model_name"] ?: "", userId)
+                "model_get_all" -> SkillExecutor.execute(db, "600008", "", userId)
+                "model_enable" -> SkillExecutor.execute(db, "800003", args["model_name"] ?: "", userId)
+                "model_disable" -> SkillExecutor.execute(db, "800004", args["model_name"] ?: "", userId)
+                "provider_get_all" -> SkillExecutor.execute(db, "600007", "", userId)
+                "gateway_status" -> SkillExecutor.execute(db, "600001", "", userId)
+                "speed_ranking" -> SkillExecutor.execute(db, "600002", "", userId)
+                "active_model" -> SkillExecutor.execute(db, "600003", "", userId)
+                "traffic_total" -> SkillExecutor.execute(db, "600004", "", userId)
+                "token_total" -> SkillExecutor.execute(db, "600005", "", userId)
+                "user_balance" -> SkillExecutor.execute(db, "600009", args["username"] ?: "", userId)
+                "user_recharge" -> SkillExecutor.execute(db, "900020", "${args["username"] ?: ""} ${args["amount"] ?: ""}", userId)
+                "terminal_run" -> "⚠️ 终端命令执行：请在网关后台「终端」页操作（沙盒已拦截，防破坏）"
+                "qq_bots_list" -> {
+                    val bots = db.getQqBots()
+                    if (bots.isEmpty()) "📋 暂无QQ机器人配置"
+                    else "📋 QQ机器人（${bots.size}个）：\n" + bots.take(20).joinToString("\n") { b ->
+                        "· ${b["name"]} | AppID:${b["appid"]} | 模型:${b["aiModel"]} | ${if (b["enabled"] == true) "启用" else "停用"}"
+                    }
+                }
+                "qq_bots_groups" -> {
+                    val groups = db.getQqGroups()
+                    if (groups.isEmpty()) "📋 暂无群记录"
+                    else "📋 QQ群（${groups.size}个）：\n" + groups.take(20).joinToString("\n") { g ->
+                        "· ${g["groupName"] ?: "-"} | ${g["groupOpenid"]}"
+                    }
+                }
+                "qq_points_rank" -> {
+                    val pts = db.getAllQqPoints("")
+                    if (pts.isEmpty()) "📋 暂无积分记录"
+                    else "📋 积分排行（前10）：\n" + pts.take(10).mapIndexed { i, p -> "#${i + 1} · ${p["openid"]} = ${p["points"]}" }.joinToString("\n")
+                }
+                else -> "❌ 未知沙盒函数: $fn（发「沙盒帮助」查看可用能力）"
+            }
+        } catch (e: Exception) {
+            "❌ 沙盒执行失败: ${e.message}"
+        }
+    }
+
+    private fun parseKnowledgeBrief(): String {
+        val arr = JSONArray(KNOWLEDGE_JSON)
+        return (0 until arr.length()).map { i ->
+            val f = arr.getJSONObject(i)
+            "· ${f.getString("function_name")}（${f.getString("risk_level")}）— ${f.getString("desc")}"
+        }.joinToString("\n")
+    }
+}

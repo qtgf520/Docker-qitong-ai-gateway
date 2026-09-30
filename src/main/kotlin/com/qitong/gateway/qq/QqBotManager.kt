@@ -942,8 +942,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val groupCfg = if (groupOpenid.isNotBlank()) db.getQqGroupConfig(groupOpenid) else null
         val groupPrompt = groupCfg?.get("groupPrompt") as? String
         val userPersona = db.getQqUser(userOpenid)?.get("persona") as? String?
-        val sys = when {
-            !groupPrompt.isNullOrBlank() -> groupPrompt  // 群专属提示词最高优先
+        // ★ qtai-sj 沙盒模式：选中 qtai-sj 模型自动注入沙盒专属系统提示词（含知识库）
+        val sandboxOn = bot.aiModel.equals("qtai-sj", true)
+        val isAdmin = ((db.getQqUserByGroup(userOpenid, groupOpenid)?.get("permLevel") as? Number)?.toInt() ?: 1) >= 3
+        val baseSys = when {
+            sandboxOn -> com.qitong.gateway.sandbox.SandboxEngine.SYSTEM_PROMPT  // 沙盒完整版（含知识库）
+            !groupPrompt.isNullOrBlank() -> groupPrompt  // 群专属提示词最高优先（非沙盒时）
             !userPersona.isNullOrBlank() -> userPersona
             bot.systemPrompt.isNotBlank() -> bot.systemPrompt
             else -> ""
@@ -951,8 +955,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         // 长期大脑记忆：把该用户最近的记忆注入 system，跨天记得对方
         val mems = db.getQqBrainMemories(userOpenid, limit = 6)
         val sysFull = if (mems.isNotEmpty()) {
-            sys + "\n\n【你对这位用户的长期记忆】\n" + mems.reversed().joinToString("\n") { "- " + it }
-        } else sys
+            baseSys + "\n\n【你对这位用户的长期记忆】\n" + mems.reversed().joinToString("\n") { "- " + it }
+        } else baseSys
         if (sysFull.isNotBlank()) msgs.put(JSONObject().put("role", "system").put("content", sysFull))
         hist.forEach { (role, content) -> msgs.put(JSONObject().put("role", role).put("content", content)) }
         msgs.put(JSONObject().put("role", "user").put("content", userText))
@@ -979,10 +983,29 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     return null
                 }
                 val obj = JSONObject(respBody)
-                val content = obj.optJSONArray("choices")
+                var content = obj.optJSONArray("choices")
                     ?.optJSONObject(0)
                     ?.optJSONObject("message")
                     ?.optString("content")?.trim().orEmpty()
+                // ★ 沙盒执行：qtai-sj 模式下解析回复中的 [[沙盒:函数(参数)]] 调用并执行，把结果回填
+                if (sandboxOn && content.isNotBlank()) {
+                    val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
+                    if (calls.isNotEmpty()) {
+                        val results = StringBuilder()
+                        var isFirst = true
+                        for ((fn, args) in calls) {
+                            val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, 0L, db)
+                            results.append(if (isFirst) "" else "\n").append("【$fn 执行结果】\n$r")
+                            isFirst = false
+                            db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args -> ${r.take(80)}", 0)
+                        }
+                        // 把执行结果追加回给模型继续推理（把调用标记替换为结果）
+                        content = content.replace(Regex("\\[\\[沙盒:[^\\]]*\\]\\]"), "（已执行）") + "\n\n沙盒执行结果：\n" + results
+                        // 沙盒结果作为下一轮上下文（追加到 hist 用于多步任务）
+                        hist.add("assistant" to content)
+                        return content
+                    }
+                }
                 hist.add("user" to userText)
                 hist.add("assistant" to content)
                 while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
