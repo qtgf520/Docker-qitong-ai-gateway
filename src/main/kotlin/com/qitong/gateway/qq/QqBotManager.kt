@@ -333,12 +333,26 @@ object QqBotManager {
             (db.getQqGroupConfig(groupOpenid)?.get("cardMode") as? Boolean) == true
         } else false
         // smartSend：按群卡片模式自动选择发送方式（群内卡片用 markdown，私聊/文本用纯文本）
-        val smartSend: (String) -> Boolean = { content ->
-            if (cardMode && groupOpenid.isNotBlank()) {
-                val at2 = api.getAccessToken(bot)
-                if (!at2.isNullOrBlank()) api.sendGroupCardMessage(bot, at2, groupOpenid, content, msgId)
-                else send(content)
-            } else send(content)
+        // ★ v47 修复：QQ 被动回复(msg_id)每条消息只能成功一次！
+        //   过程推送（💭/✅）走主动消息（无 msg_id），最终回复 isFinal=true 才用被动回复（msg_id）
+        var replyCount = 0
+        val smartSend: (String, Boolean) -> Boolean = { content, isFinal ->
+            replyCount++
+            val usePassive = isFinal  // 只有最终回复用被动回复
+            val effectiveMsgId = if (usePassive) msgId else null
+            val at2 = api.getAccessToken(bot)
+            if (groupOpenid.isNotBlank()) {
+                if (cardMode && !at2.isNullOrBlank()) {
+                    api.sendGroupCardMessage(bot, at2, groupOpenid, content, effectiveMsgId)
+                } else if (!at2.isNullOrBlank()) {
+                    api.sendGroupMessage(bot, at2, groupOpenid, content, effectiveMsgId)
+                } else {
+                    if (usePassive) send(content) else false
+                }
+            } else {
+                if (!at2.isNullOrBlank()) api.sendC2cMessage(bot, at2, userOpenid, content, effectiveMsgId)
+                else { if (usePassive) send(content) else false }
+            }
         }
         // 0) 内置指令（签到/积分/全员禁言）
         val builtin = matchBuiltin(text, groupOpenid)
@@ -670,7 +684,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val pluginHit = matchPlugin(text, userOpenid)
         if (pluginHit != null) {
             val (pluginName, output) = pluginHit
-            smartSend(output)
+            smartSend(output, true)
             lastReplyTs[userOpenid] = System.currentTimeMillis()
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "plugin", "[$pluginName] $text", System.currentTimeMillis() - t0)
             return
@@ -688,7 +702,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
 
         val reply = askModel(bot, key, text, userOpenid, groupOpenid, smartSend)
         if (!reply.isNullOrBlank()) {
-            smartSend(reply)
+            smartSend(reply, true)
             lastReplyTs[userOpenid] = System.currentTimeMillis()
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "ai", text, System.currentTimeMillis() - t0)
         }
@@ -947,7 +961,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return out.trim()
     }
 
-    private fun askModel(bot: QqBot, key: String, userText: String, userOpenid: String, groupOpenid: String = "", smartSend: (String) -> Boolean = { _ -> false }): String? {
+    private fun askModel(bot: QqBot, key: String, userText: String, userOpenid: String, groupOpenid: String = "", smartSend: (String, Boolean) -> Boolean = { _, _ -> false }): String? {
         val hist = history.getOrPut(key) { mutableListOf() }
         val msgs = JSONArray()
         // ★ 按群取人设（群隔离兼容：全局用户），群专属提示词优先
@@ -1010,12 +1024,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     var isFirst = true
                     for ((fn, args) in calls) {
                         // 💭 过程推送：执行前先告诉用户 AI 在干嘛
-                        smartSend("💭 qtai-sj 正在执行：${fn}(${args.entries.joinToString(",") { "${it.key}=${it.value}" }})")
+                        smartSend("💭 qtai-sj 正在执行：${fn}(${args.entries.joinToString(",") { "${it.key}=${it.value}" }})", false)
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, 0L, db)
                         results.append(if (isFirst) "" else "\n").append("【$fn 执行结果】\n$r")
                         isFirst = false
                         // 📤 执行结果即时推送（用户实时看到每一步结果）
-                        smartSend("✅ ${fn} 执行完成：\n${r.take(500)}")
+                        smartSend("✅ ${fn} 执行完成：\n${r.take(500)}", false)
                         db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args -> ${r.take(80)}", 0)
                     }
                     // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
