@@ -686,7 +686,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (cfg != null && !(cfg["aiEnabled"] as Boolean)) return
         if (onCooldown(userOpenid, 3)) return
 
-        val reply = askModel(bot, key, text, userOpenid, groupOpenid)
+        val reply = askModel(bot, key, text, userOpenid, groupOpenid, smartSend)
         if (!reply.isNullOrBlank()) {
             smartSend(reply)
             lastReplyTs[userOpenid] = System.currentTimeMillis()
@@ -947,7 +947,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return out.trim()
     }
 
-    private fun askModel(bot: QqBot, key: String, userText: String, userOpenid: String, groupOpenid: String = ""): String? {
+    private fun askModel(bot: QqBot, key: String, userText: String, userOpenid: String, groupOpenid: String = "", smartSend: (String) -> Boolean = { _ -> false }): String? {
         val hist = history.getOrPut(key) { mutableListOf() }
         val msgs = JSONArray()
         // ★ 按群取人设（群隔离兼容：全局用户），群专属提示词优先
@@ -1000,23 +1000,59 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     ?.optJSONObject("message")
                     ?.optString("content")?.trim().orEmpty()
                 // ★ 沙盒执行：qtai-sj 模式下解析回复中的函数调用并执行（兼容 [[沙盒:]] 与 <dots_function_call> 原生格式）
-                if (sandboxOn && content.isNotBlank()) {
+                // ★ v46 Agent 循环：每步执行结果立即推送 QQ（过程可见），执行完回填给模型继续下一步
+                var loopGuard = 0
+                while (sandboxOn && content.isNotBlank() && loopGuard < 8) {
+                    loopGuard++
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
-                    if (calls.isNotEmpty()) {
-                        val results = StringBuilder()
-                        var isFirst = true
-                        for ((fn, args) in calls) {
-                            val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, 0L, db)
-                            results.append(if (isFirst) "" else "\n").append("【$fn 执行结果】\n$r")
-                            isFirst = false
-                            db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args -> ${r.take(80)}", 0)
-                        }
-                        // 清洗回复里的函数调用标签，替换为已执行标记；追加真实执行结果
-                        content = cleanFunctionTags(content) + "\n\n" + results
-                        // 沙盒结果作为下一轮上下文（追加到 hist 用于多步任务）
-                        hist.add("assistant" to content)
-                        return content
+                    if (calls.isEmpty()) break
+                    val results = StringBuilder()
+                    var isFirst = true
+                    for ((fn, args) in calls) {
+                        // 💭 过程推送：执行前先告诉用户 AI 在干嘛
+                        smartSend("💭 qtai-sj 正在执行：${fn}(${args.entries.joinToString(",") { "${it.key}=${it.value}" }})")
+                        val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, 0L, db)
+                        results.append(if (isFirst) "" else "\n").append("【$fn 执行结果】\n$r")
+                        isFirst = false
+                        // 📤 执行结果即时推送（用户实时看到每一步结果）
+                        smartSend("✅ ${fn} 执行完成：\n${r.take(500)}")
+                        db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args -> ${r.take(80)}", 0)
                     }
+                    // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
+                    val cleanText = cleanFunctionTags(content)
+                    val newPrompt = cleanText + "\n\n【沙盒执行结果】\n" + results + "\n\n请根据以上真实结果继续完成任务，如果需要更多操作继续调用函数，否则给出最终回复。"
+                    hist.add("assistant" to cleanText)
+                    // 再调一次模型，看它是否继续调用函数
+                    val nextBody = JSONObject()
+                        .put("model", bot.aiModel)
+                        .put("messages", JSONArray().put(JSONObject().put("role", "system").put("content", sysFull))
+                            .put(JSONObject().put("role", "user").put("content", userText))
+                            .put(JSONObject().put("role", "assistant").put("content", cleanText))
+                            .put(JSONObject().put("role", "user").put("content", newPrompt)))
+                        .put("stream", false)
+                        .put("temperature", 0.75)
+                        .toString()
+                    val nextReq = Request.Builder()
+                        .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
+                        .addHeader("Content-Type", "application/json")
+                        .post(nextBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                        .build()
+                    val nextContent = try {
+                        http.newCall(nextReq).execute().use { resp2 ->
+                            if (!resp2.isSuccessful) null
+                            else JSONObject(resp2.body?.string().orEmpty())
+                                .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                ?.optString("content")?.trim().orEmpty()
+                        }
+                    } catch (e: Exception) { null }
+                    if (nextContent.isNullOrBlank()) { content = cleanText + "\n\n" + results; break }
+                    content = nextContent
+                    // 无限循环保护：若下一轮无调用则结束
+                    if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty()) break
+                }
+                if (loopGuard > 0 && content.isNotBlank()) {
+                    hist.add("assistant" to content)
+                    return content
                 }
                 hist.add("user" to userText)
                 hist.add("assistant" to content)

@@ -177,8 +177,7 @@ $KNOWLEDGE_JSON
             "user_balance", "qq_points_rank", "help" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
             "qq_bots_list", "qq_bots_groups" -> "admin" to "read"
-            "model_enable", "model_disable", "user_recharge" -> "admin" to "modify"
-            "terminal_run" -> "admin" to "high"
+            "model_enable", "model_disable", "user_recharge", "terminal_run" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -202,7 +201,15 @@ $KNOWLEDGE_JSON
                 "token_total" -> SkillExecutor.execute(db, "600005", "", userId)
                 "user_balance" -> SkillExecutor.execute(db, "600009", args["username"] ?: "", userId)
                 "user_recharge" -> SkillExecutor.execute(db, "900020", "${args["username"] ?: ""} ${args["amount"] ?: ""}", userId)
-                "terminal_run" -> "⚠️ 终端命令执行：请在网关后台「终端」页操作（沙盒已拦截，防破坏）"
+                "terminal_run" -> {
+                    // ★ v46：终端真执行（复用 TerminalManager.runOnce，危险命令拦截+超时+输出截断）
+                    val cmd = args["cmd"] ?: ""
+                    if (cmd.isBlank()) "⚠️ 语法：terminal_run(cmd=要执行的命令)"
+                    else {
+                        val out = com.qitong.gateway.http.TerminalManager.runOnce(cmd)
+                        "🖥 执行: $cmd\n📤 输出:\n$out"
+                    }
+                }
                 "qq_bots_list" -> {
                     val bots = db.getQqBots()
                     if (bots.isEmpty()) "📋 暂无QQ机器人配置"
