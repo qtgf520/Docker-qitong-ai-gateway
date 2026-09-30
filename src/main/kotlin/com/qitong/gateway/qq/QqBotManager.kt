@@ -815,10 +815,16 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     val lines = content.split("\n").filter { it.isNotBlank() && !it.startsWith("//") }
                     if (lines.isEmpty()) continue
                     val line = lines.random()
-                    val out = line
+                    // 变量替换：$XX$/$名字$ 用 openid；$扣除xx$/$奖励xx$/$赞xx$/$贬xx$ 等旧平台变量保留语义去符号；
+                    // 行首 "$变量$：" 前缀剥离
+                    var out = line
                         .replace("\$XX\$", userOpenid.take(4))
                         .replace("\$名字\$", userOpenid.take(6))
-                        .take(500)
+                        .replace(Regex("\\$([^$]{1,12})\\$"), "「$1」")
+                        .trim()
+                    // 行首孤立 "「xxx」：" 前缀去掉（如 「扣除3000」：）
+                    out = out.replace(Regex("^「[^」]{1,12}」[：:]\\s*"), "")
+                    out = out.take(500)
                     return pluginName to "【$pluginName·$base】\n$out"
                 }
             }
