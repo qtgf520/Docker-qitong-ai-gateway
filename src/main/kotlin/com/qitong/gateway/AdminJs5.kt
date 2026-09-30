@@ -266,8 +266,9 @@ function qqLoadUsers(){
     '<td><span class="badge '+(u.permLevel>=3?'purple':(u.permLevel==0?'gray':'blue'))+'">'+permTxt+'</span></td>'+
     '<td>'+(u.totalMessages||0)+'</td>'+
     '<td>'+qqTime(u.lastActiveAt)+'</td>'+
-    '<td><button class="btn-ghost btn-sm" onclick="qqUserEdit(\''+esc(u.openid)+'\')">配置</button> '+
-    '<button class="btn-ghost btn-sm danger" onclick="qqUserDel(\''+esc(u.openid)+'\')">删</button></td></tr>';
+'<td><button class="btn-ghost btn-sm" onclick="qqUserEdit(\''+esc(u.openid)+'\')">配置</button> '+
+     '<button class="btn-ghost btn-sm" onclick="qqUserMemory(\''+esc(u.openid)+'\')">🧠记忆</button> '+
+     '<button class="btn-ghost btn-sm danger" onclick="qqUserDel(\''+esc(u.openid)+'\')">删</button></td></tr>';
   }).join('');
   el.innerHTML='<div class="table-wrap"><table><thead><tr><th>openid</th><th>昵称</th><th>AI</th><th>权限</th><th>消息数</th><th>最后活跃</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
    '<div style="font-size:12px;color:var(--muted);margin-top:8px">权限：禁止=不能操作机器人 · 查询=查状态/排行/余额 · 操作=切模型/测速 · 管理=启停/充值/改配置 · 全部=所有网关操作</div>';

@@ -777,8 +777,9 @@ private fun providerToMap(p: Provider) = mapOf(
             }
             messages.add(0, sysMsg)
         }
-        // 注入大脑记忆（对齐原APP：记忆系统启用时注入；模型独立记忆开启时只取当前模型相关记忆）
-        if (userId > 0 && persona?.memoryEnabled != false) {
+        // 注入大脑记忆（★ 默认启用：未建人格也注入，qtai-sj 同样有记忆）
+        val memoryEnabled = persona?.memoryEnabled ?: true  // 默认开启
+        if (userId > 0 && memoryEnabled) {
             val memCfg = database.getMemoryConfig(userId)
             val memEnabled = memCfg["enabled"] as? Boolean ?: true
             val modelIndependent = memCfg["modelIndependent"] as? Boolean ?: false
@@ -802,9 +803,9 @@ private fun providerToMap(p: Provider) = mapOf(
                 }
             }
         }
-        // 注入技能池提示（让大脑能用技能）
+        // 注入技能池提示（让大脑能用技能）★ 默认注入（即使未建人格）
         val skillPrompt = SkillRegistry.buildSkillPrompt()
-        if (persona != null && persona.memoryEnabled) {
+        if (memoryEnabled) {
             messages.add(buildJsonObject {
                 put("role", JsonPrimitive("system"))
                 put("content", JsonPrimitive(skillPrompt))
@@ -939,6 +940,14 @@ private fun providerToMap(p: Provider) = mapOf(
                     "AI对话", "模型[$effectiveModel] 提问:${userContent.take(50)} → 回复:${(lastResult ?: "").take(30)}",
                     ""
                 )
+                // ★ 记忆自动保存：把用户对话存为短期记忆（供后续对话参考，默认启用）
+                if (memoryEnabled && userContent.isNotBlank()) {
+                    database.addMemory(
+                        userId,
+                        "对话记录", userContent.trim().take(200),
+                        "short", "neutral", 3, "auto", "chat", effectiveModel
+                    )
+                }
             }
         }
     }

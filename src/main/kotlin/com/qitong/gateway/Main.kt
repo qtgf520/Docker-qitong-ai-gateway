@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-40
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-41
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-40    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-41    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -184,7 +184,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-40"))
+                put("version", JsonPrimitive("3.18.22-41"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1350,7 +1350,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-40"))
+                put("version", JsonPrimitive("3.18.22-41"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -1404,6 +1404,56 @@ fun Application.moduleWeb(database: Database) {
                 put("customSkills", JsonArray(database.getUserConfig(user.id, "custom_skills", "[]").let { s ->
                     try { kotlinx.serialization.json.Json.decodeFromString<JsonArray>(s) } catch (_: Exception) { JsonArray(emptyList()) }
                 }))
+                // ★ 系统级全量备份（仅管理员）：QQ机器人/群配置/用户/系统配置/API密钥
+                if (isAdmin) {
+                    put("qqBots", JsonArray(database.getQqBots().map { b ->
+                        buildJsonObject {
+                            put("appid", JsonPrimitive(b["appid"] as? String ?: ""))
+                            put("name", JsonPrimitive(b["name"] as? String ?: ""))
+                            put("appSecret", JsonPrimitive(b["appSecret"] as? String ?: ""))
+                            put("useSandbox", JsonPrimitive((b["useSandbox"] as? Boolean) ?: false))
+                            put("enabled", JsonPrimitive((b["enabled"] as? Boolean) ?: true))
+                            put("aiModel", JsonPrimitive(b["aiModel"] as? String ?: "qtai-sj"))
+                            put("systemPrompt", JsonPrimitive(b["systemPrompt"] as? String ?: ""))
+                            put("welcome", JsonPrimitive(b["welcome"] as? String ?: ""))
+                        }
+                    }))
+                    put("qqGroups", JsonArray(database.getQqGroups().map { g ->
+                        buildJsonObject {
+                            put("groupOpenid", JsonPrimitive(g["groupOpenid"] as? String ?: ""))
+                            put("aiEnabled", JsonPrimitive(g["aiEnabled"] as? Boolean ?: true))
+                            put("welcomeEnabled", JsonPrimitive(g["welcomeEnabled"] as? Boolean ?: true))
+                            put("greeting", JsonPrimitive(g["greeting"] as? String ?: ""))
+                            put("groupName", JsonPrimitive(g["groupName"] as? String ?: ""))
+                            put("groupPrompt", JsonPrimitive(g["groupPrompt"] as? String ?: ""))
+                            put("adminMute", JsonPrimitive(g["adminMute"] as? Boolean ?: true))
+                            put("adminKick", JsonPrimitive(g["adminKick"] as? Boolean ?: true))
+                            put("adminManage", JsonPrimitive(g["adminManage"] as? Boolean ?: true))
+                        }
+                    }))
+                    put("qqUsers", JsonArray(database.getQqUsers().map { u ->
+                        buildJsonObject {
+                            put("openid", JsonPrimitive(u["openid"] as? String ?: ""))
+                            put("displayName", JsonPrimitive(u["displayName"] as? String ?: ""))
+                            put("permLevel", JsonPrimitive(u["permLevel"] as? Int ?: 1))
+                            put("aiEnabled", JsonPrimitive(u["aiEnabled"] as? Boolean ?: true))
+                            put("persona", JsonPrimitive(u["persona"] as? String ?: ""))
+                        }
+                    }))
+                    put("systemConfig", JsonArray(database.getAllConfigs().map { c ->
+                        buildJsonObject {
+                            put("key", JsonPrimitive(c["key"] as? String ?: ""))
+                            put("value", JsonPrimitive(c["value"] as? String ?: ""))
+                        }
+                    }))
+                    put("apiKeys", JsonArray(database.getApiKeys().map { k ->
+                        buildJsonObject {
+                            put("key", JsonPrimitive(k.key))
+                            put("label", JsonPrimitive(k.label))
+                            put("enabled", JsonPrimitive(k.enabled))
+                        }
+                    }))
+                }
             }
             AdminApi.respondJson(call, buildJsonObject {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
@@ -1490,6 +1540,54 @@ fun Application.moduleWeb(database: Database) {
                 if (cs is JsonArray || cs is JsonObject) {
                     database.setUserConfig(user.id, "custom_skills", cs.toString())
                     imported++
+                }
+            }
+            // ★ 系统级导入（仅管理员）：QQ机器人/群配置/系统配置/API密钥
+            if (isAdmin) {
+                body["qqBots"]?.jsonArray?.forEach { item ->
+                    val obj = item.jsonObject
+                    val appid = obj["appid"]?.jsonPrimitive?.content ?: return@forEach
+                    database.upsertQqBot(
+                        appid,
+                        obj["name"]?.jsonPrimitive?.content ?: "",
+                        obj["appSecret"]?.jsonPrimitive?.content ?: "",
+                        obj["useSandbox"]?.jsonPrimitive?.content == "true",
+                        obj["name"]?.jsonPrimitive?.content ?: appid,
+                        obj["enabled"]?.jsonPrimitive?.content != "false",
+                        obj["aiModel"]?.jsonPrimitive?.content ?: "qtai-sj",
+                        obj["systemPrompt"]?.jsonPrimitive?.content ?: "",
+                        obj["welcome"]?.jsonPrimitive?.content ?: ""
+                    ); imported++
+                }
+                body["qqGroups"]?.jsonArray?.forEach { item ->
+                    val obj = item.jsonObject
+                    val gOpenid = obj["groupOpenid"]?.jsonPrimitive?.content ?: return@forEach
+                    database.updateQqGroup(
+                        gOpenid,
+                        obj["aiEnabled"]?.jsonPrimitive?.content != "false",
+                        obj["welcomeEnabled"]?.jsonPrimitive?.content != "false",
+                        obj["greeting"]?.jsonPrimitive?.content ?: "",
+                        obj["adminMute"]?.jsonPrimitive?.content != "false",
+                        obj["adminKick"]?.jsonPrimitive?.content != "false",
+                        obj["adminManage"]?.jsonPrimitive?.content != "false",
+                        obj["groupName"]?.jsonPrimitive?.content ?: "",
+                        obj["groupPrompt"]?.jsonPrimitive?.content ?: ""
+                    ); imported++
+                }
+                body["systemConfig"]?.jsonArray?.forEach { item ->
+                    val obj = item.jsonObject
+                    val k = obj["key"]?.jsonPrimitive?.content ?: return@forEach
+                    val v = obj["value"]?.jsonPrimitive?.content ?: ""
+                    database.setConfig(k, v); imported++
+                }
+                body["apiKeys"]?.jsonArray?.forEach { item ->
+                    val obj = item.jsonObject
+                    val k = obj["key"]?.jsonPrimitive?.content ?: return@forEach
+                    database.addApiKey(com.qitong.gateway.model.ApiKeyEntry(
+                        key = k,
+                        label = obj["label"]?.jsonPrimitive?.content ?: "导入",
+                        enabled = obj["enabled"]?.jsonPrimitive?.content != "false"
+                    )); imported++
                 }
             }
             AdminApi.ok(call, mapOf("imported" to imported), "导入成功 $imported 项")
@@ -1972,7 +2070,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-40"))
+                    put("version", JsonPrimitive("3.18.22-41"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

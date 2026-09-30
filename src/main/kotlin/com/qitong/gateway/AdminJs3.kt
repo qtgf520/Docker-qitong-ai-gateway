@@ -182,7 +182,42 @@ window.clearUsageByModel = function(){
   if(r.code === 0){ toast('已清理 ' + (r.data && r.data.deleted != null ? r.data.deleted : '') + ' 条', true); loaders.usage(); } else toast(r.msg, false);
  });
 };
-// ===== 个人中心（用户+管理员各有自己的） =====
+// ===== 记忆独立页（大脑记忆 + 记忆配置） =====
+loaders.memory = function(){
+ var box = $('view-memory');
+ box.innerHTML = '<div class="action-bar"><button class="btn" onclick="addMemory()">+ 添加记忆</button><button class="btn-ghost" onclick="loaders.memory()">刷新</button><button class="btn-ghost" style="color:var(--red)" onclick="clearMemories()">清空全部</button><span style="font-size:12px;color:var(--muted)">🧠 记忆已默认启用（未建人格也生效，qtai-sj 同样有记忆）。记忆会在 AI 对话时自动注入参考。</span></div>' +
+  '<div class="card" id="memListCard"><div style="color:var(--muted);padding:20px">加载中...</div></div>' +
+  '<div class="card" id="memCfgCard2" style="margin-top:14px"><div style="color:var(--muted);padding:20px">加载配置中...</div></div>';
+ // 记忆列表
+ api('/api/memory').then(function(mr){
+  var mc = $('memListCard'); if(!mc) return;
+  var mems = (mr && mr.data) || [];
+  if(!mems.length){ mc.innerHTML = '<h3>🧠 大脑记忆</h3><div style="color:var(--muted);padding:12px">暂无记忆。AI 对话会自动保存关键信息到这里。</div>'; return; }
+  var rows = mems.map(function(m){
+   return '<tr><td><b>'+esc(m.title||'(无标题)')+'</b></td><td style="font-size:12px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.content)+'</td><td><span class="badge '+(m.emotion==='happy'?'green':m.emotion==='sad'?'red':'purple')+'">'+esc(m.emotion)+'</span></td><td>'+m.importance+'</td><td>'+new Date(m.timestamp).toLocaleString('zh-CN',{hour12:false})+'</td><td><button class="btn-ghost" style="color:var(--red)" onclick="delMemory('+m.id+')">删</button></td></tr>';
+  }).join('');
+  mc.innerHTML = '<h3>🧠 大脑记忆（'+mems.length+'条）</h3><div class="table-wrap"><table><thead><tr><th>标题</th><th>内容</th><th>情感</th><th>重要</th><th>时间</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+ });
+ // 记忆配置
+ api('/api/memory/config').then(function(cr){
+  var cc = $('memCfgCard2'); if(!cc) return;
+  var c = (cr && cr.data) || {};
+  cc.innerHTML = '<h3>⚙️ 记忆配置</h3>' +
+   '<div class="form-row"><label><input type="checkbox" id="mc2Enabled"'+(c.enabled?' checked':'')+'> 启用记忆系统</label></div>' +
+   '<div class="form-row"><label><input type="checkbox" id="mc2Independent"'+(c.modelIndependent?' checked':'')+'> 模型独立记忆</label><small style="color:var(--muted);display:block;margin-top:4px">开启后各模型记忆互相隔离</small></div>' +
+   '<div class="form-row"><label>保存模式</label><select class="input" id="mc2Mode"><option value="frequent"'+(c.saveMode==='frequent'?' selected':'')+'>频繁保存</option><option value="normal"'+(c.saveMode==='normal'||!c.saveMode?' selected':'')+'>正常保存</option><option value="occasional"'+(c.saveMode==='occasional'?' selected':'')+'>偶尔保存</option></select></div>' +
+   '<div class="form-row"><label>沟通风格</label><input class="input" id="mc2Style" value="'+esc(c.communicationStyle||'自然亲切、像朋友聊天')+'"></div>' +
+   '<button class="btn" onclick="saveMemoryCfg2()">保存配置</button>';
+ });
+};
+window.saveMemoryCfg2 = function(){
+ api('/api/memory/config', { method:'POST', body: {
+  enabled: $('mc2Enabled').checked ? 'true' : 'false',
+  saveMode: $('mc2Mode').value,
+  modelIndependent: $('mc2Independent').checked ? 'true' : 'false',
+  communicationStyle: $('mc2Style').value
+ } }).then(function(r){ if(r.code===0){ toast(r.msg, true); } else toast(r.msg, false); });
+};
 loaders.profile = function(){
  var box = $('view-profile');
  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';

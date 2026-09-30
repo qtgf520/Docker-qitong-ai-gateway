@@ -1138,6 +1138,14 @@ class Database(private val dbPath: String) {
 
     // ============ 配置（替代 SharedPreferences） ============
 
+    fun getAllConfigs(): List<Map<String, String>> =
+        query("SELECT key, value FROM gateway_config").map { row ->
+            mapOf(
+                "key" to (row["key"] as? String ?: ""),
+                "value" to (row["value"] as? String ?: "")
+            )
+        }
+
     fun getConfig(key: String, default: String = ""): String {
         return query("SELECT value FROM gateway_config WHERE key=?", key).firstOrNull()?.values?.firstOrNull()?.toString() ?: default
     }
