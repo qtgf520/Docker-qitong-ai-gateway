@@ -857,10 +857,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (t.equals("签到", true) || t.equals("打卡", true)) return "sign" to t
         if (t.equals("我的积分", true) || t.equals("积分", true)) return "points" to t
         if (t.startsWith("改我名字", true) || t.startsWith("修改备注", true) || t.startsWith("改备注", true)) return "rename" to t.substringAfter(" ").trim()
-        // ★ v50 QQ 远程登录绑定：私发账号密码绑定网关账号，绑定后获得该账号权限/可查
-        if (t.startsWith("绑定账号", true) || t.startsWith("绑定", true) && t.length > 3) return "bind" to t.substringAfter(" ").trim()
         // ★ v52 绑定码登录：网页个人中心生成 6 位码，群里发「绑定码 xxxx」即可绑定（无需私聊）
         if (t.startsWith("绑定码", true)) return "bind_code" to t.substringAfter(" ").trim()
+        // ★ v50 QQ 远程登录绑定：私发账号密码绑定网关账号，绑定后获得该账号权限/可查
+        if (t.startsWith("绑定账号", true) || t.startsWith("绑定", true) && t.length > 3) return "bind" to t.substringAfter(" ").trim()
         if (t.equals("我的账号", true) || t.equals("账号信息", true)) return "my_account" to t
         if (t.equals("退出账号", true) || t.equals("解绑", true) || t.equals("退出登录", true)) return "unbind" to t
         if (t.equals("切换卡片", true) || t.equals("卡片模式", true)) return "card_on" to t
