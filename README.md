@@ -224,6 +224,11 @@ Copyright 2026 綦桐 (qtgf520)
 
 ## 📝 更新日志（CHANGELOG）
 
+### v3.18.22-56（2026-10-02）· 智能识别 YAML 函数调用 + 过滤误匹配 + 执行后收敛
+- 🧠 **YAML 风格识别**：`function_name: gateway_status` 纯文本格式正确识别函数名（不再误配成 params 调用）
+- 🚫 **过滤无意义调用**：`params`/`parameters`/`arguments`/`name` 等字段名不再当函数执行
+- 🎯 **智能收敛**：函数执行成功且拿到完整结果后直接收尾，不再反复调模型补话（像 OpenClaw 一样跑完就结束）
+
 ### v3.18.22-55（2026-10-02）· 修复 XML 函数调用标签泄漏（畸形格式/JSON 不再发给用户）
 - 🐛 **XML 标签泄漏修复**：qtai-sj 返回畸形调用格式（全角`＜｜invoke｜＞`、JSON 内嵌 `{"name":...}`）时不再原样发给用户——解析器兼容全角/竖线归一 + JSON 格式提取，返回前必清洗函数标签
 - 🔧 parseCalls 增强：格式 7 JSON 内嵌调用；预处理全角尖括号/竖线；返回路径统一 cleanFunctionTags（防泄漏）

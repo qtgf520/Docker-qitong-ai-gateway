@@ -199,7 +199,27 @@ $KNOWLEDGE_JSON
                 }
             }
         }
+        // 格式8：YAML/纯文本风格 function_name: gateway_status / params: {...}
+        val yamlFn = Regex("""(?:function_name|function|name)\s*[:：]\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*""")
+        yamlFn.findAll(text).forEach { m ->
+            val fn = m.groupValues[1]
+            if (fn.isNotBlank() && result.none { it.first == fn }) {
+                // 尝试提取后面的 params: {...} 或 arguments: {...}
+                val args = mutableMapOf<String, String>()
+                val p = Regex("""(?:params|parameters|arguments)\s*[:：]\s*\{([^}]*)}""").find(text, m.range.last)
+                if (p != null) {
+                    p.groupValues[1].split(",").forEach { seg ->
+                        val kv = seg.trim().split(Regex("""[:：]"""), limit = 2)
+                        if (kv.size == 2) args[kv[0].trim().trim('"', '\'')] = kv[1].trim().trim('"', '\'')
+                    }
+                }
+                result.add(fn to args)
+            }
+        }
+        // ★ v56 过滤无意义函数名（模型误输出的字段名，不是真实沙盒函数）
+        val skip = setOf("params", "parameters", "arguments", "function", "function_name", "name", "value", "output", "result", "results", "resp", "response")
         return result.distinctBy { it.first to it.second }
+            .filter { it.first !in skip }
     }
 
     /** 解析 参数名=值, 参数名=值 格式 */
