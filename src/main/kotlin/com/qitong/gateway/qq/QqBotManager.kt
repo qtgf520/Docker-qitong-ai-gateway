@@ -969,15 +969,18 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     }
 
     /** 调本机网关大模型，带每用户独立上下文与人设覆盖。 */
-    /** 清洗回复里的函数调用标签（[[沙盒:...]]、<dots_function_call>、<function_call>、<invoke>），保留文本部分 */
+    /** 清洗回复里的函数调用标签（[[沙盒:...]]、<dots_function_call>、<function_call>、<invoke>、<parameter>），保留文本部分 */
     private fun cleanFunctionTags(text: String): String {
         var out = text
         // 移除 [[沙盒:...]] 调用
         out = out.replace(Regex("\\[\\[沙盒:[^\\]]*\\]\\]"), "（已调用）")
-        // 移除完整的 XML 函数调用标签对（含嵌套）
+        // 移除完整的 XML 函数调用标签对（含嵌套 parameter/param）
         out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>[\\s\\S]*?</(?:dots_function_call|function_call|invoke)>"), "")
         // 移除可能残留的单标签（<dots_function_call name="xxx"> 或 </dots_function_call>）
         out = out.replace(Regex("</?(?:dots_function_call|function_call|invoke)\\s*[^>]*>"), "")
+        // ★ v49 移除 parameter/param 子标签（<parameter name="query">值</parameter>）
+        out = out.replace(Regex("<(?:parameter|param)\\s+name=\"[^\"]*\"[^>]*>[\\s\\S]*?</(?:parameter|param)>"), "")
+        out = out.replace(Regex("</?(?:parameter|param)\\s*[^>]*>"), "")
         return out.trim()
     }
 

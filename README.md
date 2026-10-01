@@ -224,6 +224,10 @@ Copyright 2026 綦桐 (qtgf520)
 
 ## 📝 更新日志（CHANGELOG）
 
+### v3.18.22-49（2026-10-01）· 心跳可控（设置页+沙盒）+ XML 函数调用解析修复
+- 🔔 **心跳设置与控制**：网关设置页新增「启用自主心跳」开关 + 间隔分钟配置（保存生效）；沙盒新增 `heartbeat_status`/`heartbeat_start`/`heartbeat_stop`/`heartbeat_check` —— qtai-sj / QQ 机器人可直接控制心跳
+- 🐛 **XML 函数调用解析修复**：兼容 `<dots_function_call><parameter name="query">值</parameter>` 格式（外层无 name 时从参数名推断函数：query→web_search）；清洗函数同时清掉 parameter/param 标签，不再把原始 XML 发给用户
+
 ### v3.18.22-48（2026-10-01）· MCP 工具展开 + 内置聊天沙盒 + 技能启停管理
 - 🔍 **MCP 工具展开**：MCP 列表每行新增「🔍工具」按钮，点击展开握手后该服务器可调用的全部工具清单（后端 /api/mcp/{id}/tools 调 tools/list）——对齐 Kai 展开所有工具
 - 🤖 **内置聊天沙盒**：内置聊天选 qtai-sj 也走沙盒（不配 QQ 机器人也能调用全部网关功能）——AdminApi.chat 解析函数调用并执行，结果追加回复 + 记日志

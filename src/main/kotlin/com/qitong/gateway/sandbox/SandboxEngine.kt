@@ -45,6 +45,10 @@ object SandboxEngine {
             .put(func("mcp_list", "列出已配置 MCP 服务器及其可用工具（只读）", "admin", "read", emptyList(), "MCP服务器名/工具列表"))
             .put(func("mcp_call", "调用 MCP 服务器上的工具（只读/执行）", "admin", "modify", listOf(param("server", true, "MCP服务器名"), param("tool", true, "工具名"), param("args", false, "JSON参数")), "工具返回结果"))
             .put(func("web_search", "联网搜索信息（只读）", "user", "read", listOf(param("query", true, "搜索关键词")), "搜索结果摘要"))
+            .put(func("heartbeat_status", "查看自主心跳状态（只读）", "user", "read", emptyList(), "心跳是否运行/间隔分钟"))
+            .put(func("heartbeat_start", "启动自主心跳（修改）", "admin", "modify", listOf(param("minutes", false, "间隔分钟，默认30")), "启动结果"))
+            .put(func("heartbeat_stop", "停止自主心跳（修改）", "admin", "modify", emptyList(), "停止结果"))
+            .put(func("heartbeat_check", "立即执行一次心跳自检（只读）", "user", "read", emptyList(), "自检结果"))
             .toString()
     }
 
@@ -148,6 +152,27 @@ $KNOWLEDGE_JSON
             val fn = m.groupValues[1]
             if (fn.isNotBlank() && result.none { it.first == fn }) result.add(fn to emptyMap())
         }
+        // 格式6：外层无 name 的 <dots_function_call><parameter name="query">值</parameter></dots_function_call>
+        // 从 parameter 名推断函数：query→web_search，其他 try 原样函数名
+        val regex6 = Regex("<(?:dots_function_call|function_call|invoke)[^>]*>([\\s\\S]*?)</(?:dots_function_call|function_call|invoke)>")
+        regex6.findAll(text).forEach { m ->
+            val inner = m.groupValues[1]
+            if (inner.isBlank() || inner.trim().startsWith("{")) return@forEach // JSON 格式已处理
+            val paramRegex = Regex("<(?:param|parameter)\\s+name=\"([^\"]+)\"[^>]*>([\\s\\S]*?)</(?:param|parameter)>")
+            val params = mutableMapOf<String, String>()
+            paramRegex.findAll(inner).forEach { pm ->
+                params[pm.groupValues[1].trim()] = pm.groupValues[2].trim()
+            }
+            if (params.isEmpty()) return@forEach
+            // 推断函数名：有 query 参数 → web_search；有 fn/function 参数 → 其值；否则取第一个参数名
+            val fn = when {
+                params.containsKey("query") -> "web_search"
+                params.containsKey("function_name") -> params["function_name"]!!
+                params.containsKey("name") && params.size == 1 -> params["name"]!!
+                else -> params.keys.first()
+            }
+            if (fn.isNotBlank() && result.none { it.first == fn }) result.add(fn to params)
+        }
         return result.distinctBy { it.first to it.second }
     }
 
@@ -177,10 +202,10 @@ $KNOWLEDGE_JSON
         // 权限表：函数 -> (最低权限, 风险)
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
-            "user_balance", "qq_points_rank", "help", "web_search" -> "user" to "read"
+            "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
             "qq_bots_list", "qq_bots_groups", "mcp_list" -> "admin" to "read"
-            "model_enable", "model_disable", "user_recharge", "terminal_run", "mcp_call" -> "admin" to "modify"
+            "model_enable", "model_disable", "user_recharge", "terminal_run", "mcp_call", "heartbeat_start", "heartbeat_stop" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -278,6 +303,25 @@ $KNOWLEDGE_JSON
                             }
                         } catch (e: Exception) { "❌ 搜索失败: ${e.message}" }
                     }
+                }
+                "heartbeat_status" -> com.qitong.gateway.sandbox.HeartbeatEngine.statusText()
+                "heartbeat_check" -> com.qitong.gateway.sandbox.HeartbeatEngine.checkOnce(db)
+                "heartbeat_start" -> {
+                    val minutes = args["minutes"]?.toIntOrNull() ?: 30
+                    if (minutes < 5) "⚠️ 间隔最少 5 分钟"
+                    else {
+                        db.setConfig("heartbeat_enabled", "true")
+                        db.setConfig("heartbeat_interval_minutes", minutes.toString())
+                        // 重启心跳协程
+                        if (com.qitong.gateway.sandbox.HeartbeatEngine.isRunning()) com.qitong.gateway.sandbox.HeartbeatEngine.stop()
+                        com.qitong.gateway.sandbox.HeartbeatEngine.start(db)
+                        "✅ 自主心跳已启动（间隔 $minutes 分钟）"
+                    }
+                }
+                "heartbeat_stop" -> {
+                    db.setConfig("heartbeat_enabled", "false")
+                    com.qitong.gateway.sandbox.HeartbeatEngine.stop()
+                    "✅ 自主心跳已停止"
                 }
                 else -> "❌ 未知沙盒函数: $fn（发「沙盒帮助」查看可用能力）"
             }

@@ -17,27 +17,49 @@ import java.util.concurrent.atomic.AtomicBoolean
 object HeartbeatEngine {
 
     @Volatile private var started = false
+    private var job: kotlinx.coroutines.Job? = null
     private val running = AtomicBoolean(false)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** 心跳间隔：默认 30 分钟（调试可改小） */
+    /** 心跳间隔：默认 30 分钟（可从系统配置 heartbeat_interval_minutes 覆盖） */
     @Volatile var intervalMs: Long = 30 * 60 * 1000L
 
     /** 自检回调：发现问题时推送（传入检查结果文本） */
     @Volatile var onIssue: ((String) -> Unit)? = null
 
-    /** 启动心跳（幂等） */
+    /** 启动心跳（幂等）：从系统配置读 heartbeat_enabled / heartbeat_interval_minutes */
     fun start(db: Database) {
         if (started) return
+        val enabled = db.getConfig("heartbeat_enabled", "true") != "false"
+        if (!enabled) {
+            println("[Heartbeat] 心跳未启用（heartbeat_enabled=false），跳过")
+            return
+        }
+        val minutes = db.getConfig("heartbeat_interval_minutes", "30").toIntOrNull() ?: 30
+        intervalMs = minutes.coerceIn(5, 24 * 60) * 60 * 1000L
         started = true
-        scope.launch {
+        job = scope.launch {
             while (isActive) {
                 delay(intervalMs)
                 runCatching { checkOnce(db) }
             }
         }
-        println("[Heartbeat] 自主心跳已启动，间隔 ${intervalMs / 60000} 分钟")
+        println("[Heartbeat] 自主心跳已启动，间隔 $minutes 分钟")
     }
+
+    /** 停止心跳（可从沙盒/设置页调用） */
+    fun stop() {
+        started = false
+        job?.cancel()
+        job = null
+        println("[Heartbeat] 自主心跳已停止")
+    }
+
+    /** 是否运行中 */
+    fun isRunning(): Boolean = started
+
+    /** 当前配置描述 */
+    fun statusText(): String = if (started) "✅ 心跳运行中（间隔 ${intervalMs / 60000} 分钟）" else "⛔ 心跳已停止"
 
     /** 立即执行一次自检（暴露给测试/手动触发） */
     fun checkOnce(db: Database): String {
@@ -86,12 +108,5 @@ object HeartbeatEngine {
         } finally {
             running.set(false)
         }
-    }
-
-    /** 停止心跳 */
-    fun stop() {
-        started = false
-        scope.coroutineContext.cancelChildren()
-        println("[Heartbeat] 自主心跳已停止")
     }
 }
