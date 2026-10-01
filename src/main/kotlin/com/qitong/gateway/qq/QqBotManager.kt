@@ -43,6 +43,8 @@ object QqBotManager {
     private val userMutex = ConcurrentHashMap<String, Mutex>()
     // 每用户冷却时间戳
     private val lastReplyTs = ConcurrentHashMap<String, Long>()
+    /** v51 分步绑定状态：openid -> (step, username)；step=1 等用户名，2 等密码 */
+    private val pendingBind = ConcurrentHashMap<String, Pair<Int, String>>()
 
     // ============ 文字游戏状态（每用户独立） ============
     private val gameState = ConcurrentHashMap<String, MutableMap<String, Any>>()
@@ -348,6 +350,40 @@ object QqBotManager {
     ) {
         val t0 = System.currentTimeMillis()
         val t = text.trim()
+        // ★ v51 分步绑定处理：用户在绑定流程中（pendingBind 有值）发的任意消息 = 绑定输入
+        val bindState = pendingBind[userOpenid]
+        if (bindState != null && !t.startsWith("绑定账号", true) && !t.equals("取消", true)) {
+            val (step, savedUser) = bindState
+            if (step == 1) {
+                // 第 1 步收到用户名
+                pendingBind[userOpenid] = 2 to t
+                send("📝 用户名已收到「$t」\n第 2 步：请发送你的【账号密码】\n（发「取消」结束绑定）")
+                return
+            } else if (step == 2) {
+                // 第 2 步收到密码，直接绑定
+                val username = savedUser
+                val password = t
+                val result = com.qitong.gateway.auth.AuthManager.login(db, username, password)
+                if (result.isSuccess) {
+                    val u = db.getUserByUsername(username.trim()) ?: run { pendingBind.remove(userOpenid); send("❌ 账号校验失败"); return }
+                    db.setQqUserBound(userOpenid, u.id)
+                    if (u.role == "admin" || u.role == "agent") db.setQqUserPerm(userOpenid, 3, "")
+                    val bal = db.getUserBalance(u.id)
+                    pendingBind.remove(userOpenid)
+                    send("✅ 绑定成功！已登录账号「${u.username}」\n👤 角色: ${u.role}\n💰 余额: ¥${"%.2f".format(bal)}\n📊 累计充值: ¥${"%.2f".format(u.totalRecharge)}\n发「我的账号」随时查看，发「退出账号」解绑")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "bind", "绑定账号 $username", System.currentTimeMillis() - t0)
+                } else {
+                    pendingBind.remove(userOpenid)
+                    send("❌ 登录失败：${result.exceptionOrNull()?.message ?: "用户名或密码错误"}（发「绑定账号」重新开始）")
+                }
+                return
+            }
+        }
+        if (t.equals("取消", true) && pendingBind.containsKey(userOpenid)) {
+            pendingBind.remove(userOpenid)
+            send("已取消绑定")
+            return
+        }
         // ★ 群卡片模式：群内可切换（发「切换卡片/切换文本」），插件/AI 回复按模式用卡片或文本发送
         val cardMode = if (groupOpenid.isNotBlank()) {
             (db.getQqGroupConfig(groupOpenid)?.get("cardMode") as? Boolean) == true
@@ -512,9 +548,20 @@ object QqBotManager {
                     return
                 }
                 "bind" -> {
-                    // ★ v50 私发账号密码绑定网关账号（建议私聊；群内也支持但提示私下发）
+                    // ★ v51 支持分步绑定：发「绑定账号」→ 机器人问用户名 → 输入用户名 → 问密码 → 输入密码 → 绑定完成
                     val parts = builtin.second.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-                    if (parts.size < 2) { send("⚠️ 请私聊发送：绑定账号 用户名 密码\n绑定后自动获得该账号权限，可查余额/用量/分销"); return }
+                    if (parts.isEmpty()) {
+                        // 启动分步绑定
+                        pendingBind[userOpenid] = 1 to ""
+                        send("🔐 开始绑定网关账号（分步）\n第 1 步：请发送你的【账号用户名】")
+                        return
+                    }
+                    if (parts.size < 2) {
+                        // 只有一个参数 = 可能是用户名，进入密码步骤
+                        pendingBind[userOpenid] = 2 to parts[0]
+                        send("📝 用户名已收到「${parts[0]}」\n第 2 步：请发送你的【账号密码】\n（格式提示：也可以一次发「绑定账号 用户名 密码」直接绑定）")
+                        return
+                    }
                     val username = parts[0]
                     val password = parts.drop(1).joinToString(" ")
                     val result = com.qitong.gateway.auth.AuthManager.login(db, username, password)
@@ -524,6 +571,7 @@ object QqBotManager {
                         // 绑定后同步为管理级权限（管理员账号）或保留原权限
                         if (u.role == "admin" || u.role == "agent") db.setQqUserPerm(userOpenid, 3, "")
                         val bal = db.getUserBalance(u.id)
+                        pendingBind.remove(userOpenid)
                         send("✅ 绑定成功！已登录账号「${u.username}」\n👤 角色: ${u.role}\n💰 余额: ¥${"%.2f".format(bal)}\n📊 累计充值: ¥${"%.2f".format(u.totalRecharge)}\n发「我的账号」随时查看，发「退出账号」解绑")
                         db.addQqLog(bot.appid, groupOpenid, userOpenid, "bind", "绑定账号 $username", System.currentTimeMillis() - t0)
                     } else {
