@@ -28,6 +28,7 @@ function skillLoad(){
     '<td style="white-space:nowrap">'+
      '<button class="btn-ghost btn-sm" onclick="skillRun('+s.id+')">执行</button> '+
      '<button class="btn-ghost btn-sm" onclick="skillForm('+s.id+')">编辑</button> '+
+     '<button class="btn-ghost btn-sm" onclick="skillToggle('+s.id+','+(s.enabled?'false':'true')+')">'+(s.enabled?'停用':'启用')+'</button> '+
      '<button class="btn-ghost btn-sm danger" onclick="skillDel('+s.id+')">删</button></td></tr>';
   }).join('');
   el.innerHTML='<div class="card" style="box-shadow:none"><div class="table-wrap"><table><thead><tr><th>名称</th><th>触发器</th><th>动作</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
@@ -70,6 +71,12 @@ function skillRun(id){
 function skillDel(id){
  if(!confirm('删除该技能？')) return;
  api('/api/skills/'+id,{method:'DELETE'}).then(function(r){ toast(r.msg,r.code===0); loaders.skills(); });
+}
+// ★ v48 技能启用/停用切换
+function skillToggle(id,enabled){
+ api('/api/skills',{method:'POST',body:{id:id, enabled:enabled}}).then(function(r){
+  toast(r.msg||'已更新', r.code===0); if(r.code===0) loaders.skills();
+ });
 }
 
 // ===== 工作流（可做任何事的自动化：多步骤序列，qtai-sj 可创建/修改/执行） =====
@@ -194,11 +201,24 @@ function mcpLoad(){
     '<td><code style="font-size:11px">'+esc(m.url)+'</code></td>'+
     '<td>'+(m.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
     '<td style="white-space:nowrap">'+
+     '<button class="btn-ghost btn-sm" onclick="mcpTools('+m.id+')">🔍工具</button> '+
      '<button class="btn-ghost btn-sm" onclick="mcpTest('+m.id+')">测试</button> '+
      '<button class="btn-ghost btn-sm" onclick="mcpForm('+m.id+')">编辑</button> '+
-     '<button class="btn-ghost btn-sm danger" onclick="mcpDel('+m.id+')">删</button></td></tr>';
+     '<button class="btn-ghost btn-sm danger" onclick="mcpDel('+m.id+')">删</button></td></tr>'+
+    '<tr id="mcpToolsRow'+m.id+'" style="display:none"><td colspan="5"><div style="padding:10px 14px;font-size:12px;white-space:pre-wrap;color:var(--muted);background:rgba(255,255,255,.03);border-radius:6px">加载中…</div></td></tr>';
   }).join('');
   el.innerHTML='<div class="card" style="box-shadow:none"><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>地址</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+ });
+}
+// ★ v48 展开 MCP 工具列表：点击「🔍工具」握手后显示可调用工具（对齐 Kai）
+function mcpTools(id){
+ var row=$('mcpToolsRow'+id);
+ if(!row) return;
+ if(row.style.display!=='none'){ row.style.display='none'; return; }
+ row.style.display='';
+ api('/api/mcp/'+id+'/tools').then(function(r){
+  var txt=(r&&r.data&&r.data.tools)||'❌ 获取工具失败';
+  row.innerHTML='<div style="padding:10px 14px;font-size:12px;white-space:pre-wrap;color:var(--muted);background:rgba(255,255,255,.03);border-radius:6px">'+esc(txt)+'</div>';
  });
 }
 function mcpForm(id){

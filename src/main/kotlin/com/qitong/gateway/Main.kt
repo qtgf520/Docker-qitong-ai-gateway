@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-47
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-48
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-47    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-48    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -184,7 +184,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-47"))
+                put("version", JsonPrimitive("3.18.22-48"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -868,7 +868,8 @@ fun Application.moduleWeb(database: Database) {
             val action = body["action"]?.jsonPrimitive?.content ?: "skill"
             val content = body["content"]?.jsonPrimitive?.content ?: ""
             val enabled = body["enabled"]?.jsonPrimitive?.content?.toBoolean() ?: true
-            if (name.isBlank() && trigger.isBlank()) { AdminApi.fail(call, "名称或触发词不能为空", 400); return@post }
+            // v48：技能启停切换时只传 id+enabled（name/trigger 可为空）
+            if (id == null && name.isBlank() && trigger.isBlank()) { AdminApi.fail(call, "名称或触发词不能为空", 400); return@post }
             val sid = database.saveSkill(id, name, trigger, matchType, action, content, enabled, if (u.role == "admin") 0 else u.id)
             AdminApi.ok(call, mapOf("id" to sid), "技能已保存")
         }
@@ -928,6 +929,23 @@ fun Application.moduleWeb(database: Database) {
                 okhttp3.OkHttpClient.Builder().connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS).readTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build().newCall(req).execute().use { it.isSuccessful }
             } catch (e: Exception) { false }
             AdminApi.ok(call, mapOf("ok" to ok), if (ok) "MCP 连接正常" else "MCP 连接失败")
+        }
+        // ★ v48 MCP 工具列表：握手后列出该服务器可调用的所有工具（对齐 Kai 展开）
+        get("/api/mcp/{id}/tools") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@get
+            val cfg = database.getMcpConfigs().firstOrNull { (it["id"] as? Number)?.toLong() == id }
+                ?: run { AdminApi.fail(call, "MCP不存在", 404); return@get }
+            val server = com.qitong.gateway.sandbox.McpClient.McpServer(
+                id,
+                (cfg["name"] as? String ?: ""),
+                (cfg["serverType"] as? String ?: "http"),
+                (cfg["url"] as? String ?: ""),
+                (cfg["authToken"] as? String ?: "")
+            )
+            val toolsText = com.qitong.gateway.sandbox.McpClient.listTools(server)
+            AdminApi.ok(call, mapOf("tools" to toolsText), "ok")
         }
 
         // ===== 工作流（可做任何事的自动化：触发条件 -> 动作序列；qtai-sj 可创建/修改/执行） =====
@@ -1501,7 +1519,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-47"))
+                put("version", JsonPrimitive("3.18.22-48"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2221,7 +2239,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-47"))
+                    put("version", JsonPrimitive("3.18.22-48"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

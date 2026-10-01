@@ -926,6 +926,23 @@ private fun providerToMap(p: Provider) = mapOf(
             }
         }
 
+        // ★ v48 内置聊天沙盒：qtai-sj 模式解析函数调用并执行（不配 QQ 机器人也能用全部功能）
+        if (effectiveModel.equals("qtai-sj", true) && lastResult != null) {
+            val isAdmin = (user?.role == "admin" || user?.role == "agent")
+            val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(lastResult!!)
+            if (calls.isNotEmpty()) {
+                val sb = StringBuilder()
+                for ((fn, args) in calls) {
+                    val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, database)
+                    sb.append("【$fn 执行结果】\n$r\n")
+                    skillResults.add(mapOf("code" to fn, "name" to fn, "result" to r))
+                    database.addOpLog(userId, user?.username ?: "user$userId", "沙盒调用", "[$fn] $args -> ${r.take(80)}", "")
+                }
+                // 把执行结果追加到回复里
+                lastResult = (lastResult ?: "") + "\n\n" + sb.toString().trim()
+            }
+        }
+
         return mapOf(
             "conversationId" to conversationId,
             "reply" to (lastResult ?: "所有上游模型均不可用，请检查服务商配置"),

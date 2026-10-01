@@ -1561,9 +1561,19 @@ class Database(private val dbPath: String) {
         }
     fun saveSkill(id: Long?, name: String, trigger: String, matchType: String, action: String, content: String, enabled: Boolean, ownerId: Long): Long {
         if (id != null) {
-            stmt("UPDATE skills SET name=?, trigger=?, match_type=?, action=?, content=?, enabled=? WHERE id=?",
-                name, trigger, matchType, action, content, if (enabled) 1 else 0, id)
-            return id
+            // v48：只传 enabled 时（启停切换）保留原 name/trigger/action/content
+            val cur = queryOne("SELECT COUNT(*) FROM skills WHERE id=?", id) ?: 0
+            if (cur > 0) {
+                val curRow = query("SELECT * FROM skills WHERE id=?", id).firstOrNull()
+                val finalName = name.ifBlank { (curRow?.get("name") as? String) ?: "" }
+                val finalTrigger = trigger.ifBlank { (curRow?.get("trigger") as? String) ?: "" }
+                val finalMatch = if (matchType.isBlank()) (curRow?.get("match_type") as? String ?: "exact") else matchType
+                val finalAction = action.ifBlank { (curRow?.get("action") as? String) ?: "skill" }
+                val finalContent = if (content.isBlank()) (curRow?.get("content") as? String) ?: "" else content
+                stmt("UPDATE skills SET name=?, trigger=?, match_type=?, action=?, content=?, enabled=? WHERE id=?",
+                    finalName, finalTrigger, finalMatch, finalAction, finalContent, if (enabled) 1 else 0, id)
+                return id
+            }
         }
         stmt("INSERT INTO skills (name,trigger,match_type,action,content,enabled,owner_id,created_at) VALUES (?,?,?,?,?,?,?,?)",
             name, trigger, matchType, action, content, if (enabled) 1 else 0, ownerId, System.currentTimeMillis())

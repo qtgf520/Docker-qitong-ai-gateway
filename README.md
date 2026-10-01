@@ -224,6 +224,11 @@ Copyright 2026 綦桐 (qtgf520)
 
 ## 📝 更新日志（CHANGELOG）
 
+### v3.18.22-48（2026-10-01）· MCP 工具展开 + 内置聊天沙盒 + 技能启停管理
+- 🔍 **MCP 工具展开**：MCP 列表每行新增「🔍工具」按钮，点击展开握手后该服务器可调用的全部工具清单（后端 /api/mcp/{id}/tools 调 tools/list）——对齐 Kai 展开所有工具
+- 🤖 **内置聊天沙盒**：内置聊天选 qtai-sj 也走沙盒（不配 QQ 机器人也能调用全部网关功能）——AdminApi.chat 解析函数调用并执行，结果追加回复 + 记日志
+- ⚙️ **技能启停管理**：技能列表新增「启用/停用」切换按钮；后端 saveSkill 支持只传 id+enabled 部分更新（保留原字段）
+
 ### v3.18.22-47（2026-10-01）· 对齐 Kai 9000 全部能力（MCP 真调用 + 自主心跳 + 联网搜索 + 记忆提升）
 - 🔌 **MCP 服务器真调用**：新增 `sandbox/McpClient.kt`（Streamable HTTP JSON-RPC），沙盒函数 `mcp_list`（列出服务器+工具）、`mcp_call`（调用工具）——对齐 Kai 的 MCP server 支持
 - 🔔 **自主心跳 Heartbeat**：新增 `sandbox/HeartbeatEngine.kt`，每 30 分钟后台自检（网关状态/活跃模型/磁盘压力/高价值记忆），发现问题推送到 QQ 群，没问题保持沉默——对齐 Kai 的 Autonomous heartbeat
