@@ -39,6 +39,8 @@ object SandboxEngine {
             .put(func("user_recharge", "给用户充值（修改，需管理员）", "admin", "modify", listOf(param("username", true, "网关用户名"), param("amount", true, "金额数字")), "充值结果/新余额"))
             .put(func("user_deduct", "给用户扣款（修改，需管理员，余额可扣成负数标记欠费）", "admin", "modify", listOf(param("username", true, "网关用户名"), param("amount", true, "金额数字")), "扣款结果/新余额"))
             .put(func("terminal_run", "沙盒执行终端命令（高危，需管理员确认）", "admin", "high", listOf(param("cmd", true, "待执行命令")), "终端输出"))
+            .put(func("terminal_create", "创建临时终端会话（管理员）", "admin", "modify", listOf(param("label", false, "终端名称，如 终端1")), "终端ID/名称"))
+            .put(func("terminal_list", "查看已创建的终端会话列表（管理员）", "admin", "read", emptyList(), "终端ID/名称列表"))
             .put(func("qq_bots_list", "获取全部 QQ 机器人配置（只读）", "admin", "read", emptyList(), "机器人 AppID/名称/启用状态/模型"))
             .put(func("qq_bots_groups", "获取全部 QQ 群配置（只读）", "admin", "read", emptyList(), "群名/群 openid/AI 开关"))
             .put(func("qq_points_rank", "查看积分排行（只读）", "user", "read", emptyList(), "积分排行"))
@@ -71,8 +73,12 @@ object SandboxEngine {
     /** 沙盒专属 System Prompt（选中 qtai-sj 注入） */
     val SYSTEM_PROMPT: String = """
 你是綦桐小助理，底层模型 qtai-sj，运行在綦桐AI网关QQ机器人渠道，内置沙盒调度系统，能够自主调度网关全部内置功能。
-核心铁律：绝对禁止编造任何接口返回、终端输出、数据结果。所有数据必须来自沙盒调用网关接口返回。无法获取信息如实告知，禁止虚构。
-
+核心铁律（违反必出事故，逐条记住）：
+1. 【绝对禁止假调用】绝对禁止输出「（已调用）」「(已调用)」「我调用了xx」「已执行xx」这类文字——你以为调用了但沙盒根本不会执行！你唯一能触达工具的方式是输出严格函数调用标签：[[沙盒:函数名(参数=值)]]，沙盒才会真执行。
+2. 【绝对禁止编造数据】禁止编造任何接口返回、终端输出、数据结果。所有数据必须来自沙盒调用网关接口返回。无法获取信息如实告知「❌ 该功能返回空/失败」，禁止虚构。
+3. 【结果来自工具】用户要查排行/余额/状态/终端，必须真的输出函数调用标签等沙盒执行返回真实结果，没有真实结果就不算完成任务。
+4. 【创建终端真执行】用户要求「创建终端/临时终端/终端1」→ 输出 [[沙盒:terminal_create(label=终端1)]]；要求跑命令 → [[沙盒:terminal_run(cmd=命令)]]；要求看终端 → [[沙盒:terminal_list()]]。
+5. 【查排行真执行】用户要求「查排行/排行」→ 输出 [[沙盒:qq_points_rank()]] 和/或 [[沙盒:speed_ranking()]] 让沙盒真查，把真实排行结果推送，绝不输出「已调用」空壳。
 ## 1. 身份与权限体系
 - QQ普通用户：仅支持闲聊、只读查询（查状态/排行/余额/流量），禁止任何修改类操作。
 - QQ管理员：拥有完整网关调度权限，可读写网关所有功能。
@@ -251,8 +257,8 @@ $KNOWLEDGE_JSON
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
-            "qq_bots_list", "qq_bots_groups", "mcp_list" -> "admin" to "read"
-            "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "mcp_call", "heartbeat_start", "heartbeat_stop" -> "admin" to "modify"
+            "qq_bots_list", "qq_bots_groups", "mcp_list", "terminal_list" -> "admin" to "read"
+            "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "heartbeat_start", "heartbeat_stop" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -309,6 +315,17 @@ $KNOWLEDGE_JSON
                             "🖥 执行: $cmd\n📤 输出:\n$out"
                         }
                     }
+                }
+                "terminal_create" -> {
+                    // ★ v62 创建临时终端会话（TerminalManager.create，label 可选）
+                    val label = args["label"]?.trim().orEmpty().ifBlank { "QQ终端-" + userId }
+                    val s = com.qitong.gateway.http.TerminalManager.create(label)
+                    "✅ 终端创建成功\n📛 名称: ${s.label}\n🆔 ID: ${s.id}\n\n发「terminal_run(cmd=命令)」在沙盒执行，或 Web 后台「终端」页查看/操作"
+                }
+                "terminal_list" -> {
+                    val sessions = com.qitong.gateway.http.TerminalManager.list()
+                    if (sessions.isEmpty()) "📋 暂无终端会话（可先 terminal_create 创建）"
+                    else "📋 终端会话（${sessions.size}个）：\n" + sessions.take(10).joinToString("\n") { "· ${it.label} | ${it.id}" }
                 }
                 "qq_bots_list" -> {
                     val bots = db.getQqBots()

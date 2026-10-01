@@ -855,7 +855,13 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
 
         // ★ v57 大模型对话前先推「正在思考」过程提示（不静默）
         smartSend("🤔 正在思考…", false)
-        val reply = askModel(bot, key, text, userOpenid, groupOpenid, smartSend)
+        // ★ v62 模型失败重试2次（避免「处理失败」——askModel 返回 null 时重试）
+        var reply: String? = null
+        for (attempt in 1..3) {
+            reply = askModel(bot, key, text, userOpenid, groupOpenid, smartSend)
+            if (reply != null) break
+            if (attempt < 3) Thread.sleep(1000L * attempt)
+        }
         if (!reply.isNullOrBlank()) {
             smartSend(reply, true)
             lastReplyTs[userOpenid] = System.currentTimeMillis()
