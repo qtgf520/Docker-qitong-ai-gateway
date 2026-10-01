@@ -1100,16 +1100,30 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     /** 清洗回复里的函数调用标签（[[沙盒:...]]、<dots_function_call>、<function_call>、<invoke>、<parameter>），保留文本部分 */
     private fun cleanFunctionTags(text: String): String {
         var out = text
+        // ★ v55 预处理：全角/竖线畸形统一半角（<｜invoke|> → <invoke>）
+        out = out.replace('＜', '<').replace('＞', '>').replace('｜', '|')
+        out = out.replace(Regex("<\\s*\\|\\s*(dots_function_call|function_call|invoke|calls)\\s*\\|?\\s*>"), "<$1>")
+        out = out.replace(Regex("<\\s*/\\s*(dots_function_call|function_call|invoke|calls)\\s*\\|?\\s*>"), "</$1>")
         // 移除 [[沙盒:...]] 调用
         out = out.replace(Regex("\\[\\[沙盒:[^\\]]*\\]\\]"), "（已调用）")
-        // 移除完整的 XML 函数调用标签对（含嵌套 parameter/param）
+        // 移除完整的 XML 函数调用标签对（含嵌套 parameter/param / JSON）
         out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>[\\s\\S]*?</(?:dots_function_call|function_call|invoke)>"), "")
+        // 移除 JSON 风格调用（<dots_function_call>:{"name":...} 或 {"name":...}）
+        out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>\\s*:?\\s*\\{[\\s\\S]*?\\}\\s*(?:</(?:dots_function_call|function_call|invoke)>)?"), "")
+        out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>\\s*:?\\s*\\{[\\s\\S]*?\\}"), "")
         // 移除可能残留的单标签（<dots_function_call name="xxx"> 或 </dots_function_call>）
         out = out.replace(Regex("</?(?:dots_function_call|function_call|invoke)\\s*[^>]*>"), "")
         // ★ v49 移除 parameter/param 子标签（<parameter name="query">值</parameter>）
         out = out.replace(Regex("<(?:parameter|param)\\s+name=\"[^\"]*\"[^>]*>[\\s\\S]*?</(?:parameter|param)>"), "")
         out = out.replace(Regex("</?(?:parameter|param)\\s*[^>]*>"), "")
         return out.trim()
+    }
+
+    /** 检测文本是否包含函数调用标签（v55：用于解析不到时判断是否需要清洗） */
+    private fun containsFunctionTags(text: String): Boolean {
+        val norm = text.replace('＜', '<').replace('＞', '>').replace('｜', '|')
+        return norm.contains("dots_function_call") || norm.contains("function_call") ||
+            norm.contains("<invoke") || norm.contains("[[沙盒:") || norm.contains("<parameter") || norm.contains("<param ")
     }
 
     private fun askModel(bot: QqBot, key: String, userText: String, userOpenid: String, groupOpenid: String = "", smartSend: (String, Boolean) -> Boolean = { _, _ -> false }): String? {
@@ -1228,8 +1242,18 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty()) break
                 }
                 if (loopGuard > 0 && content.isNotBlank()) {
-                    hist.add("assistant" to content)
-                    return content
+                    // ★ v55 返回前必清洗 XML 标签（防畸形格式泄漏给用户）
+                    val cleaned = cleanFunctionTags(content)
+                    hist.add("assistant" to cleaned)
+                    return cleaned
+                }
+                // ★ v55 非沙盒循环路径也清洗（如解析不到调用时的直接返回）
+                if (sandboxOn && containsFunctionTags(content)) {
+                    val cleaned = cleanFunctionTags(content)
+                    hist.add("user" to userText)
+                    hist.add("assistant" to cleaned)
+                    while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                    return cleaned
                 }
                 hist.add("user" to userText)
                 hist.add("assistant" to content)

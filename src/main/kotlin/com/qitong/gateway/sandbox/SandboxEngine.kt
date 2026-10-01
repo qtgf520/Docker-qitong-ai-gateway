@@ -109,9 +109,17 @@ $KNOWLEDGE_JSON
      *  3. <function_call name="函数名"> 或 <invoke name="函数名">
      *  4. <function_call>{"name":"函数名","arguments":{...}}</function_call>
      */
-    fun parseCalls(text: String): List<Pair<String, Map<String, String>>> {
+    fun parseCalls(rawText: String): List<Pair<String, Map<String, String>>> {
         val result = mutableListOf<Pair<String, Map<String, String>>>()
-        if (text.isBlank()) return result
+        if (rawText.isBlank()) return result
+        // ★ v55 预处理：全角字符/竖线畸形标签统一为半角，便于正则匹配
+        var text = rawText
+            .replace('＜', '<').replace('＞', '>')   // 全角尖括号
+            .replace('｜', '|')                        // 竖线
+            .replace('＂', '"').replace('“', '"').replace('”', '"')
+        // 畸形闭合：<|invoke|> → <invoke>（去掉竖线左右空格）
+        text = text.replace(Regex("<\\s*\\|\\s*(dots_function_call|function_call|invoke|calls)\\s*\\|?\\s*>"), "<$1>")
+        text = text.replace(Regex("<\\s*/\\s*(dots_function_call|function_call|invoke|calls)\\s*\\|?\\s*>"), "</$1>")
         // 格式1：[[沙盒:函数(参数)]]
         val regex1 = Regex("\\[\\[沙盒:([a-zA-Z_]+)\\((.*?)\\)\\]\\]", RegexOption.DOT_MATCHES_ALL)
         regex1.findAll(text).forEach { m ->
@@ -175,6 +183,21 @@ $KNOWLEDGE_JSON
                 else -> params.keys.first()
             }
             if (fn.isNotBlank() && result.none { it.first == fn }) result.add(fn to params)
+        }
+        // 格式7：JSON 内嵌函数调用 <dots_function_call>{"name":"fn","arguments":{...}}</dots_function_call>
+        // 或 <dots_function_call>:{"name":"fn"...}（带冒号）
+        val jsonFn = Regex("<(?:dots_function_call|function_call|invoke)[^>]*>\\s*:?\\s*\\{([\\s\\S]*?)\\}")
+        jsonFn.findAll(text).forEach { m ->
+            runCatching {
+                val jo = JSONObject("{" + m.groupValues[1] + "}")
+                val fnName = jo.optString("name").ifBlank { jo.optString("function_name") }
+                if (fnName.isNotBlank() && result.none { it.first == fnName }) {
+                    val args = mutableMapOf<String, String>()
+                    val a = jo.optJSONObject("arguments")
+                    if (a != null) a.keys().forEach { k -> args[k] = a.optString(k) }
+                    result.add(fnName to args)
+                }
+            }
         }
         return result.distinctBy { it.first to it.second }
     }
