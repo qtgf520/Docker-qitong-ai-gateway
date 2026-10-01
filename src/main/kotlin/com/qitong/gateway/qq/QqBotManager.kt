@@ -689,17 +689,20 @@ object QqBotManager {
             if (perm < 3) { send("⛔ 终端操控需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }
             val req = t.substringAfter(" ").trim()
             if (req.isBlank()) { send("⚠️ 语法：AI终端 你的需求（如：AI终端 查看磁盘占用）"); return }
-            send("🤖 AI 思考中…")
+            // ★ v58 修复静默：过程提示走 active 消息（不带 msg_id，不占被动回复名额）
+            smartSend("🤖 AI 思考中…", false)
             val cmd = com.qitong.gateway.http.AiTermHelper.genCommand(req)
-            if (cmd.isBlank()) { send("😵 AI 无法生成安全命令，换个说法试试"); return }
+            if (cmd.isBlank()) { smartSend("😵 无法识别该需求生成命令，请换个说法试试", true); return }
             val dangerous = listOf("rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", ":(){", "format", "fdisk")
-            if (dangerous.any { cmd.contains(it) }) { send("⛔ 生成命令涉及危险操作已拦截"); return }
+            if (dangerous.any { cmd.contains(it) }) { smartSend("⛔ 生成命令涉及危险操作已拦截", true); return }
             val sessions = com.qitong.gateway.http.TerminalManager.list()
             val sid = if (sessions.isNotEmpty()) sessions.first().id
                 else com.qitong.gateway.http.TerminalManager.create("QQ-AI终端-" + userOpenid.take(6)).id
             val (ok, out) = com.qitong.gateway.http.TerminalManager.exec(sid, cmd)
-            if (!ok) { send("⚠️ $out"); return }
-            send("🤖 AI 智能终端 [${sid}]\n💡 需求：$req\n$ cmd\n\n" + out.take(700))
+            if (!ok) { smartSend("⚠️ $out", true); return }
+            // ★ v58 结果也走 active（避免思考中占了被动名额后结果静默）；最终汇总才 isFinal=true
+            smartSend("💻 需求「$req」\n命令: $cmd\n\n" + out.take(700), false)
+            smartSend("✅ 终端执行完成 [${sid}]，结果已推送。", true)
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "ai_term", "[$req] -> $cmd", System.currentTimeMillis() - t0)
             return
         }

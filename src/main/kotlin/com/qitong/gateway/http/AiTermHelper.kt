@@ -15,8 +15,8 @@ import java.util.concurrent.TimeUnit
 object AiTermHelper {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
     private val jsonCt = "application/json; charset=utf-8".toMediaType()
@@ -74,16 +74,17 @@ object AiTermHelper {
     /** 关键词兜底命令生成（不依赖大模型，覆盖常用运维需求） */
     private fun keywordCommand(req: String): String {
         val r = req.lowercase()
-        // 扫 IP / 域名解析：ping / dig / nslookup
-        if (r.contains("扫") && (r.contains("ip") || r.contains("域名") || r.contains("解析"))) {
-            val host = Regex("[a-zA-Z0-9.-]+\\.(?:cn|com|net|org|top|xyz|io|cc|tv|vip|site|online|club|me|info|[a-z]{2})")
-                .find(req)?.value ?: return ""
-            return "getent hosts $host || dig +short $host || nslookup $host"
+        // 提取域名：支持「luolitu.vip」「jili5.cn」「www.xxx.com」等写法
+        fun extractHost(): String? {
+            val m = Regex("""[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}""").find(req) ?: return null
+            val raw = m.value.trim().trimEnd('.')
+            return raw.ifBlank { null }
         }
-        if (r.contains("ping") || (r.contains("ip") && r.contains("ping"))) {
-            val host = Regex("[a-zA-Z0-9.-]+\\.(?:cn|com|net|org|top|xyz|io|cc|tv|vip|site|online|club|me|info|[a-z]{2})")
-                .find(req)?.value
-            if (host != null) return "ping -c 4 $host"
+        val host = extractHost()
+        // 扫 IP / 域名解析 / 查域名：keywords 任意命中且带域名字符都出解析命令
+        if (host != null && (r.contains("扫") || r.contains("ip") || r.contains("域名") || r.contains("解析") ||
+                r.contains("查") || r.contains("看看") || r.contains("跑一下") || r.contains("ping"))) {
+            return "getent hosts $host || dig +short $host || nslookup $host"
         }
         if (r.contains("磁盘") || r.contains("空间") || r.contains("磁盘占用")) return "df -h"
         if (r.contains("内存") || r.contains("free")) return "free -h"
