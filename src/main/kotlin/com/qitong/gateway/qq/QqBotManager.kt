@@ -631,6 +631,9 @@ object QqBotManager {
                 }
             }
         }
+        // ★ v59 全功能自由调度：qtai-sj 模式下，技能/游戏/工作流/AI终端不再硬编码拦截，全部交给大模型自主调度（OpenClaw 式）
+        val qtaiFree = bot.aiModel.equals("qtai-sj", true)
+        if (!qtaiFree) {
         // 0.5) 网关技能指令（内置：查状态/排行/余额/充值/启停/切模型等，按 openid 权限控制）
         val skill = matchGatewaySkill(text)
         if (skill != null) {
@@ -653,11 +656,15 @@ object QqBotManager {
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill", "[$code] $text", System.currentTimeMillis() - t0)
             return
         }
+        } // ★ v59 关闭技能硬编码（qtai-sj 交给大模型）
         // 0.6) 文字游戏（每用户独立，无需权限门槛，娱乐）
+        if (!qtaiFree) {
         val game = handleGame(userOpenid, text)
         if (game != null) { send(game); db.addQqLog(bot.appid, groupOpenid, userOpenid, "game", text, System.currentTimeMillis() - t0); return }
+        }
 
         // 0.65) 工作流关键词触发（QQ 发匹配触发词 → 执行整个工作流）
+        if (!qtaiFree) {
         val wfHit = try {
             db.getWorkflows(0).filter { (it["enabled"] as? Boolean) == true && it["triggerType"] as? String == "keyword" }
                 .firstOrNull { w -> val trig = (w["triggerText"] as? String)?.trim() ?: ""; trig.isNotBlank() && t.contains(trig, true) }
@@ -678,12 +685,13 @@ object QqBotManager {
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "workflow", "触发 ${wfHit["name"]}", System.currentTimeMillis() - t0)
             return
         }
+        } // ★ v59 关闭工作流硬编码（qtai-sj 交给大模型）
 
         // 0.7) 沙盒 Linux 终端操控（需管理级权限，远程执行 shell 命令）
         // 0.7a) AI 智能终端：自然语言直接操作
-        if (t.startsWith("AI终端", true) || t.startsWith("智能终端", true) || t.startsWith("ai终端", true) ||
+        if (!qtaiFree && (t.startsWith("AI终端", true) || t.startsWith("智能终端", true) || t.startsWith("ai终端", true) ||
             t.contains("用终端", true) || t.contains("终端执行", true) || t.contains("终端跑", true) ||
-            t.contains("帮我终端", true) || t.contains("跑终端", true) || t.contains("终端命令", true)) {
+            t.contains("帮我终端", true) || t.contains("跑终端", true) || t.contains("终端命令", true))) {
             val qqUser = db.getQqUser(userOpenid)
             val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1
             if (perm < 3) { send("⛔ 终端操控需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }

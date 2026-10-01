@@ -257,7 +257,8 @@ $KNOWLEDGE_JSON
         val (needPerm, risk) = perm
         // 底层权限校验（不依赖模型）
         if (needPerm == "admin" && !isAdmin) return "⛔ 权限不足：该操作需要管理员身份"
-        if (risk == "high") return "⚠️ 高危操作（$fn）需要二次确认，沙盒已拦截。请确认后重试：确认执行 $fn"
+        // ★ v59 管理员 terminal_run（高危）直接执行，不再二次确认拦截（管理员已授权=确认）；其他高危仍拦截
+        if (risk == "high" && fn != "terminal_run") return "⚠️ 高危操作（$fn）需要二次确认，沙盒已拦截。请确认后重试：确认执行 $fn"
 
         return try {
             when (fn) {
@@ -290,11 +291,21 @@ $KNOWLEDGE_JSON
                 "user_recharge" -> SkillExecutor.execute(db, "900020", "${args["username"] ?: ""} ${args["amount"] ?: ""}", userId)
                 "terminal_run" -> {
                     // ★ v46：终端真执行（复用 TerminalManager.runOnce，危险命令拦截+超时+输出截断）
-                    val cmd = args["cmd"] ?: ""
-                    if (cmd.isBlank()) "⚠️ 语法：terminal_run(cmd=要执行的命令)"
+                    // ★ v59 增强：cmd 含中文（自然语言需求）时自动用 AiTermHelper 转命令，支持"扫一下 xxx"直接跑
+                    val raw = args["cmd"] ?: ""
+                    if (raw.isBlank()) "⚠️ 语法：terminal_run(cmd=要执行的命令 或 自然语言需求)"
                     else {
-                        val out = com.qitong.gateway.http.TerminalManager.runOnce(cmd)
-                        "🖥 执行: $cmd\n📤 输出:\n$out"
+                        val cmd = if (raw.any { it.code in 0x4E00..0x9FFF }) {
+                            val c = com.qitong.gateway.http.AiTermHelper.genCommand(raw)
+                            if (c.isBlank()) return@executeSuspend "😵 无法将「$raw」转换为安全命令，请直接提供 shell 命令"
+                            c
+                        } else raw
+                        val dangerous = listOf("rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", ":(){", "format", "fdisk", "mkfs.ext")
+                        if (dangerous.any { cmd.contains(it) }) "⛔ 危险命令已拦截：$cmd"
+                        else {
+                            val out = com.qitong.gateway.http.TerminalManager.runOnce(cmd)
+                            "🖥 执行: $cmd\n📤 输出:\n$out"
+                        }
                     }
                 }
                 "qq_bots_list" -> {
