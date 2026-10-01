@@ -230,7 +230,20 @@ $KNOWLEDGE_JSON
                 "active_model" -> SkillExecutor.execute(db, "600003", "", userId)
                 "traffic_total" -> SkillExecutor.execute(db, "600004", "", userId)
                 "token_total" -> SkillExecutor.execute(db, "600005", "", userId)
-                "user_balance" -> SkillExecutor.execute(db, "600009", args["username"] ?: "", userId)
+                "user_balance" -> {
+                    // ★ v54 无参自动用绑定账号：查自己余额（不报"用户不存在"）
+                    val uname = args["username"]?.trim().orEmpty()
+                    if (uname.isNotBlank()) {
+                        SkillExecutor.execute(db, "600009", uname, userId)
+                    } else if (userId > 0) {
+                        val u = db.getUserById(userId)
+                        if (u == null) "👤 绑定账号不存在"
+                        else {
+                            val bal = db.getUserBalance(u.id)
+                            "💰 ${u.username} 余额：¥${"%.2f".format(bal)}（累计充值 ¥${"%.2f".format(u.totalRecharge)}）"
+                        }
+                    } else "🔓 未绑定账号。发「绑定账号 用户名 密码」或网页生成绑定码后群里发「绑定码 xxxx」"
+                }
                 "user_recharge" -> SkillExecutor.execute(db, "900020", "${args["username"] ?: ""} ${args["amount"] ?: ""}", userId)
                 "terminal_run" -> {
                     // ★ v46：终端真执行（复用 TerminalManager.runOnce，危险命令拦截+超时+输出截断）

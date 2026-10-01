@@ -1185,18 +1185,19 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     val results = StringBuilder()
                     var isFirst = true
                     for ((fn, args) in calls) {
-                        // 💭 过程推送：执行前先告诉用户 AI 在干嘛
-                        smartSend("💭 qtai-sj 正在执行：${fn}(${args.entries.joinToString(",") { "${it.key}=${it.value}" }})", false)
+                        // 💭 过程推送：执行前告诉用户 AI 在干嘛（精简为一条）
+                        val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
+                        smartSend("💭 qtai-sj 正在调用：${fn}(${argTxt}) …", false)
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
                         results.append(if (isFirst) "" else "\n").append("【$fn 执行结果】\n$r")
                         isFirst = false
-                        // 📤 执行结果即时推送（用户实时看到每一步结果）
-                        smartSend("✅ ${fn} 执行完成：\n${r.take(500)}", false)
+                        // 📤 执行结果推送（结果简洁展示，不再重复"执行完成"）
+                        smartSend("✅ ${fn}：${r.take(500)}", false)
                         db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args -> ${r.take(80)}", 0)
                     }
                     // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
                     val cleanText = cleanFunctionTags(content)
-                    val newPrompt = cleanText + "\n\n【沙盒执行结果】\n" + results + "\n\n请根据以上真实结果继续完成任务，如果需要更多操作继续调用函数，否则给出最终回复。"
+                    val newPrompt = cleanText + "\n\n【沙盒执行结果（已展示给用户）】\n" + results + "\n\n这些结果已经实时推送给用户了。请判断：\n- 如果需要更多操作（用户还没得到完整答案）→ 继续调用函数\n- 如果已经完成 → 直接简短收尾，**不要复述刚才的结果/余额/数字**（用户已看到），最多一句话确认完成，然后结束。"
                     hist.add("assistant" to cleanText)
                     // 再调一次模型，看它是否继续调用函数
                     val nextBody = JSONObject()
