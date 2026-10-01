@@ -37,6 +37,7 @@ object SandboxEngine {
             .put(func("token_total", "查看总 Token 消耗（只读）", "admin", "read", emptyList(), "总 token 数"))
             .put(func("user_balance", "查询用户余额（只读）", "user", "read", listOf(param("username", false, "网关用户名，空=查自己")), "余额/累计充值"))
             .put(func("user_recharge", "给用户充值（修改，需管理员）", "admin", "modify", listOf(param("username", true, "网关用户名"), param("amount", true, "金额数字")), "充值结果/新余额"))
+            .put(func("user_deduct", "给用户扣款（修改，需管理员，余额可扣成负数标记欠费）", "admin", "modify", listOf(param("username", true, "网关用户名"), param("amount", true, "金额数字")), "扣款结果/新余额"))
             .put(func("terminal_run", "沙盒执行终端命令（高危，需管理员确认）", "admin", "high", listOf(param("cmd", true, "待执行命令")), "终端输出"))
             .put(func("qq_bots_list", "获取全部 QQ 机器人配置（只读）", "admin", "read", emptyList(), "机器人 AppID/名称/启用状态/模型"))
             .put(func("qq_bots_groups", "获取全部 QQ 群配置（只读）", "admin", "read", emptyList(), "群名/群 openid/AI 开关"))
@@ -251,7 +252,7 @@ $KNOWLEDGE_JSON
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
             "qq_bots_list", "qq_bots_groups", "mcp_list" -> "admin" to "read"
-            "model_enable", "model_disable", "user_recharge", "terminal_run", "mcp_call", "heartbeat_start", "heartbeat_stop" -> "admin" to "modify"
+            "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "mcp_call", "heartbeat_start", "heartbeat_stop" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -289,6 +290,7 @@ $KNOWLEDGE_JSON
                     } else "🔓 未绑定账号。发「绑定账号 用户名 密码」或网页生成绑定码后群里发「绑定码 xxxx」"
                 }
                 "user_recharge" -> SkillExecutor.execute(db, "900020", "${args["username"] ?: ""} ${args["amount"] ?: ""}", userId)
+                "user_deduct" -> SkillExecutor.execute(db, "900021", "${args["username"] ?: ""} ${args["amount"] ?: ""}", userId)
                 "terminal_run" -> {
                     // ★ v46：终端真执行（复用 TerminalManager.runOnce，危险命令拦截+超时+输出截断）
                     // ★ v59 增强：cmd 含中文（自然语言需求）时自动用 AiTermHelper 转命令，支持"扫一下 xxx"直接跑

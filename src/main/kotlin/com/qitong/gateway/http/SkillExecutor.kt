@@ -207,6 +207,23 @@ object SkillExecutor {
                     }
                 }
             }
+            "900021" -> {
+                // ★ v61 扣款：给网关用户扣款（语法：扣款 用户名 金额）
+                val parts = param.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                if (parts.size < 2) "⚠️ 语法：扣款 用户名 金额（如：扣款 qtgf520 10）"
+                else {
+                    val target = database.getUserByUsername(parts[0])
+                    if (target == null) "❌ 用户 ${parts[0]} 不存在"
+                    else {
+                        val amount = parts[1].toDoubleOrNull()
+                        if (amount == null || amount <= 0) "⚠️ 金额无效：${parts[1]}"
+                        else if (database.deductBalanceAdmin(target.id, amount)) {
+                            val bal = database.getUserBalance(target.id)
+                            "✅ 已给 ${target.username} 扣款 ¥${"%.2f".format(amount)}，当前余额 ¥${"%.2f".format(bal)}"
+                        } else "❌ 扣款失败"
+                    }
+                }
+            }
 
             else -> "❌ 未知技能编码: $code"
         }
