@@ -49,6 +49,9 @@ object SandboxEngine {
             .put(func("heartbeat_start", "启动自主心跳（修改）", "admin", "modify", listOf(param("minutes", false, "间隔分钟，默认30")), "启动结果"))
             .put(func("heartbeat_stop", "停止自主心跳（修改）", "admin", "modify", emptyList(), "停止结果"))
             .put(func("heartbeat_check", "立即执行一次心跳自检（只读）", "user", "read", emptyList(), "自检结果"))
+            .put(func("account_info", "查看当前绑定账号信息（只读）", "user", "read", emptyList(), "账号/角色/余额/绑定模型"))
+            .put(func("account_bind", "远程登录绑定网关账号（修改）", "user", "modify", listOf(param("username", true, "网关用户名"), param("password", true, "账号密码")), "绑定结果"))
+            .put(func("account_unbind", "退出当前绑定账号（修改）", "user", "modify", emptyList(), "解绑结果"))
             .toString()
     }
 
@@ -323,6 +326,31 @@ $KNOWLEDGE_JSON
                     com.qitong.gateway.sandbox.HeartbeatEngine.stop()
                     "✅ 自主心跳已停止"
                 }
+                "account_info" -> {
+                    // 查看当前绑定账号信息（沙盒用 userId 推断，若 0 说明未绑定）
+                    if (userId <= 0) "🔓 当前未绑定网关账号\n✅ 发「绑定账号 用户名 密码」远程登录绑定，绑定后获得该账号全部权限与数据"
+                    else {
+                        val u = db.getUserById(userId)
+                        if (u == null) "🔓 绑定账号不存在，请重新绑定"
+                        else {
+                            val bal = db.getUserBalance(u.id)
+                            "👤 当前绑定账号：${u.username}\n💎 角色: ${u.role}\n💰 余额: ¥${"%.2f".format(bal)}\n💳 累计充值: ¥${"%.2f".format(u.totalRecharge)}"
+                        }
+                    }
+                }
+                "account_bind" -> {
+                    val username = args["username"] ?: ""
+                    val password = args["password"] ?: ""
+                    if (username.isBlank() || password.isBlank()) "⚠️ 语法：account_bind(username=用户名, password=密码)"
+                    else {
+                        val r = com.qitong.gateway.auth.AuthManager.login(db, username, password)
+                        if (r.isSuccess) {
+                            val u = db.getUserByUsername(username.trim())
+                            "✅ 绑定成功！已登录账号「${u?.username}」（角色 ${u?.role}），可查余额/用量/分销，发「我的账号」查看"
+                        } else "❌ 登录失败：${r.exceptionOrNull()?.message ?: "用户名或密码错误"}"
+                    }
+                }
+                "account_unbind" -> "✅ 已在 QQ 私聊发送「退出账号」解绑"
                 else -> "❌ 未知沙盒函数: $fn（发「沙盒帮助」查看可用能力）"
             }
         } catch (e: Exception) {

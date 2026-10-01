@@ -511,6 +511,46 @@ object QqBotManager {
                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "command", "修改群备注 $newName", System.currentTimeMillis() - t0)
                     return
                 }
+                "bind" -> {
+                    // ★ v50 私发账号密码绑定网关账号（建议私聊；群内也支持但提示私下发）
+                    val parts = builtin.second.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                    if (parts.size < 2) { send("⚠️ 请私聊发送：绑定账号 用户名 密码\n绑定后自动获得该账号权限，可查余额/用量/分销"); return }
+                    val username = parts[0]
+                    val password = parts.drop(1).joinToString(" ")
+                    val result = com.qitong.gateway.auth.AuthManager.login(db, username, password)
+                    if (result.isSuccess) {
+                        val u = db.getUserByUsername(username.trim()) ?: run { send("❌ 账号校验失败"); return }
+                        db.setQqUserBound(userOpenid, u.id)
+                        // 绑定后同步为管理级权限（管理员账号）或保留原权限
+                        if (u.role == "admin" || u.role == "agent") db.setQqUserPerm(userOpenid, 3, "")
+                        val bal = db.getUserBalance(u.id)
+                        send("✅ 绑定成功！已登录账号「${u.username}」\n👤 角色: ${u.role}\n💰 余额: ¥${"%.2f".format(bal)}\n📊 累计充值: ¥${"%.2f".format(u.totalRecharge)}\n发「我的账号」随时查看，发「退出账号」解绑")
+                        db.addQqLog(bot.appid, groupOpenid, userOpenid, "bind", "绑定账号 $username", System.currentTimeMillis() - t0)
+                    } else {
+                        send("❌ 登录失败：${result.exceptionOrNull()?.message ?: "用户名或密码错误"}")
+                        db.addQqLog(bot.appid, groupOpenid, userOpenid, "bind", "绑定失败 $username", System.currentTimeMillis() - t0)
+                    }
+                    return
+                }
+                "my_account" -> {
+                    val bound = db.getQqBoundUser(userOpenid)
+                    if (bound == null) {
+                        send("🔓 当前未绑定网关账号\n私聊发：绑定账号 用户名 密码 即可登录绑定（获得该账号全部权限，可查余额/用量/分销）")
+                    } else {
+                        val bal = db.getUserBalance(bound.id)
+                        val boundModels = bound.bindModels
+                        send("👤 当前绑定账号：${bound.username}\n💎 角色: ${bound.role}\n💰 余额: ¥${"%.2f".format(bal)}\n💳 累计充值: ¥${"%.2f".format(bound.totalRecharge)}\n📦 绑定模型: ${if (boundModels.isNullOrEmpty()) "全部" else boundModels.joinToString(",")}\n\n发「退出账号」解绑")
+                    }
+                    return
+                }
+                "unbind" -> {
+                    val bound = db.getQqBoundUser(userOpenid)
+                    if (bound == null) { send("🔓 当前未绑定账号"); return }
+                    db.clearQqUserBound(userOpenid)
+                    send("✅ 已退出账号「${bound.username}」，解除绑定成功")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "bind", "解绑账号 ${bound.username}", System.currentTimeMillis() - t0)
+                    return
+                }
             }
         }
         // 0.5) 网关技能指令（内置：查状态/排行/余额/充值/启停/切模型等，按 openid 权限控制）
@@ -739,6 +779,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (t.equals("签到", true) || t.equals("打卡", true)) return "sign" to t
         if (t.equals("我的积分", true) || t.equals("积分", true)) return "points" to t
         if (t.startsWith("改我名字", true) || t.startsWith("修改备注", true) || t.startsWith("改备注", true)) return "rename" to t.substringAfter(" ").trim()
+        // ★ v50 QQ 远程登录绑定：私发账号密码绑定网关账号，绑定后获得该账号权限/可查
+        if (t.startsWith("绑定账号", true) || t.startsWith("绑定", true) && t.length > 3) return "bind" to t.substringAfter(" ").trim()
+        if (t.equals("我的账号", true) || t.equals("账号信息", true)) return "my_account" to t
+        if (t.equals("退出账号", true) || t.equals("解绑", true) || t.equals("退出登录", true)) return "unbind" to t
         if (t.equals("切换卡片", true) || t.equals("卡片模式", true)) return "card_on" to t
         if (t.equals("切换文本", true) || t.equals("文本模式", true) || t.equals("切换文字", true)) return "card_off" to t
         // 群里改当前群备注/群名（管理员3+）
@@ -993,7 +1037,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val userPersona = db.getQqUser(userOpenid)?.get("persona") as? String?
         // ★ qtai-sj 沙盒模式：选中 qtai-sj 模型自动注入沙盒专属系统提示词（含知识库）
         val sandboxOn = bot.aiModel.equals("qtai-sj", true)
-        val isAdmin = ((db.getQqUserByGroup(userOpenid, groupOpenid)?.get("permLevel") as? Number)?.toInt() ?: 1) >= 3
+        // ★ v50 绑定账号身份：QQ 用户绑定网关账号后，沙盒调用自动用该账号 userId（权限/余额/用量对齐）
+        val boundUser = db.getQqBoundUser(userOpenid)
+        val effUserId = boundUser?.id ?: 0L
+        val effIsAdmin = (boundUser?.role == "admin" || boundUser?.role == "agent") ||
+            ((db.getQqUserByGroup(userOpenid, groupOpenid)?.get("permLevel") as? Number)?.toInt() ?: 1) >= 3
+        val isAdmin = effIsAdmin
         val baseSys = when {
             sandboxOn -> com.qitong.gateway.sandbox.SandboxEngine.SYSTEM_PROMPT  // 沙盒完整版（含知识库）
             !groupPrompt.isNullOrBlank() -> groupPrompt  // 群专属提示词最高优先（非沙盒时）
@@ -1054,7 +1103,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     for ((fn, args) in calls) {
                         // 💭 过程推送：执行前先告诉用户 AI 在干嘛
                         smartSend("💭 qtai-sj 正在执行：${fn}(${args.entries.joinToString(",") { "${it.key}=${it.value}" }})", false)
-                        val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, 0L, db)
+                        val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
                         results.append(if (isFirst) "" else "\n").append("【$fn 执行结果】\n$r")
                         isFirst = false
                         // 📤 执行结果即时推送（用户实时看到每一步结果）

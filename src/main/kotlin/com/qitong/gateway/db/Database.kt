@@ -417,6 +417,8 @@ class Database(private val dbPath: String) {
             // 旧库迁移：补权限列（已存在则忽略）
             runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN perm_level INTEGER NOT NULL DEFAULT 1") }
             runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN perm_flags TEXT NOT NULL DEFAULT ''") }
+            // v50：QQ 用户绑定网关账号（私发账号密码远程绑定，bound_user_id=users.id，0=未绑定）
+            runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN bound_user_id INTEGER NOT NULL DEFAULT 0") }
             // 群隔离：每个用户记录来自哪个群（好友私聊=空），同一 openid 在不同群独立管理
             runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN group_openid TEXT NOT NULL DEFAULT ''") }
             runCatching { st.executeUpdate("ALTER TABLE qq_user_bindings ADD COLUMN qq_nick TEXT NOT NULL DEFAULT ''") }
@@ -1901,9 +1903,34 @@ class Database(private val dbPath: String) {
                 "totalMessages" to ((row["total_messages"] as? Number)?.toLong() ?: 0),
                 "lastActiveAt" to ((row["last_active_at"] as? Number)?.toLong() ?: 0),
                 "permLevel" to ((row["perm_level"] as? Number)?.toInt() ?: 1),
-                "permFlags" to (row["perm_flags"] as? String ?: "")
+                "permFlags" to (row["perm_flags"] as? String ?: ""),
+                "boundUserId" to ((row["bound_user_id"] as? Number)?.toLong() ?: 0)
             )
         }
+
+    // ============ QQ 绑定网关账号（v50：私发账号密码远程登录绑定） ============
+
+    /** 绑定 QQ openid 到网关账号 users.id */
+    fun setQqUserBound(openid: String, userId: Long) {
+        val exists = queryOne("SELECT COUNT(*) FROM qq_user_bindings WHERE qq_openid=?", openid) ?: 0
+        if (exists == 0L) {
+            stmt("INSERT INTO qq_user_bindings (qq_openid,bound_user_id,created_at) VALUES (?,?,?)",
+                openid, userId, System.currentTimeMillis())
+        } else {
+            stmt("UPDATE qq_user_bindings SET bound_user_id=? WHERE qq_openid=?", userId, openid)
+        }
+    }
+
+    /** 获取 QQ openid 绑定的网关账号 User（未绑定返回 null） */
+    fun getQqBoundUser(openid: String): com.qitong.gateway.model.User? {
+        val boundId = queryOne("SELECT bound_user_id FROM qq_user_bindings WHERE qq_openid=?", openid)?.toLong() ?: 0
+        return if (boundId > 0) getUserById(boundId) else null
+    }
+
+    /** 解绑 QQ openid 的网关账号 */
+    fun clearQqUserBound(openid: String) {
+        stmt("UPDATE qq_user_bindings SET bound_user_id=0 WHERE qq_openid=?", openid)
+    }
 
     /** 设置 QQ 用户权限（level: 0=禁止 1=查询 2=操作 3=管理 4=全部；flags: 细分权限逗号分隔） */
     fun setQqUserPerm(openid: String, level: Int, flags: String) {

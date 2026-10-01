@@ -224,6 +224,12 @@ Copyright 2026 綦桐 (qtgf520)
 
 ## 📝 更新日志（CHANGELOG）
 
+### v3.18.22-50（2026-10-01）· QQ 远程登录绑定网关账号（私发账号密码即绑定，不退出一直有效）
+- 🔐 **QQ 远程登录绑定**：QQ 用户私聊发「绑定账号 用户名 密码」→ BCrypt 验证 → 绑定网关账号，自动获得该账号权限并同步管理级（管理员/代理）
+- 👤 **我的账号**：发「我的账号」查绑定账号（角色/余额/累计充值/绑定模型）；「退出账号/解绑」解除绑定
+- 🤖 **沙盒账号函数**：qtai-sj 新增 `account_info`/`account_bind`/`account_unbind`，绑定后沙盒调用自动用绑定账号 userId（权限/余额/用量对齐该账号）
+- 💾 `qq_user_bindings` 加 `bound_user_id` 列（迁移自动），绑定持久化不退出一直有效
+
 ### v3.18.22-49（2026-10-01）· 心跳可控（设置页+沙盒）+ XML 函数调用解析修复
 - 🔔 **心跳设置与控制**：网关设置页新增「启用自主心跳」开关 + 间隔分钟配置（保存生效）；沙盒新增 `heartbeat_status`/`heartbeat_start`/`heartbeat_stop`/`heartbeat_check` —— qtai-sj / QQ 机器人可直接控制心跳
 - 🐛 **XML 函数调用解析修复**：兼容 `<dots_function_call><parameter name="query">值</parameter>` 格式（外层无 name 时从参数名推断函数：query→web_search）；清洗函数同时清掉 parameter/param 标签，不再把原始 XML 发给用户
