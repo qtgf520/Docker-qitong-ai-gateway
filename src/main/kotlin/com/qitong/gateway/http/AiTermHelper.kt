@@ -38,6 +38,9 @@ object AiTermHelper {
     /** 生成命令；失败或危险返回空字符串 */
     fun genCommand(req: String): String {
         if (req.isBlank()) return ""
+        // ★ v57 先用关键词兜底（快且稳：扫IP/ping/dig 等常用需求不依赖大模型）
+        val fallback = keywordCommand(req)
+        if (fallback.isNotBlank()) return fallback
         return try {
             val msgs = JSONArray()
                 .put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
@@ -54,7 +57,7 @@ object AiTermHelper {
                 .post(body.toRequestBody(jsonCt))
                 .build()
             client.newCall(httpReq).execute().use { resp ->
-                if (!resp.isSuccessful) return ""
+                if (!resp.isSuccessful) return fallback
                 val obj = JSONObject(resp.body?.string().orEmpty())
                 val content = obj.optJSONArray("choices")
                     ?.optJSONObject(0)
@@ -62,9 +65,33 @@ object AiTermHelper {
                     ?.optString("content")?.trim().orEmpty()
                 // 清理 markdown 代码块包裹
                 var cmd = content.replace("""```bash""", "").replace("""```sh""", "").replace("```", "").trim()
-                if (cmd.contains("DENY") || cmd.contains("拒绝")) return ""
+                if (cmd.contains("DENY") || cmd.contains("拒绝")) return fallback
                 cmd.take(300)
             }
-        } catch (e: Exception) { "" }
+        } catch (e: Exception) { fallback }
+    }
+
+    /** 关键词兜底命令生成（不依赖大模型，覆盖常用运维需求） */
+    private fun keywordCommand(req: String): String {
+        val r = req.lowercase()
+        // 扫 IP / 域名解析：ping / dig / nslookup
+        if (r.contains("扫") && (r.contains("ip") || r.contains("域名") || r.contains("解析"))) {
+            val host = Regex("[a-zA-Z0-9.-]+\\.(?:cn|com|net|org|top|xyz|io|cc|tv|vip|site|online|club|me|info|[a-z]{2})")
+                .find(req)?.value ?: return ""
+            return "getent hosts $host || dig +short $host || nslookup $host"
+        }
+        if (r.contains("ping") || (r.contains("ip") && r.contains("ping"))) {
+            val host = Regex("[a-zA-Z0-9.-]+\\.(?:cn|com|net|org|top|xyz|io|cc|tv|vip|site|online|club|me|info|[a-z]{2})")
+                .find(req)?.value
+            if (host != null) return "ping -c 4 $host"
+        }
+        if (r.contains("磁盘") || r.contains("空间") || r.contains("磁盘占用")) return "df -h"
+        if (r.contains("内存") || r.contains("free")) return "free -h"
+        if (r.contains("nginx")) return "ps aux | grep nginx | grep -v grep || systemctl status nginx"
+        if (r.contains("端口") || r.contains("监听")) return "ss -tlnp || netstat -tlnp"
+        if (r.contains("进程") || r.contains("ps")) return "ps aux --sort=-%cpu | head -20"
+        if (r.contains("当前目录") || r.contains("文件大小")) return "ls -lhS"
+        if (r.contains("时间") && r.contains("date")) return "date"
+        return ""
     }
 }

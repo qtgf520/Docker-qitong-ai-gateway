@@ -681,7 +681,9 @@ object QqBotManager {
 
         // 0.7) 沙盒 Linux 终端操控（需管理级权限，远程执行 shell 命令）
         // 0.7a) AI 智能终端：自然语言直接操作
-        if (t.startsWith("AI终端", true) || t.startsWith("智能终端", true) || t.startsWith("ai终端", true)) {
+        if (t.startsWith("AI终端", true) || t.startsWith("智能终端", true) || t.startsWith("ai终端", true) ||
+            t.contains("用终端", true) || t.contains("终端执行", true) || t.contains("终端跑", true) ||
+            t.contains("帮我终端", true) || t.contains("跑终端", true) || t.contains("终端命令", true)) {
             val qqUser = db.getQqUser(userOpenid)
             val perm = (qqUser?.get("permLevel") as? Number)?.toInt() ?: 1
             if (perm < 3) { send("⛔ 终端操控需要管理级权限(3级)，您当前为 ${permLabel(perm)}"); return }
@@ -840,11 +842,17 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (cfg != null && !(cfg["aiEnabled"] as Boolean)) return
         if (onCooldown(userOpenid, 3)) return
 
+        // ★ v57 大模型对话前先推「正在思考」过程提示（不静默）
+        smartSend("🤔 正在思考…", false)
         val reply = askModel(bot, key, text, userOpenid, groupOpenid, smartSend)
         if (!reply.isNullOrBlank()) {
             smartSend(reply, true)
             lastReplyTs[userOpenid] = System.currentTimeMillis()
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "ai", text, System.currentTimeMillis() - t0)
+        } else {
+            // ★ v57 兜底：模型无回复也给提示，绝不静默
+            smartSend("⚠️ 抱歉，我这边处理失败了，请再试一次或换个说法。", true)
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "error", "模型无回复 → 兜底提示", System.currentTimeMillis() - t0)
         }
     }
 
