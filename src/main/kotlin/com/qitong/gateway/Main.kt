@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-51
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-52
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-51    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-52    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -184,7 +184,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-51"))
+                put("version", JsonPrimitive("3.18.22-52"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1467,6 +1467,15 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "更新个人中心", "邮箱/昵称", call.request.local.remoteHost)
             AdminApi.ok(call, null, "个人资料已更新")
         }
+        // ★ v52 生成 QQ 绑定码（网页端生成，群里发「绑定码 xxxx」绑定，无需私聊）
+        post("/api/me/bind-code") {
+            val u = call.requireAuth(database) ?: return@post
+            // 6 位随机码 + 5 分钟过期
+            val code = (100000 + (Math.random() * 900000).toInt()).toString()
+            val expireAt = System.currentTimeMillis() + 5 * 60 * 1000L
+            database.setConfig("qq_bind_code_$code", "${u.id}|$expireAt")
+            AdminApi.ok(call, mapOf("code" to code, "expireSeconds" to 300), "绑定码已生成（5分钟内有效，群里发「绑定码 $code」完成绑定）")
+        }
         // 限流配置：读取（QPS/每日配额，0=不限）
         get("/api/me/rate") {
             val u = call.requireAuth(database) ?: return@get
@@ -1519,7 +1528,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-51"))
+                put("version", JsonPrimitive("3.18.22-52"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2239,7 +2248,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-51"))
+                    put("version", JsonPrimitive("3.18.22-52"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

@@ -580,6 +580,36 @@ object QqBotManager {
                     }
                     return
                 }
+                "bind_code" -> {
+                    // ★ v52 绑定码登录：网页生成 6 位码，群里发「绑定码 xxxx」即绑定（无需私聊/加好友）
+                    val code = builtin.second.trim()
+                    if (code.isBlank() || !code.matches(Regex("\\d{6}"))) {
+                        send("⚠️ 绑定码是 6 位数字。\n请先在【网页后台→个人中心→QQ绑定码】点「生成绑定码」，再把 6 位码发到这里。")
+                        return
+                    }
+                    val cfg = db.getConfig("qq_bind_code_$code", "")
+                    if (cfg.isBlank()) {
+                        send("❌ 绑定码无效或已使用。请重新在网页个人中心生成。")
+                        return
+                    }
+                    val parts = cfg.split("|")
+                    val userId = parts.getOrNull(0)?.toLongOrNull() ?: 0
+                    val expireAt = parts.getOrNull(1)?.toLongOrNull() ?: 0
+                    if (userId <= 0 || System.currentTimeMillis() > expireAt) {
+                        db.setConfig("qq_bind_code_$code", "") // 清理过期码
+                        send("❌ 绑定码已过期。请重新在网页个人中心生成。")
+                        return
+                    }
+                    val u = db.getUserById(userId)
+                    if (u == null) { send("❌ 绑定账号不存在"); return }
+                    db.setQqUserBound(userOpenid, u.id)
+                    if (u.role == "admin" || u.role == "agent") db.setQqUserPerm(userOpenid, 3, "")
+                    db.setConfig("qq_bind_code_$code", "") // 一次性使用
+                    val bal = db.getUserBalance(u.id)
+                    send("✅ 绑定成功！已登录账号「${u.username}」\n👤 角色: ${u.role}\n💰 余额: ¥${"%.2f".format(bal)}\n发「我的账号」随时查看，发「退出账号」解绑")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "bind", "绑定码登录 ${u.username}", System.currentTimeMillis() - t0)
+                    return
+                }
                 "my_account" -> {
                     val bound = db.getQqBoundUser(userOpenid)
                     if (bound == null) {
@@ -829,6 +859,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (t.startsWith("改我名字", true) || t.startsWith("修改备注", true) || t.startsWith("改备注", true)) return "rename" to t.substringAfter(" ").trim()
         // ★ v50 QQ 远程登录绑定：私发账号密码绑定网关账号，绑定后获得该账号权限/可查
         if (t.startsWith("绑定账号", true) || t.startsWith("绑定", true) && t.length > 3) return "bind" to t.substringAfter(" ").trim()
+        // ★ v52 绑定码登录：网页个人中心生成 6 位码，群里发「绑定码 xxxx」即可绑定（无需私聊）
+        if (t.startsWith("绑定码", true)) return "bind_code" to t.substringAfter(" ").trim()
         if (t.equals("我的账号", true) || t.equals("账号信息", true)) return "my_account" to t
         if (t.equals("退出账号", true) || t.equals("解绑", true) || t.equals("退出登录", true)) return "unbind" to t
         if (t.equals("切换卡片", true) || t.equals("卡片模式", true)) return "card_on" to t

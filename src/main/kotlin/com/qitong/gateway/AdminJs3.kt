@@ -236,8 +236,11 @@ loaders.profile = function(){
     '<div class="form-row"><label>昵称</label><input id="pfName" class="input" value="' + esc(p.displayName || '') + '"></div>',
     '<div class="form-row"><label>绑定邮箱（用于提醒通知）</label><input id="pfEmail" class="input" value="' + esc(p.email || '') + '" placeholder="example@qq.com"></div>',
     '<div class="form-row"><label><input type="checkbox" id="pfNotify"' + (p.notifyEnabled ? ' checked' : '') + '>开启邮件提醒</label><small style="color:var(--muted);display:block;margin-top:4px">余额变动 / 工单回复等发送邮件通知</small></div>',
-    '<button class="btn" onclick="saveProfile()">保存个人资料</button>',
-   '</div>',
+'<button class="btn" onclick="saveProfile()">保存个人资料</button>',
+    '</div>',
+    '<div class="card"><h3>QQ 绑定码 <span style="font-size:12px;color:var(--muted)">在 QQ 群里发绑定码即可登录绑定，无需私聊</span></h3>' +
+     '<div class="form-row"><label>生成一次性绑定码（5分钟内有效）</label><button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="genBindCode()">生成绑定码</button></div>' +
+     '<div id="bindCodeBox" style="color:var(--muted);font-size:12px">点击「生成绑定码」→ 得到 6 位码 → 在 QQ 群里发「绑定码 123456」→ 自动绑定到当前账号</div></div>',
    '<div class="grid grid-2">',
     '<div class="card"><h3>账户</h3><div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div><div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div></div>',
     '<div class="card"><h3>邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag"></span></div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
@@ -261,7 +264,22 @@ loaders.profile = function(){
   });
  });
  };
- window.loadBalanceLogs = function(){
+ window.genBindCode = function(){
+ api('/api/me/bind-code',{method:'POST'}).then(function(r){
+  var el=$('bindCodeBox'); if(!el) return;
+  if(r.code===0){
+   var code=r.data&&r.data.code;
+   el.innerHTML = '<div style="padding:10px;background:var(--inset);border-radius:6px;text-align:center">' +
+    '<div style="font-size:11px;color:var(--muted)">你的绑定码（5分钟内有效，仅用一次）</div>' +
+    '<div style="font-size:28px;font-weight:800;letter-spacing:6px;color:var(--cyan);font-family:monospace;padding:8px 0">'+esc(code)+'</div>' +
+    '<div style="font-size:12px;color:var(--muted)">在 QQ 群里发：<b>绑定码 '+esc(code)+'</b> 即可完成绑定</div>' +
+    '<button class="btn" style="width:auto;padding:6px 16px;margin-top:8px" onclick="copyText(\''+esc(code)+'\')">复制</button>' +
+    '<button class="btn-ghost" style="margin-top:8px" onclick="genBindCode()">重新生成</button></div>';
+   toast(r.msg, true);
+  } else toast(r.msg||'生成失败', false);
+ });
+};
+window.loadBalanceLogs = function(){
   api('/api/me/balance-logs').then(function(r){
    var el = $('balLogBox'); if(!el) return;
    var list = (r && r.data) || [];
