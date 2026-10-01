@@ -646,7 +646,9 @@ object QqBotManager {
                 else -> 2
             }
             if (perm < need) { send("⛔ 该操作需要权限等级 ${needLabel(need)}，您当前为 ${permLabel(perm)}"); return }
-            val result = com.qitong.gateway.http.SkillExecutor.execute(db, code, param, 0)
+            // ★ v53 绑定账号 userId：技能执行用绑定账号身份（查余额/用量/分销等拿到绑定账号真实数据）
+            val skillUserId = db.getQqBoundUser(userOpenid)?.id ?: 0L
+            val result = com.qitong.gateway.http.SkillExecutor.execute(db, code, param, skillUserId)
             send(result)
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill", "[$code] $text", System.currentTimeMillis() - t0)
             return
@@ -804,7 +806,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 "ai" -> askModel(bot, key, "${cmd["content"]} $text", userOpenid, groupOpenid)
                 // ★ 插件强化：支持终端命令/网关技能/工作流/AI画图
                 "terminal" -> runTerminal(cmd["content"] as String)
-                "skill" -> runSkillCode(cmd["content"] as String, text)
+                "skill" -> runSkillCode(cmd["content"] as String, text, userOpenid)
                 "workflow" -> runWorkflowByName(cmd["content"] as String, text)
                 "image" -> runImageGen(cmd["content"] as String, text)
                 else -> cmd["content"] as String
@@ -941,11 +943,13 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     }
 
     /** 插件动作：网关技能编码（如 600001=查状态） */
-    private fun runSkillCode(content: String, text: String): String {
+    private fun runSkillCode(content: String, text: String, userOpenid: String = ""): String {
         val code = content.trim().substringBefore(" ").ifBlank { return "⚠️ 未配置技能编码" }
         val param = text.substringAfter(" ").trim()
+        // ★ v53 绑定账号 userId：插件技能执行用绑定账号身份
+        val skillUserId = if (userOpenid.isNotBlank()) db.getQqBoundUser(userOpenid)?.id ?: 0L else 0L
         val result = kotlinx.coroutines.runBlocking {
-            com.qitong.gateway.http.SkillExecutor.execute(db, code, param, 0)
+            com.qitong.gateway.http.SkillExecutor.execute(db, code, param, skillUserId)
         }
         return result
     }
