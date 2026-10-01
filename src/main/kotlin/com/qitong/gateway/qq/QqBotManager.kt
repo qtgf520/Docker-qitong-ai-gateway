@@ -1232,11 +1232,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     val cleanText = cleanFunctionTags(content)
                     val newPrompt = cleanText + "\n\n【沙盒执行结果（已展示给用户）】\n" + results + "\n\n这些结果已经实时推送给用户了。请判断：\n- 如果需要更多操作（用户还没得到完整答案）→ 继续调用函数\n- 如果已经完成 → 直接简短收尾，**不要复述刚才的结果/余额/数字**（用户已看到），最多一句话确认完成，然后结束。"
                     hist.add("assistant" to cleanText)
-                    // ★ v56 智能收敛：本次执行成功且已有完整结果 → 不再调模型，直接以结果收尾
-                    if (!results.isBlank()) {
-                        content = cleanText + "\n\n" + results
-                        break
-                    }
+                    // ★ v60 收敛不重复：结果已实时推送→不再把 results 拼回最终回复！
+                    //   继续让模型基于结果生成简短收尾/AI意见（不重复已展示的结果/数字）
                     // 再调一次模型，看它是否继续调用函数
                     val nextBody = JSONObject()
                         .put("model", bot.aiModel)
@@ -1260,7 +1257,11 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 ?.optString("content")?.trim().orEmpty()
                         }
                     } catch (e: Exception) { null }
-                    if (nextContent.isNullOrBlank()) { content = cleanText + "\n\n" + results; break }
+                    if (nextContent.isNullOrBlank()) {
+                        // ★ v60 收敛不重复：结果已推送过，兜底只给简短收尾，不再拼 results
+                        content = "✅ 已完成以上任务，结果已实时推送。如需继续操作，直接告诉我～"
+                        break
+                    }
                     content = nextContent
                     // 无限循环保护：若下一轮无调用则结束
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty()) break
