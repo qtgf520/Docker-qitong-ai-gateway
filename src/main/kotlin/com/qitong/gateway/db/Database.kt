@@ -1134,6 +1134,18 @@ class Database(private val dbPath: String) {
             )
         }
 
+    /** v47 记忆命中计数：记忆被使用时 access_count+1，返回新计数 */
+    fun bumpMemoryAccess(id: Long): Int {
+        stmt("UPDATE brain_memory SET access_count=access_count+1 WHERE id=?", id)
+        return queryOne("SELECT access_count FROM brain_memory WHERE id=?", id)?.toInt() ?: 0
+    }
+
+    /** v47 高频记忆提升：access_count>=5 的记忆（可注入系统提示词） */
+    fun getPromotedMemories(userId: Long, minHits: Int = 5, limit: Int = 10): List<String> =
+        query("SELECT content FROM brain_memory WHERE user_id=? AND access_count>=? ORDER BY access_count DESC, importance DESC LIMIT $limit", userId, minHits)
+            .map { (it["content"] as? String).orEmpty() }
+            .filter { it.isNotBlank() }
+
     fun addMemory(userId: Long, title: String, content: String, type: String, emotion: String, importance: Int, source: String, tags: String, modelId: String): Long {
         val now = System.currentTimeMillis()
         stmt(
@@ -2027,6 +2039,15 @@ class Database(private val dbPath: String) {
         val rows = query(
             "SELECT content FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit",
             "qq:$openid"
+        )
+        return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
+    }
+
+    /** v47 读取某 QQ 用户高频记忆（access_count>=5，注入系统提示词强化记住） */
+    fun getQqBrainPromoted(openid: String, minHits: Int = 5, limit: Int = 8): List<String> {
+        val rows = query(
+            "SELECT content FROM brain_memory WHERE tags=? AND access_count>=? ORDER BY access_count DESC, timestamp DESC LIMIT $limit",
+            "qq:$openid", minHits
         )
         return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
     }

@@ -42,6 +42,9 @@ object SandboxEngine {
             .put(func("qq_bots_groups", "获取全部 QQ 群配置（只读）", "admin", "read", emptyList(), "群名/群 openid/AI 开关"))
             .put(func("qq_points_rank", "查看积分排行（只读）", "user", "read", emptyList(), "积分排行"))
             .put(func("help", "查看沙盒可用能力清单", "user", "read", emptyList(), "全部函数名与说明"))
+            .put(func("mcp_list", "列出已配置 MCP 服务器及其可用工具（只读）", "admin", "read", emptyList(), "MCP服务器名/工具列表"))
+            .put(func("mcp_call", "调用 MCP 服务器上的工具（只读/执行）", "admin", "modify", listOf(param("server", true, "MCP服务器名"), param("tool", true, "工具名"), param("args", false, "JSON参数")), "工具返回结果"))
+            .put(func("web_search", "联网搜索信息（只读）", "user", "read", listOf(param("query", true, "搜索关键词")), "搜索结果摘要"))
             .toString()
     }
 
@@ -174,10 +177,10 @@ $KNOWLEDGE_JSON
         // 权限表：函数 -> (最低权限, 风险)
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
-            "user_balance", "qq_points_rank", "help" -> "user" to "read"
+            "user_balance", "qq_points_rank", "help", "web_search" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
-            "qq_bots_list", "qq_bots_groups" -> "admin" to "read"
-            "model_enable", "model_disable", "user_recharge", "terminal_run" -> "admin" to "modify"
+            "qq_bots_list", "qq_bots_groups", "mcp_list" -> "admin" to "read"
+            "model_enable", "model_disable", "user_recharge", "terminal_run", "mcp_call" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -228,6 +231,53 @@ $KNOWLEDGE_JSON
                     val pts = db.getAllQqPoints("")
                     if (pts.isEmpty()) "📋 暂无积分记录"
                     else "📋 积分排行（前10）：\n" + pts.take(10).mapIndexed { i, p -> "#${i + 1} · ${p["openid"]} = ${p["points"]}" }.joinToString("\n")
+                }
+                "mcp_list" -> {
+                    // 列出已配置 MCP 服务器 + 各服务器工具
+                    val servers = McpClient.listEnabled(db)
+                    if (servers.isEmpty()) "📋 未配置 MCP 服务器（后台 MCP 管理页可添加 Streamable HTTP 端点）"
+                    else servers.joinToString("\n\n") { s -> McpClient.listTools(s) }
+                }
+                "mcp_call" -> {
+                    val serverName = args["server"] ?: ""
+                    val tool = args["tool"] ?: ""
+                    val servers = McpClient.listEnabled(db)
+                    val server = servers.firstOrNull { it.name.contains(serverName, true) || serverName.contains(it.name, true) }
+                    if (server == null) "❌ 未找到 MCP 服务器: $serverName（已配置: ${servers.joinToString(",") { it.name }}）"
+                    else if (tool.isBlank()) "⚠️ 语法：mcp_call(server=服务器名, tool=工具名, args=JSON参数)"
+                    else {
+                        val argsJson = runCatching { org.json.JSONObject(args["args"] ?: "{}") }.getOrElse { org.json.JSONObject() }
+                        McpClient.callTool(server, tool, argsJson)
+                    }
+                }
+                "web_search" -> {
+                    val query = args["query"] ?: ""
+                    if (query.isBlank()) "⚠️ 语法：web_search(query=关键词)"
+                    else {
+                        // 联网搜索：用 DuckDuckGo HTML 接口（免费无需 key）
+                        val url = "https://html.duckduckgo.com/html/?q=" + java.net.URLEncoder.encode(query, "UTF-8")
+                        val req = okhttp3.Request.Builder().url(url)
+                            .addHeader("User-Agent", "Mozilla/5.0 (compatible; QitongAI/1.0)")
+                            .build()
+                        try {
+                            val http = okhttp3.OkHttpClient()
+                            http.newCall(req).execute().use { resp ->
+                                val html = resp.body?.string().orEmpty()
+                                // 提取搜索结果标题+摘要（简化解析）
+                                val titles = Regex("result__a[^>]*>([^<]{5,100})").findAll(html).take(5).map { it.groupValues[1].trim() }.toList()
+                                val snips = Regex("result__snippet[^>]*>([^<]{5,200})").findAll(html).take(5).map { it.groupValues[1].trim() }.toList()
+                                if (titles.isEmpty()) "🔍 未找到「$query」结果（DDG 可能被限流）"
+                                else {
+                                    val sb = StringBuilder("🔍 「$query」搜索结果：\n")
+                                    for (i in titles.indices) {
+                                        sb.append("${i + 1}. ${titles[i]}\n")
+                                        if (i < snips.size) sb.append("   ${snips[i]}\n")
+                                    }
+                                    sb.toString().take(1500)
+                                }
+                            }
+                        } catch (e: Exception) { "❌ 搜索失败: ${e.message}" }
+                    }
                 }
                 else -> "❌ 未知沙盒函数: $fn（发「沙盒帮助」查看可用能力）"
             }

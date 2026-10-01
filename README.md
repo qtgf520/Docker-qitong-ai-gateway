@@ -224,6 +224,13 @@ Copyright 2026 綦桐 (qtgf520)
 
 ## 📝 更新日志（CHANGELOG）
 
+### v3.18.22-47（2026-10-01）· 对齐 Kai 9000 全部能力（MCP 真调用 + 自主心跳 + 联网搜索 + 记忆提升）
+- 🔌 **MCP 服务器真调用**：新增 `sandbox/McpClient.kt`（Streamable HTTP JSON-RPC），沙盒函数 `mcp_list`（列出服务器+工具）、`mcp_call`（调用工具）——对齐 Kai 的 MCP server 支持
+- 🔔 **自主心跳 Heartbeat**：新增 `sandbox/HeartbeatEngine.kt`，每 30 分钟后台自检（网关状态/活跃模型/磁盘压力/高价值记忆），发现问题推送到 QQ 群，没问题保持沉默——对齐 Kai 的 Autonomous heartbeat
+- 🌐 **联网搜索**：沙盒函数 `web_search(query=关键词)`（DuckDuckGo 免费接口），qtai-sj 可自主搜索——对齐 Kai 的 Web search
+- 🧠 **记忆提升机制**：记忆命中 5 次自动提升进系统提示词（`getQqBrainPromoted` + access_count 累计），重要信息永久记住——对齐 Kai 的 Memory promote
+- 🖥 终端真执行保留 + 操作日志完整
+
 ### v3.18.22-46（2026-10-01）· qtai-sj 升级 OpenClaw 式 Agent（自主循环 + 过程推送 + 终端真执行 + 全日志）
 - 🤖 **Agent 自主循环**：qtai-sj 自己规划 → 自己执行 → 结果回填 → 继续下一步，最多 8 轮循环直到任务完成（OpenClaw 式多步任务自动完成）
 - 📤 **过程实时推送**：每步执行前推「💭 qtai-sj 正在执行：函数()」，执行完推「✅ 函数执行完成：结果」——用户实时看到 AI 在干活，不再干等

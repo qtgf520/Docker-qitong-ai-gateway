@@ -212,6 +212,26 @@ object QqBotManager {
                 }.onFailure { e -> System.err.println("[QQBot] 掉线重登检查异常: ${e.message}") }
             }
         }
+        // ★ v47 自主心跳（对齐 Kai Heartbeat）：每 30 分钟自检，发现问题推送到第一个启用机器人的第一个群
+        runCatching {
+            com.qitong.gateway.sandbox.HeartbeatEngine.onIssue = { msg ->
+                runCatching {
+                    val bots = database.getQqBots().filter { (it["enabled"] as? Boolean) == true }
+                    if (bots.isNotEmpty()) {
+                        val b = botFromRow(bots.first())
+                        val at = api.getAccessToken(b)
+                        if (!at.isNullOrBlank()) {
+                            val groups = database.getQqGroups()
+                            if (groups.isNotEmpty()) {
+                                val gid = (groups.first()["groupOpenid"] as? String).orEmpty()
+                                if (gid.isNotBlank()) api.sendGroupMessage(b, at, gid, msg, null)
+                            }
+                        }
+                    }
+                }
+            }
+            com.qitong.gateway.sandbox.HeartbeatEngine.start(database)
+        }
     }
 
     private fun botFromRow(row: Map<String, Any?>): QqBot = QqBot(
@@ -978,11 +998,17 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             bot.systemPrompt.isNotBlank() -> bot.systemPrompt
             else -> ""
         }
-        // 长期大脑记忆：把该用户最近的记忆注入 system，跨天记得对方
+// 长期大脑记忆：把该用户最近的记忆注入 system，跨天记得对方；v47 加高频记忆提升（access>=5 自动进系统提示词）
         val mems = db.getQqBrainMemories(userOpenid, limit = 6)
-        val sysFull = if (mems.isNotEmpty()) {
-            baseSys + "\n\n【你对这位用户的长期记忆】\n" + mems.reversed().joinToString("\n") { "- " + it }
-        } else baseSys
+        val promoted = db.getQqBrainPromoted(userOpenid, minHits = 5, limit = 8)
+        var memSection = ""
+        if (mems.isNotEmpty()) {
+            memSection += "\n\n【你对这位用户的长期记忆】\n" + mems.reversed().joinToString("\n") { "- " + it }
+        }
+        if (promoted.isNotEmpty()) {
+            memSection += "\n\n【这位用户的重要信息（高价值记忆）】\n" + promoted.joinToString("\n") { "- " + it }
+        }
+        val sysFull = baseSys + memSection
         if (sysFull.isNotBlank()) msgs.put(JSONObject().put("role", "system").put("content", sysFull))
         hist.forEach { (role, content) -> msgs.put(JSONObject().put("role", role).put("content", content)) }
         msgs.put(JSONObject().put("role", "user").put("content", userText))
