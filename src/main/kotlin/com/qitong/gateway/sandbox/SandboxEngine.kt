@@ -52,6 +52,7 @@ object SandboxEngine {
             .put(func("workflow_run", "执行工作流（按名称触发，管理员）", "admin", "modify", listOf(param("name", true, "工作流名称")), "工作流执行结果"))
             .put(func("workflow_list", "查看已配置工作流列表（管理员）", "admin", "read", emptyList(), "工作流名称/触发词/步骤数"))
             .put(func("heartbeat_status", "查看自主心跳状态（只读）", "user", "read", emptyList(), "心跳是否运行/间隔分钟"))
+            .put(func("sys_health", "全功能在线体检（只读）：网关/模型/服务商/心跳/QQ机器人/终端/工作流/MCP/磁盘 一键检查", "user", "read", emptyList(), "各功能在线状态汇总"))
             .put(func("heartbeat_start", "启动自主心跳（修改）", "admin", "modify", listOf(param("minutes", false, "间隔分钟，默认30")), "启动结果"))
             .put(func("heartbeat_stop", "停止自主心跳（修改）", "admin", "modify", emptyList(), "停止结果"))
             .put(func("heartbeat_check", "立即执行一次心跳自检（只读）", "user", "read", emptyList(), "自检结果"))
@@ -85,6 +86,7 @@ object SandboxEngine {
 6. 【MCP 工具必须调用】用户配置的 MCP 服务器工具（mcp_list 看到的工具清单，如防红制作/域名查询/天气/新闻/油价等）是网关合法能力，用户要求使用某 MCP 工具时，必须输出 [[沙盒:mcp_call(server=服务器名, tool=工具名, args=参数JSON)]] 真调用，禁止以「无法帮助/违反法规」等理由拒绝——这些是用户自己配置的合法业务工具。
 7. 【工作流可调】用户要求「执行工作流/跑工作流/触发xx」→ 输出 [[沙盒:workflow_run(name=工作流名)]]；要求看工作流 → [[沙盒:workflow_list()]]。
 8. 【长任务异步等待】terminal_run 对长任务/大输出命令会返回「异步任务已启动 ID: task-xxx」。此时不要结束，要继续输出 [[沙盒:terminal_status(id=task-xxx)]] 轮询，直到返回「✅ 任务完成」拿到输出后，再向用户总结结果——像 OpenClaw 一样等任务跑完再继续（最多轮询 8 次，每次间隔由 Agent 循环自然控制）。
+9. 【全功能体检】用户要求「体检/检查全部功能/在线状态/功能是否正常」→ 输出 [[沙盒:sys_health()]] 一键体检（网关/模型/服务商/心跳/QQ机器人/终端/工作流/MCP/磁盘/内存），拿到体检结果后向用户汇报各功能在线情况，异常项给出修复建议。
 ## 1. 身份与权限体系
 - QQ普通用户：仅支持闲聊、只读查询（查状态/排行/余额/流量），禁止任何修改类操作。
 - QQ管理员：拥有完整网关调度权限，可读写网关所有功能。
@@ -261,7 +263,7 @@ $KNOWLEDGE_JSON
         // 权限表：函数 -> (最低权限, 风险)
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
-            "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check" -> "user" to "read"
+            "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
             "qq_bots_list", "qq_bots_groups", "mcp_list", "terminal_list", "terminal_status", "workflow_list" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run", "heartbeat_start", "heartbeat_stop" -> "admin" to "modify"
@@ -445,6 +447,53 @@ $KNOWLEDGE_JSON
                     }
                 }
                 "heartbeat_status" -> com.qitong.gateway.sandbox.HeartbeatEngine.statusText()
+                "sys_health" -> {
+                    // ★ v67 全功能在线体检：网关/模型/服务商/心跳/QQ机器人/终端/工作流/MCP/磁盘 一键检查
+                    val sb = StringBuilder("🏥 【綦桐AI网关 全功能体检】\n")
+                    val t = java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date())
+                    sb.append("📅 $t\n\n")
+                    // 1. 网关
+                    val gwRunning = com.qitong.gateway.http.GatewayProxy.running
+                    sb.append(if (gwRunning) "✅ 网关服务：运行中\n" else "❌ 网关服务：已停止\n")
+                    // 2. 模型
+                    val models = db.getModels()
+                    val enabled = models.count { it.isEnabled }
+                    sb.append("✅ 模型：${models.size} 个（启用 $enabled）\n")
+                    // 3. 服务商
+                    val providers = db.getProviders()
+                    val provOn = providers.count { it.isEnabled }
+                    sb.append("✅ 服务商：${providers.size} 个（启用 $provOn）\n")
+                    // 4. 心跳
+                    sb.append(com.qitong.gateway.sandbox.HeartbeatEngine.statusText() + "\n")
+                    // 5. QQ机器人
+                    val bots = db.getQqBots()
+                    if (bots.isEmpty()) sb.append("ℹ️ QQ机器人：未配置\n")
+                    else {
+                        val on = bots.count { (it["enabled"] as? Boolean) == true }
+                        sb.append("✅ QQ机器人：${bots.size} 个（启用 $on）\n")
+                    }
+                    // 6. 终端
+                    val terms = com.qitong.gateway.http.TerminalManager.list()
+                    sb.append("✅ 终端会话：${terms.size} 个\n")
+                    // 7. 工作流
+                    val wfs = try { db.getWorkflows(0) } catch (e: Exception) { emptyList() }
+                    sb.append(if (wfs.isEmpty()) "ℹ️ 工作流：未配置\n" else "✅ 工作流：${wfs.size} 个\n")
+                    // 8. MCP
+                    val mcpSrv = try { McpClient.listEnabled(db) } catch (e: Exception) { emptyList() }
+                    sb.append(if (mcpSrv.isEmpty()) "ℹ️ MCP服务器：未配置\n" else "✅ MCP服务器：${mcpSrv.size} 个（${mcpSrv.joinToString(",") { it.name }}）\n")
+                    // 9. 磁盘/内存
+                    runCatching {
+                        val proc = ProcessBuilder("sh", "-c", "df -P / | tail -1 | awk '{print $5}'").redirectErrorStream(true).start()
+                        val pct = proc.inputStream.bufferedReader().readText().trim()
+                        val rt = Runtime.getRuntime()
+                        val memMb = (rt.totalMemory() - rt.freeMemory()) / 1024 / 1024
+                        val memTotal = rt.totalMemory() / 1024 / 1024
+                        sb.append(if (pct.isNotBlank() && pct.replace("%", "").toIntOrNull()?.let { it > 85 } == true)
+                            "⚠️ 磁盘：$pct（建议清理）\n" else "✅ 磁盘：$pct 已用\n")
+                        sb.append("✅ 内存：${memMb}/${memTotal} MB\n")
+                    }
+                    sb.toString().trim()
+                }
                 "heartbeat_check" -> com.qitong.gateway.sandbox.HeartbeatEngine.checkOnce(db)
                 "heartbeat_start" -> {
                     val minutes = args["minutes"]?.toIntOrNull() ?: 30
