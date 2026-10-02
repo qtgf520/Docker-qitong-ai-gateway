@@ -43,6 +43,8 @@ object QqBotManager {
     private val userMutex = ConcurrentHashMap<String, Mutex>()
     // 每用户冷却时间戳
     private val lastReplyTs = ConcurrentHashMap<String, Long>()
+    // ★ v64 停止信号：用户发「停止/停一下/中断」→ 打断当前 Agent 思考/执行（大模型自由调度感知停止）
+    private val stopSignals = ConcurrentHashMap<String, Boolean>()
     /** v51 分步绑定状态：openid -> (step, username)；step=1 等用户名，2 等密码 */
     private val pendingBind = ConcurrentHashMap<String, Pair<Int, String>>()
 
@@ -350,6 +352,16 @@ object QqBotManager {
     ) {
         val t0 = System.currentTimeMillis()
         val t = text.trim()
+        // ★ v64 停止指令：用户发「停止/停一下/中断/不干了」→ 打断当前 Agent 思考/执行（由大模型自由调度感知）
+        if (t.equals("停止", true) || t.equals("停", true) || t.equals("停一下", true) ||
+            t.equals("中断", true) || t.equals("不干了", true) || t.equals("算了", true) || t.equals("停止执行", true)) {
+            stopSignals[userOpenid] = true
+            send("🛑 已停止当前任务，所有执行已断开。有新指令随时说～")
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "stop", "用户停止任务", System.currentTimeMillis() - t0)
+            return
+        }
+        // 正常消息进来 → 清掉之前的停止信号（新任务开始）
+        stopSignals[userOpenid] = false
         // ★ v51 分步绑定处理：用户在绑定流程中（pendingBind 有值）发的任意消息 = 绑定输入
         val bindState = pendingBind[userOpenid]
         if (bindState != null && !t.startsWith("绑定账号", true) && !t.equals("取消", true)) {
@@ -1219,6 +1231,11 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 var loopGuard = 0
                 while (sandboxOn && content.isNotBlank() && loopGuard < 8) {
                     loopGuard++
+                    // ★ v64 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考
+                    if (stopSignals[userOpenid] == true) {
+                        content = "🛑 已停止任务（用户中断）。"
+                        break
+                    }
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
                     if (calls.isEmpty()) break
                     val results = StringBuilder()

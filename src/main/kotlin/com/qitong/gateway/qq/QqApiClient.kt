@@ -5,6 +5,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -28,10 +29,20 @@ class QqApiClient {
         .build()
     private val jsonCt = "application/json; charset=utf-8".toMediaType()
 
-    /** 用 AppID + AppSecret 换取 AccessToken（新版鉴权；失败返回 null） */
+    // ★ v64 令牌缓存：避免每次消息都现取（过夜掉线根因）+ 失败自动重试用旧 token
+    private class TokenCache(val token: String, val expireAt: Long)
+    private val tokenCache = ConcurrentHashMap<String, TokenCache>()
+
+    /** 用 AppID + AppSecret 换取 AccessToken（新版鉴权；带缓存，过期自动刷新） */
+    @Synchronized
     fun getAccessToken(bot: QqBot): String? {
+        val key = "${bot.appid}:${bot.useSandbox}"
         val secret = bot.appSecret.ifBlank { bot.token }
         if (secret.isBlank()) return null
+        // 缓存有效期内直接返回（7200s 有效，提前 300s 刷新）
+        val cached = tokenCache[key]
+        if (cached != null && System.currentTimeMillis() < cached.expireAt) return cached.token
+        // 缓存过期/缺失 → 换新 token
         val url = (if (bot.useSandbox) sandboxTokenBase else prodTokenBase) + "/app/getAppAccessToken"
         val payload = JSONObject()
             .put("appId", bot.appid)
@@ -47,13 +58,19 @@ class QqApiClient {
                 val body = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
                     System.err.println("[QQBot] 获取AccessToken失败 ${bot.appid}: HTTP ${resp.code} $body")
-                    return null
+                    // 换 token 失败 → 若有旧 token 缓存，降级用旧 token（可能仍有效，避免掉线）
+                    return cached?.token
                 }
-                JSONObject(body).optString("access_token").ifBlank { null }
+                val token = JSONObject(body).optString("access_token").ifBlank { null }
+                if (token != null) {
+                    tokenCache[key] = TokenCache(token, System.currentTimeMillis() + 7200_000L - 300_000L)
+                    return token
+                }
+                cached?.token
             }
         } catch (e: Exception) {
             System.err.println("[QQBot] 获取AccessToken异常 ${bot.appid}: ${e.message}")
-            null
+            cached?.token  // 网络异常也降级用旧 token，避免掉线
         }
     }
 
