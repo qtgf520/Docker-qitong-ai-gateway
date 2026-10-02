@@ -60,10 +60,71 @@ object TerminalManager {
 
     /** 关闭临时会话（删除内存记录） */
     fun close(id: String): Boolean = sessions.remove(id) != null
-
     fun closeAll() { sessions.clear() }
-
     fun get(id: String): TermSession? = sessions[id]
+
+    // ★ v65 异步任务：长命令后台跑，大模型可轮询 terminal_status 拿结果（OpenClaw 式等待）
+    data class AsyncTask(
+        val id: String,
+        val cmd: String,
+        val startedAt: Long,
+        var done: Boolean = false,
+        var output: String = "",
+        var ok: Boolean = true
+    )
+    private val asyncTasks = ConcurrentHashMap<String, AsyncTask>()
+    private val asyncSeq = AtomicLong(2000)
+
+    /** 启动异步任务（后台线程跑，不阻塞；适合长命令/大输出） */
+    fun startAsync(cmd: String): String {
+        if (cmd.isBlank()) return "任务命令为空"
+        if (cmd.length > 1000) return "⚠️ 命令太长（限1000字符）"
+        if (dangerous.any { cmd.contains(it) }) return "⛔ 危险命令已拦截"
+        val id = "task-" + asyncSeq.incrementAndGet()
+        val t = AsyncTask(id, cmd, System.currentTimeMillis())
+        asyncTasks[id] = t
+        Thread {
+            try {
+                val proc = ProcessBuilder("/bin/sh", "-c", cmd).redirectErrorStream(true).start()
+                // 读输出（限 200KB 防内存爆）
+                val sb = StringBuilder()
+                val reader = proc.inputStream.bufferedReader()
+                val buf = CharArray(4096)
+                var total = 0
+                while (true) {
+                    val n = reader.read(buf)
+                    if (n <= 0) break
+                    total += n
+                    if (total > 200_000) { proc.destroyForcibly(); sb.append("\n…输出超200KB已截断…"); break }
+                    sb.append(buf, 0, n)
+                }
+                val waitOk = proc.waitFor(5, TimeUnit.MINUTES)
+                if (!waitOk) { proc.destroyForcibly(); t.output = sb.toString().take(100_000) + "\n⚠️ 任务超时（5分钟）已终止"; t.ok = false }
+                else { t.output = sb.toString().take(100_000).ifBlank { "(无输出)" }; t.ok = proc.exitValue() == 0 }
+            } catch (e: Exception) {
+                t.output = "❌ 执行失败：${e.message}"
+                t.ok = false
+            } finally {
+                t.done = true
+            }
+        }.start()
+        return "✅ 异步任务已启动\n🆔 ID: $id\n📋 命令: $cmd\n\n稍后发 terminal_status(id=$id) 查询执行结果"
+    }
+
+    /** 查询异步任务状态 */
+    fun asyncStatus(id: String): String {
+        val t = asyncTasks[id] ?: return "❌ 任务不存在或已过期（task-xxx）"
+        return if (!t.done) {
+            "⏳ 任务运行中…（已执行 ${(System.currentTimeMillis() - t.startedAt) / 1000} 秒）\n📋 命令: ${t.cmd}\n\n请等待几秒后再查"
+        } else {
+            "✅ 任务完成\n📋 命令: ${t.cmd}\n⏱ 耗时: ${(System.currentTimeMillis() - t.startedAt) / 1000} 秒\n📤 输出:\n${t.output}"
+        }
+    }
+    /** 清理过期异步任务（完成超过10分钟移除） */
+    fun cleanupAsync() {
+        val now = System.currentTimeMillis()
+        asyncTasks.entries.removeIf { (_, t) -> t.done && now - t.startedAt > 10 * 60 * 1000L }
+    }
 
     /** 一次性执行命令（不建会话，用于工作流/技能；危险拦截+超时） */
     fun runOnce(cmd: String): String {

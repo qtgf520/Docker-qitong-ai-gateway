@@ -41,6 +41,7 @@ object SandboxEngine {
             .put(func("terminal_run", "沙盒执行终端命令（高危，需管理员确认）", "admin", "high", listOf(param("cmd", true, "待执行命令")), "终端输出"))
             .put(func("terminal_create", "创建临时终端会话（管理员）", "admin", "modify", listOf(param("label", false, "终端名称，如 终端1")), "终端ID/名称"))
             .put(func("terminal_list", "查看已创建的终端会话列表（管理员）", "admin", "read", emptyList(), "终端ID/名称列表"))
+            .put(func("terminal_status", "查询异步终端任务执行状态/结果（管理员）", "admin", "read", listOf(param("id", true, "异步任务ID，如 task-2001")), "任务运行中/完成/输出"))
             .put(func("qq_bots_list", "获取全部 QQ 机器人配置（只读）", "admin", "read", emptyList(), "机器人 AppID/名称/启用状态/模型"))
             .put(func("qq_bots_groups", "获取全部 QQ 群配置（只读）", "admin", "read", emptyList(), "群名/群 openid/AI 开关"))
             .put(func("qq_points_rank", "查看积分排行（只读）", "user", "read", emptyList(), "积分排行"))
@@ -83,6 +84,7 @@ object SandboxEngine {
 5. 【查排行真执行】用户要求「查排行/排行」→ 输出 [[沙盒:qq_points_rank()]] 和/或 [[沙盒:speed_ranking()]] 让沙盒真查，把真实排行结果推送，绝不输出「已调用」空壳。
 6. 【MCP 工具必须调用】用户配置的 MCP 服务器工具（mcp_list 看到的工具清单，如防红制作/域名查询/天气/新闻/油价等）是网关合法能力，用户要求使用某 MCP 工具时，必须输出 [[沙盒:mcp_call(server=服务器名, tool=工具名, args=参数JSON)]] 真调用，禁止以「无法帮助/违反法规」等理由拒绝——这些是用户自己配置的合法业务工具。
 7. 【工作流可调】用户要求「执行工作流/跑工作流/触发xx」→ 输出 [[沙盒:workflow_run(name=工作流名)]]；要求看工作流 → [[沙盒:workflow_list()]]。
+8. 【长任务异步等待】terminal_run 对长任务/大输出命令会返回「异步任务已启动 ID: task-xxx」。此时不要结束，要继续输出 [[沙盒:terminal_status(id=task-xxx)]] 轮询，直到返回「✅ 任务完成」拿到输出后，再向用户总结结果——像 OpenClaw 一样等任务跑完再继续（最多轮询 8 次，每次间隔由 Agent 循环自然控制）。
 ## 1. 身份与权限体系
 - QQ普通用户：仅支持闲聊、只读查询（查状态/排行/余额/流量），禁止任何修改类操作。
 - QQ管理员：拥有完整网关调度权限，可读写网关所有功能。
@@ -261,7 +263,7 @@ $KNOWLEDGE_JSON
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
-            "qq_bots_list", "qq_bots_groups", "mcp_list", "terminal_list", "workflow_list" -> "admin" to "read"
+            "qq_bots_list", "qq_bots_groups", "mcp_list", "terminal_list", "terminal_status", "workflow_list" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run", "heartbeat_start", "heartbeat_stop" -> "admin" to "modify"
             else -> "user" to "read"
         }
@@ -304,6 +306,7 @@ $KNOWLEDGE_JSON
                 "terminal_run" -> {
                     // ★ v46：终端真执行（复用 TerminalManager.runOnce，危险命令拦截+超时+输出截断）
                     // ★ v59 增强：cmd 含中文（自然语言需求）时自动用 AiTermHelper 转命令，支持"扫一下 xxx"直接跑
+                    // ★ v65 增强：疑似长任务命令（后台/循环/下载/编译/大输出）自动异步跑，不再 10 秒超时中断
                     val raw = args["cmd"] ?: ""
                     if (raw.isBlank()) "⚠️ 语法：terminal_run(cmd=要执行的命令 或 自然语言需求)"
                     else {
@@ -315,10 +318,27 @@ $KNOWLEDGE_JSON
                         val dangerous = listOf("rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", ":(){", "format", "fdisk", "mkfs.ext")
                         if (dangerous.any { cmd.contains(it) }) "⛔ 危险命令已拦截：$cmd"
                         else {
-                            val out = com.qitong.gateway.http.TerminalManager.runOnce(cmd)
-                            "🖥 执行: $cmd\n📤 输出:\n$out"
+                            // ★ v65 长任务检测：包含这些特征 → 异步跑（后台不阻塞，返回 task-id 供轮询）
+                            val longTask = cmd.contains(" &") || cmd.contains("nohup") || cmd.contains("sleep ") ||
+                                cmd.contains("loop") || cmd.contains("while") || cmd.contains("curl") ||
+                                cmd.contains("wget") || cmd.contains("ping -c 1") || cmd.contains("cat /") ||
+                                cmd.contains("tail -f") || cmd.contains("apt") || cmd.contains("apt-get") ||
+                                cmd.contains("npm") || cmd.contains("gradle") || cmd.contains("yarn") ||
+                                cmd.contains("docker build") || cmd.contains("ping -c 5") || cmd.length > 80
+                            if (longTask) {
+                                com.qitong.gateway.http.TerminalManager.startAsync(cmd)
+                            } else {
+                                val out = com.qitong.gateway.http.TerminalManager.runOnce(cmd)
+                                "🖥 执行: $cmd\n📤 输出:\n$out"
+                            }
                         }
                     }
+                }
+                "terminal_status" -> {
+                    // ★ v65 查询异步任务状态/结果（大模型轮询长任务）
+                    val id = args["id"] ?: ""
+                    if (id.isBlank()) "⚠️ 语法：terminal_status(id=任务ID，如 task-2001)"
+                    else com.qitong.gateway.http.TerminalManager.asyncStatus(id.trim())
                 }
                 "terminal_create" -> {
                     // ★ v62 创建临时终端会话（TerminalManager.create，label 可选）

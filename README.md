@@ -223,6 +223,9 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v3.18.22-65（2026-10-02）· 异步终端长任务 + OpenClaw式轮询等待
+- ⏱ **异步终端任务**：TerminalManager 新增 startAsync/asyncStatus——长命令（后台/循环/下载/编译/大输出）后台线程跑，不再 10 秒超时中断（cat os-release 等大输出不再被杀）
+- 🔄 **terminal_status 轮询**：沙盒新增 terminal_status(id=task-xxx) 查询任务状态/结果；SYSTEM_PROMPT 铁律8 教大模型——长任务启动后继续轮询 terminal_status 直到「✅ 任务完成」，像 OpenClaw 一样等任务跑完再向用户总结（所有工具都支持）
 ### v3.18.22-64（2026-10-02）· QQ令牌缓存防掉线 + 停止指令 + 并发确认
 - 🔑 **令牌缓存防掉线**：AccessToken 7200s 有效期带缓存（提前5分钟自动刷新），换 token 失败/网络异常时降级用旧 token——过夜不再因每次现取失败而掉线
 - 🛑 **停止指令**：发「停止/停一下/中断/不干了/算了」→ 立即断开当前 Agent 思考与执行（stopSignals 信号，大模型自由调度感知停止，非硬编码死指令）
