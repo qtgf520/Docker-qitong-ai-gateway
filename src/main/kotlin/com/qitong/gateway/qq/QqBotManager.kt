@@ -262,6 +262,16 @@ object QqBotManager {
                 state.status = s
                 state.lastError = err
                 if (s == QqBotStatus.ONLINE) state.readyAt = System.currentTimeMillis()
+                // ★ v66 状态变化写日志（后台「运行日志」可见：连接中/上线/重连/失败/停止）
+                try {
+                    val msg = when (s) {
+                        QqBotStatus.ONLINE -> "✅ 登录成功：机器人已上线${if (err.isNotBlank()) "（$err）" else ""}"
+                        QqBotStatus.CONNECTING -> "🔄 正在连接 QQ 网关…"
+                        QqBotStatus.OFFLINE -> "📡 已离线，${err}（动态退避重连中）"
+                        QqBotStatus.ERROR -> "❌ 连接异常：$err"
+                    }
+                    db.addQqLog(bot.appid, "", "", "bot_status", msg, 0)
+                } catch (e: Exception) { /* 日志失败不影响状态 */ }
             },
             // ★ 掉线自动重登：重连时用 AppID+AppSecret 重新换 AccessToken，防止 token 过期后永远连不上
             onTokenRefresh = { api.getAccessToken(bot) }
@@ -274,13 +284,25 @@ object QqBotManager {
                 state.status = QqBotStatus.ERROR
                 state.lastError = "获取AccessToken失败（检查 AppID/AppSecret/沙箱开关）"
                 System.err.println("[QQBot] ${bot.appid} 获取AccessToken失败")
+                try { db.addQqLog(bot.appid, "", "", "bot_status", "❌ 登录失败：获取AccessToken失败（检查 AppID/AppSecret/沙箱开关）", 0) } catch (e: Exception) {}
                 return@launch
             }
             client.start(at)
         }
     }
 
-    fun stopBot(id: Long) { runCatching { clients.remove(id)?.stop() } }
+    fun stopBot(id: Long) {
+        // ★ v66 彻底停止：先记状态为离线，再移除 client（其 stop() 会置 stopped + 关 ws + 清 timer）
+        val row = db.getQqBotById(id)
+        val appid = row?.get("appid") as? String ?: ""
+        runCatching { clients.remove(id)?.stop() }
+        val state = statusOf(id)
+        state.status = QqBotStatus.OFFLINE
+        state.lastError = "已停止"
+        try {
+            db.addQqLog(appid, "", "", "bot_status", "⏹ 机器人已停止", 0)
+        } catch (e: Exception) {}
+    }
 
     fun restartBot(id: Long) {
         val row = db.getQqBotById(id) ?: return

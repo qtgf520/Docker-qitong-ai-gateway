@@ -223,6 +223,10 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v3.18.22-66（2026-10-02）· QQ机器人启停/重连状态日志可见化
+- 📡 **状态写日志**：QQ机器人 连接中/登录成功/离线重连(动态退避秒数)/连接异常/已停止 全部写入 qq_logs（type=bot_status），后台「运行日志」实时可见
+- ⏹ **停止彻底**：stopBot 记状态离线 + 写「已停止」日志；QqGatewayClient.stop 已确认置 stopped + 清 heartbeat/reconnect timer + 关 ws（不再幽灵重连）
+- 🔄 **重连动态秒数可见**：重连时日志显示「📡 已离线，Xs 后重连（动态退避重连中）」——指数退避 2s→60s 过程看得见
 ### v3.18.22-65（2026-10-02）· 异步终端长任务 + OpenClaw式轮询等待
 - ⏱ **异步终端任务**：TerminalManager 新增 startAsync/asyncStatus——长命令（后台/循环/下载/编译/大输出）后台线程跑，不再 10 秒超时中断（cat os-release 等大输出不再被杀）
 - 🔄 **terminal_status 轮询**：沙盒新增 terminal_status(id=task-xxx) 查询任务状态/结果；SYSTEM_PROMPT 铁律8 教大模型——长任务启动后继续轮询 terminal_status 直到「✅ 任务完成」，像 OpenClaw 一样等任务跑完再向用户总结（所有工具都支持）
