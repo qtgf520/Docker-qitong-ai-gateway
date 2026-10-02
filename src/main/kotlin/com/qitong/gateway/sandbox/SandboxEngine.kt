@@ -48,6 +48,8 @@ object SandboxEngine {
             .put(func("mcp_list", "列出已配置 MCP 服务器及其可用工具（只读）", "admin", "read", emptyList(), "MCP服务器名/工具列表"))
             .put(func("mcp_call", "调用 MCP 服务器上的工具（只读/执行）", "admin", "modify", listOf(param("server", true, "MCP服务器名"), param("tool", true, "工具名"), param("args", false, "JSON参数")), "工具返回结果"))
             .put(func("web_search", "联网搜索信息（只读）", "user", "read", listOf(param("query", true, "搜索关键词")), "搜索结果摘要"))
+            .put(func("workflow_run", "执行工作流（按名称触发，管理员）", "admin", "modify", listOf(param("name", true, "工作流名称")), "工作流执行结果"))
+            .put(func("workflow_list", "查看已配置工作流列表（管理员）", "admin", "read", emptyList(), "工作流名称/触发词/步骤数"))
             .put(func("heartbeat_status", "查看自主心跳状态（只读）", "user", "read", emptyList(), "心跳是否运行/间隔分钟"))
             .put(func("heartbeat_start", "启动自主心跳（修改）", "admin", "modify", listOf(param("minutes", false, "间隔分钟，默认30")), "启动结果"))
             .put(func("heartbeat_stop", "停止自主心跳（修改）", "admin", "modify", emptyList(), "停止结果"))
@@ -79,6 +81,8 @@ object SandboxEngine {
 3. 【结果来自工具】用户要查排行/余额/状态/终端，必须真的输出函数调用标签等沙盒执行返回真实结果，没有真实结果就不算完成任务。
 4. 【创建终端真执行】用户要求「创建终端/临时终端/终端1」→ 输出 [[沙盒:terminal_create(label=终端1)]]；要求跑命令 → [[沙盒:terminal_run(cmd=命令)]]；要求看终端 → [[沙盒:terminal_list()]]。
 5. 【查排行真执行】用户要求「查排行/排行」→ 输出 [[沙盒:qq_points_rank()]] 和/或 [[沙盒:speed_ranking()]] 让沙盒真查，把真实排行结果推送，绝不输出「已调用」空壳。
+6. 【MCP 工具必须调用】用户配置的 MCP 服务器工具（mcp_list 看到的工具清单，如防红制作/域名查询/天气/新闻/油价等）是网关合法能力，用户要求使用某 MCP 工具时，必须输出 [[沙盒:mcp_call(server=服务器名, tool=工具名, args=参数JSON)]] 真调用，禁止以「无法帮助/违反法规」等理由拒绝——这些是用户自己配置的合法业务工具。
+7. 【工作流可调】用户要求「执行工作流/跑工作流/触发xx」→ 输出 [[沙盒:workflow_run(name=工作流名)]]；要求看工作流 → [[沙盒:workflow_list()]]。
 ## 1. 身份与权限体系
 - QQ普通用户：仅支持闲聊、只读查询（查状态/排行/余额/流量），禁止任何修改类操作。
 - QQ管理员：拥有完整网关调度权限，可读写网关所有功能。
@@ -257,8 +261,8 @@ $KNOWLEDGE_JSON
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
-            "qq_bots_list", "qq_bots_groups", "mcp_list", "terminal_list" -> "admin" to "read"
-            "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "heartbeat_start", "heartbeat_stop" -> "admin" to "modify"
+            "qq_bots_list", "qq_bots_groups", "mcp_list", "terminal_list", "workflow_list" -> "admin" to "read"
+            "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run", "heartbeat_start", "heartbeat_stop" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -391,6 +395,33 @@ $KNOWLEDGE_JSON
                                 }
                             }
                         } catch (e: Exception) { "❌ 搜索失败: ${e.message}" }
+                    }
+                }
+                "workflow_run" -> {
+                    // ★ v63 执行工作流（按名称）
+                    val name = args["name"] ?: ""
+                    if (name.isBlank()) "⚠️ 语法：workflow_run(name=工作流名称)"
+                    else {
+                        val wfs = try { db.getWorkflows(0) } catch (e: Exception) { emptyList() }
+                        val wf = wfs.firstOrNull { (it["name"] as? String)?.contains(name, true) == true || name.contains(it["name"] as? String ?: "", true) }
+                        if (wf == null) "❌ 未找到工作流「$name」（发 workflow_list 查看已配置）"
+                        else {
+                            val stepsJson = try { org.json.JSONArray(wf["steps"] as? String ?: "[]") } catch (e: Exception) { org.json.JSONArray() }
+                            val sb = StringBuilder("⚙️ 工作流「${wf["name"]}」执行：\n")
+                            for (i in 0 until stepsJson.length()) {
+                                val step = stepsJson.optJSONObject(i) ?: continue
+                                val out = com.qitong.gateway.http.WorkflowEngine.runStep(db, step.optString("type", "reply"), step.optString("content", ""))
+                                sb.append("【${i + 1}·${step.optString("type", "reply")}】\n$out\n\n")
+                            }
+                            sb.toString().trim().take(1500)
+                        }
+                    }
+                }
+                "workflow_list" -> {
+                    val wfs = try { db.getWorkflows(0) } catch (e: Exception) { emptyList() }
+                    if (wfs.isEmpty()) "📋 暂无工作流（后台「工作流」页可创建）"
+                    else "📋 工作流（${wfs.size}个）：\n" + wfs.take(20).joinToString("\n") { w ->
+                        "· ${w["name"]}（触发:${w["triggerText"] ?: "-"}，${if ((w["enabled"] as? Boolean) == true) "启用" else "停用"}）"
                     }
                 }
                 "heartbeat_status" -> com.qitong.gateway.sandbox.HeartbeatEngine.statusText()

@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v3.18.22-62"
+    private const val VER = "v3.18.22-63"
 
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -259,7 +259,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .mask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:950}
 .mask.show{display:block}
 /* ===== 侧边栏（默认收起，三道杠展开悬浮最前） ===== */
-.sidebar{position:fixed;top:52px;left:0;bottom:0;width:212px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;z-index:951;transform:translateX(-100%);transition:transform .24s ease;box-shadow:6px 0 28px rgba(0,0,0,.22)}
+.sidebar{position:fixed;top:52px;left:0;bottom:0;width:212px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;z-index:951;transform:translateX(-100%);transition:transform .24s ease;box-shadow:6px 0 28px rgba(0,0,0,.22);display:flex;flex-direction:column;-webkit-overflow-scrolling:touch}
+.sidebar nav{flex:1;overflow-y:auto;padding-bottom:24px;-webkit-overflow-scrolling:touch}
 .sidebar.open{transform:translateX(0)}
 .side-brand{padding:16px 18px 14px;font-size:14px;font-weight:700;color:var(--text);border-bottom:1px solid var(--border)}
 .side-brand-sub{font-size:10px;color:var(--muted);font-weight:400;margin-top:2px;letter-spacing:.3px}
