@@ -26,8 +26,17 @@ object TerminalManager {
     private val idSeq = AtomicLong(1000)
 
     private val dangerous = listOf(
-        "rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", ":(){",
-        "format", "fdisk", "chmod 777 /", "chown -R", "> /dev/sda", "curl.*|.*sh"
+        "rm -rf /", "rm -rf /*", "rm -fr /", "mkfs", "dd if=", "shutdown", "reboot", ":(){",
+        "format", "fdisk", "chmod 777 /", "chown -R", "> /dev/sda", "curl.*|.*sh",
+        // ★ v68 加固：docker 全家桶（删容器/镜像/卷/网络/服务） + 高危系统操作
+        "docker rm", "docker rmi", "docker volume", "docker network", "docker compose down", "docker-compose down",
+        "docker stop", "docker kill", "docker system prune", "docker builder prune", "docker image prune",
+        "docker container prune", "docker restart", "docker update --restart=no",
+        "systemctl stop", "systemctl disable", "service docker stop", "kill -9 1",
+        "umount", "mount -o", "mv /", "cp -r / /", "tar -czf /", "tar czf /", "wget.*|.*sh",
+        "echo.*> /etc", "crontab -r", "userdel", "groupdel", "passwd -d", "visudo",
+        "find / -delete", "find / -exec rm", "dd if=/dev/zero", "mkfs.ext", "mkfs.xfs",
+        ":(){ :|:& };:"
     )
 
     /** 创建临时终端会话（ttlMinutes: 0=永久；默认30分钟无操作清理） */

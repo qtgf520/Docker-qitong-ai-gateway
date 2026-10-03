@@ -223,6 +223,10 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v3.18.22-68（2026-10-03）· 终端危险命令加固（防删容器/镜像/数据）
+- 🛡 **危险命令黑名单加固**：TerminalManager + SandboxEngine 同步新增 docker 全家桶拦截（docker rm/rmi/volume/network/compose down/stop/kill/prune/restart）+ 高危系统操作（systemctl stop、kill -9 1、umount、mv /、cp -r / /、crontab -r、userdel、find / -delete、fork炸弹等）
+- 🚨 **事故复盘**：线上容器被删根因——旧黑名单只拦 rm -rf / 等，未拦 docker 命令；已用现有镜像+数据恢复线上（数据库 gateway.db 完好）
+- ✅ 恢复流程：docker compose up -d（用现有镜像秒级恢复）→ --build 重建应用新 jar
 ### v3.18.22-67（2026-10-02）· 全功能在线体检 sys_health
 - 🏥 **全功能体检**：沙盒新增 sys_health() 一键体检——网关/模型/服务商/心跳/QQ机器人/终端/工作流/MCP/磁盘/内存 全部在线状态汇总
 - 🤖 **SYSTEM_PROMPT 铁律9**：用户问「体检/检查全部功能/在线状态/功能是否正常」→ qtai-sj 自动调 sys_health 并汇报异常项修复建议

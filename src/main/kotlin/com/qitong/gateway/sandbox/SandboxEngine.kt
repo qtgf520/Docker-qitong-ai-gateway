@@ -317,7 +317,15 @@ $KNOWLEDGE_JSON
                             if (c.isBlank()) return@executeSuspend "😵 无法将「$raw」转换为安全命令，请直接提供 shell 命令"
                             c
                         } else raw
-                        val dangerous = listOf("rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", ":(){", "format", "fdisk", "mkfs.ext")
+                        val dangerous = listOf(
+                            "rm -rf /", "rm -rf /*", "rm -fr /", "mkfs", "dd if=", "shutdown", "reboot", ":(){",
+                            "format", "fdisk", "mkfs.ext", "mkfs.xfs", "chmod 777 /", "chown -R", "> /dev/sda",
+                            // ★ v68 加固：docker 全家桶 + 高危系统操作
+                            "docker rm", "docker rmi", "docker volume", "docker network", "docker compose down", "docker-compose down",
+                            "docker stop", "docker kill", "docker system prune", "docker builder prune", "docker image prune",
+                            "docker container prune", "docker restart", "systemctl stop", "systemctl disable", "kill -9 1",
+                            "umount", "mount -o", "mv /", "cp -r / /", "crontab -r", "userdel", "find / -delete", ":(){ :|:& };:"
+                        )
                         if (dangerous.any { cmd.contains(it) }) "⛔ 危险命令已拦截：$cmd"
                         else {
                             // ★ v65 长任务检测：包含这些特征 → 异步跑（后台不阻塞，返回 task-id 供轮询）
