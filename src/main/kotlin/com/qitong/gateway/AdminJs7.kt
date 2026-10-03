@@ -39,18 +39,24 @@ function wxLoadBots(){
 }
 function wxForm(b){
  b=b||{};
- var id=b.id||0;
- var name=b.name||'';
- var token=b.hasToken?'（已保存，留空不修改）':'';
- var ai=b.aiModel||'qtai-sj';
- promptForm('微信机器人', [
-  {k:'name', label:'名称', v:name, ph:'如 微信小助手'},
-  {k:'botToken', label:'Bot Token', v:'', ph:token||'扫码登录后自动填入'},
-  {k:'aiModel', label:'AI模型', v:ai, ph:'默认 qtai-sj'},
-  {k:'enabled', label:'启用', v:true, type:'bool'}
- ], function(d){
-  d.id=id;
-  api('/api/weixin/bots',{method:'POST',body:d}).then(function(){ toast('已保存'); wxLoadBots(); });
+ var html =
+  '<div class="form-row"><label>机器人名称（备注）</label><input class="input" id="wxName" value="'+esc(b.name||'')+'" placeholder="例如：微信bot小号"></div>'+
+  '<div class="form-row"><label>Bot Token（ilink bot_token，扫码登录后自动填入）</label><input class="input" id="wxToken" type="password" value="" placeholder="'+(b.hasToken?'已保存，留空则不修改':'扫码登录后自动获得')+'"></div>'+
+  '<div class="form-row"><label>iLink Bot ID（ilink_bot_id）</label><input class="input" id="wxBotId" value="'+esc(b.ilinkBotId||'')+'" placeholder="扫码后自动获得，如 xxx@im.bot"></div>'+
+  '<div class="form-row"><label>使用模型（留空用 qtai-sj）</label><input class="input" id="wxModel" value="'+esc(b.aiModel||'')+'" placeholder="qtai-sj"></div>'+
+  '<div class="form-row"><label>系统人设 / System Prompt（可选）</label><textarea class="input" id="wxPrompt" rows="3" placeholder="例如：你是綦桐小助理…">'+esc(b.systemPrompt||'')+'</textarea></div>';
+ openModal(b.id?'编辑微信机器人':'添加微信机器人', html, function(){
+  var name=$('wxName').value.trim();
+  if(!name){ toast('名称必填', false); return; }
+  api('/api/weixin/bots',{method:'POST',body:{
+   id:b.id||0, name:name,
+   botToken:$('wxToken').value.trim(),
+   ilinkBotId:$('wxBotId').value.trim(),
+   aiModel:$('wxModel').value.trim()||'qtai-sj',
+   systemPrompt:$('wxPrompt').value, enabled:true
+  }}).then(function(r){
+   if(r.code===0){ toast('保存成功', true); closeModal(); wxLoadBots(); } else toast(r.msg||'保存失败', false);
+  });
  });
 }
 function wxRestart(id){
@@ -71,8 +77,11 @@ function wxScan(){
   var box=$('wxScanBox'); if(!box) return;
   var d=r.data||{};
   if(d.qrcodeUrl){
-   box.innerHTML = '<img src="'+esc(d.qrcodeUrl)+'" style="width:220px;height:220px;border-radius:10px;border:1px solid var(--border)"/><br/>'+
-    '<div style="margin-top:12px;font-size:13px;color:var(--muted)">扫码后等待确认…</div>'+
+   // qrcode_img_content 是扫码链接（liteapp.weixin.qq.com），不是图片；用公共 QR API 把它渲染成二维码图片
+   var qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encodeURIComponent(d.qrcodeUrl);
+   box.innerHTML = '<img src="'+esc(qrImg)+'" style="width:220px;height:220px;border-radius:10px;border:1px solid var(--border)" onerror="this.onerror=null;this.src=&#39;https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=&#39;+encodeURIComponent(\''+esc(d.qrcodeUrl)+'\')"/><br/>'+
+    '<div style="margin-top:12px;font-size:13px;color:var(--muted)">用微信「扫一扫」扫上面的码 → 手机上确认 → 自动完成连接</div>'+
+    '<div style="margin-top:8px"><a href="'+esc(d.qrcodeUrl)+'" target="_blank" style="font-size:12px;color:var(--primary)">二维码打不开？点这里在微信打开</a></div>'+
     '<div id="wxScanStatus" style="margin-top:8px;font-size:12px;color:var(--muted)">等待扫码…</div>';
    // 每 5 秒轮询 confirm，直到连接成功/过期
    var qrcode = d.qrcode;
