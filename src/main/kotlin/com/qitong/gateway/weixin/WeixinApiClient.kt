@@ -99,12 +99,13 @@ class WeixinApiClient {
         }
     }
 
-    /** 拉取登录二维码：返回 (qrcode, qrcodeUrl) */
+    /** 拉取登录二维码：返回 (qrcode, 二维码图片URL) */
     fun fetchQrCode(localTokenList: List<String> = emptyList()): Pair<String, String> {
         val body = JSONObject().put("local_token_list", JSONArray(localTokenList)).toString()
         val resp = apiPost("ilink/bot/get_bot_qrcode?bot_type=$BOT_TYPE", body)
         val qrcode = resp.optString("qrcode")
-        val url = resp.optString("qrcode_url").ifBlank { resp.optString("url") }
+        // 官方字段：qrcode_img_content（二维码图片URL/内容）；兼容 qrcode_url
+        val url = resp.optString("qrcode_img_content").ifBlank { resp.optString("qrcode_url").ifBlank { resp.optString("url") } }
         if (qrcode.isBlank()) throw RuntimeException("二维码获取失败: ${resp.toString().take(200)}")
         return qrcode to url
     }
@@ -114,6 +115,37 @@ class WeixinApiClient {
         var ep = "ilink/bot/get_qrcode_status?qrcode=${java.net.URLEncoder.encode(qrcode, "UTF-8")}"
         if (!verifyCode.isNullOrBlank()) ep += "&verify_code=${java.net.URLEncoder.encode(verifyCode, "UTF-8")}"
         return apiGet(ep, timeoutMs)
+    }
+
+    /**
+     * 轮询扫码状态直到 confirmed（微信 bot 扫码连接核心闭环）。
+     * 返回解析后的登录结果对象，调用方负责保存 bot_token / ilink_bot_id。
+     * 超时返回 null；expired 返回空对象由调用方提示重扫。
+     */
+    fun waitQrConfirmed(qrcode: String, timeoutMs: Long = 300000): JSONObject? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var last = JSONObject()
+        while (System.currentTimeMillis() < deadline) {
+            val r = try { pollQrStatus(qrcode, null, 35000) } catch (e: Exception) { JSONObject().put("status", "wait") }
+            last = r
+            val status = r.optString("status")
+            when (status) {
+                "confirmed" -> {
+                    val botToken = r.optString("bot_token")
+                    val botId = r.optString("ilink_bot_id")
+                    return if (botToken.isNotBlank() && botId.isNotBlank()) {
+                        JSONObject().put("connected", true).put("bot_token", botToken)
+                            .put("ilink_bot_id", botId).put("ilink_user_id", r.optString("ilink_user_id"))
+                            .put("baseurl", r.optString("baseurl"))
+                    } else null
+                }
+                "expired" -> return JSONObject().put("status", "expired")
+                "binded_redirect" -> return JSONObject().put("status", "binded_redirect")
+                "need_verifycode" -> return JSONObject().put("status", "need_verifycode")
+            }
+            try { Thread.sleep(1500) } catch (_: InterruptedException) { break }
+        }
+        return if (last.optString("status") == "wait") null else last
     }
 
     /**

@@ -61,18 +61,32 @@ function wxDel(id){
  api('/api/weixin/bots/'+id,{method:'DELETE'}).then(function(){ toast('已删除'); wxLoadBots(); });
 }
 // ---- 扫码登录 ----
+var wxScanTimer = null;
 function wxScan(){
  var el=$('wxPane'); if(!el) return;
+ if(wxScanTimer){ clearInterval(wxScanTimer); wxScanTimer=null; }
  el.innerHTML = '<div class="action-bar"><button class="btn" onclick="wxScan()">重新生成二维码</button><button class="btn-ghost" onclick="wxLoadBots()">返回列表</button>'+
-  '<span style="font-size:12px;color:var(--muted)">用微信「扫一扫」扫码 → 手机上确认 → 自动完成登录（二维码 5 分钟有效）</span></div><div id="wxScanBox" style="text-align:center;padding:30px">生成中…</div>';
+  '<span style="font-size:12px;color:var(--muted)">用微信「扫一扫」扫码 → 手机上确认 → 自动完成连接（微信 bot 扫码）</span></div><div id="wxScanBox" style="text-align:center;padding:30px">生成中…</div>';
  api('/api/weixin/qrcode').then(function(r){
   var box=$('wxScanBox'); if(!box) return;
   var d=r.data||{};
   if(d.qrcodeUrl){
    box.innerHTML = '<img src="'+esc(d.qrcodeUrl)+'" style="width:220px;height:220px;border-radius:10px;border:1px solid var(--border)"/><br/>'+
-    '<div style="margin-top:12px;font-size:13px;color:var(--muted)">扫码后等待确认…（登录成功会写入机器人列表）</div>'+
-    '<div style="margin-top:8px;font-size:11px;color:var(--muted)">qrcode: '+esc(d.qrcode||'')+'</div>';
-   setTimeout(wxLoadBots, 60000); // 1 分钟后回列表看是否登录成功
+    '<div style="margin-top:12px;font-size:13px;color:var(--muted)">扫码后等待确认…</div>'+
+    '<div id="wxScanStatus" style="margin-top:8px;font-size:12px;color:var(--muted)">等待扫码…</div>';
+   // 每 5 秒轮询 confirm，直到连接成功/过期
+   var qrcode = d.qrcode;
+   wxScanTimer = setInterval(function(){
+    api('/api/weixin/qrcode/confirm',{method:'POST',body:{qrcode:qrcode}}).then(function(resp){
+     var st=$('wxScanStatus'); if(!st) return;
+     var result = (resp.data&&resp.data.result)||'';
+     st.innerHTML = esc(result);
+     if(result.indexOf('✅')===0 || result.indexOf('❌')===0 || result.indexOf('ℹ️')===0 || result.indexOf('⚠️')===0){
+      clearInterval(wxScanTimer); wxScanTimer=null;
+      if(result.indexOf('✅')===0){ setTimeout(wxLoadBots, 1500); }
+     }
+    }).catch(function(){ /* 网络抖动忽略，下轮重试 */ });
+   }, 5000);
   } else {
    box.innerHTML = '<div style="color:var(--red)">二维码获取失败：'+esc(d.message||'未知错误')+'</div>';
   }

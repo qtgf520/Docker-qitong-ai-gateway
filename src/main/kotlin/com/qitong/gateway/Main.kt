@@ -790,6 +790,16 @@ fun Application.moduleWeb(database: Database) {
                 AdminApi.fail(call, "二维码获取失败：${e.message}", 500)
             }
         }
+        // ★ v69b 扫码确认闭环：轮询直到微信 bot 扫码 confirmed，自动保存并启动
+        post("/api/weixin/qrcode/confirm") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val qrcode = body["qrcode"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (qrcode.isBlank()) { AdminApi.fail(call, "缺少 qrcode 参数", 400); return@post }
+            // 长轮询最多 5 分钟：用协程跑避免阻塞请求线程（简化：直接同步最多 35s 轮询几轮，前端定时刷新）
+            AdminApi.ok(call, mapOf("result" to com.qitong.gateway.weixin.WeixinBotManager.confirmQrLogin(qrcode)), "ok")
+        }
         post("/api/weixin/bots") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }

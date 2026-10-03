@@ -72,6 +72,32 @@ object WeixinBotManager {
 
     fun getQrCode(): Pair<String, String> = api.fetchQrCode()
 
+    /**
+     * ★ v69b 扫码确认闭环：轮询二维码直到 confirmed，拿到 bot_token/ilink_bot_id 后自动保存并启动
+     * @return 结果文本（成功/失败原因）
+     */
+    fun confirmQrLogin(qrcode: String, timeoutMs: Long = 300000): String {
+        val d = db ?: return "❌ 数据库未就绪"
+        val r = api.waitQrConfirmed(qrcode, timeoutMs) ?: return "⏳ 等待扫码超时（5分钟），请重新生成二维码"
+        val status = r.optString("status")
+        if (status == "expired") return "❌ 二维码已过期，请重新生成"
+        if (status == "binded_redirect") return "ℹ️ 该微信 bot 已连接过，无需重复扫码"
+        if (status == "need_verifycode") return "⚠️ 需要输入配对码（手机微信显示的 4 位数字），当前版本请稍后重试"
+        val botToken = r.optString("bot_token")
+        val botId = r.optString("ilink_bot_id")
+        if (botToken.isBlank() || botId.isBlank()) return "❌ 登录确认失败（未返回 bot_token/ilink_bot_id）"
+        // 已存在同名 bot 则更新，否则新建
+        val existing = d.getWeixinBots().firstOrNull { it.ilinkBotId == botId }
+        val bot = if (existing != null) existing.copy(botToken = botToken, enabled = true)
+        else com.qitong.gateway.weixin.WeixinBot(
+            name = "微信bot-" + botId.substringBefore("@"),
+            botToken = botToken, ilinkBotId = botId, enabled = true
+        )
+        d.saveWeixinBot(bot)
+        startBot(bot)
+        return "✅ 微信 bot 扫码连接成功！\n🆔 bot_id: $botId\n📊 已自动保存并启动长轮询\n\n现在微信里发「绑定账号 用户名 密码」即可管理网关"
+    }
+
     // ============ 消息分发 ============
 
     private fun handleMessage(bot: WeixinBot, msg: WeixinMessage) {
