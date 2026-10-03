@@ -23,6 +23,8 @@ object WeixinBotManager {
     private val runtime = ConcurrentHashMap<Long, WeixinRuntimeState>()
     private val pendingBind = ConcurrentHashMap<String, Pair<Int, String>>()
     private val lastReplyTs = ConcurrentHashMap<String, Long>()
+    // ★ v74 每用户多轮上下文（微信 openid 隔离，对齐 QQ history）
+    private val history = ConcurrentHashMap<String, MutableList<Pair<String, String>>>()
     private var db: Database? = null
     private var gatewayPort = 18889
 
@@ -235,15 +237,17 @@ object WeixinBotManager {
         val last = lastReplyTs[msg.from] ?: 0L
         if (System.currentTimeMillis() - last < 3000) return
         lastReplyTs[msg.from] = System.currentTimeMillis()
-        send("🤔 正在思考…")
-        val reply = askModel(bot, msg, t, bound?.id ?: 0L)
+        // ★ v74 思考过程也推送（AI 自己讲在干嘛）——发送回调传给 askModel
+        send("🤔 收到，让我想想怎么帮你…")
+        val reply = askModel(bot, msg, t, bound?.id ?: 0L) { thinkMsg -> d.addWeixinLog(bot.id, msg.from, "think", thinkMsg, 0); send(thinkMsg) }
         if (!reply.isNullOrBlank()) send(reply) else send("⚠️ 抱歉，我这边处理失败了，请再试一次")
         d.addWeixinLog(bot.id, msg.from, "ai", t, System.currentTimeMillis() - t0)
     }
 
-    /** loopback 调用网关大脑（qtai-sj 走沙盒 Agent 循环，其他模型走普通对话） */
-    private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long): String? {
+    /** loopback 调用网关大脑（qtai-sj 走完整沙盒 Agent 循环：思考推送→调工具→结果回填→多轮） */
+    private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long, send: (String) -> Unit): String? {
         val d = db ?: return null
+        val key = msg.from  // 每用户上下文隔离
         val sandboxOn = bot.aiModel.equals("qtai-sj", true)
         // ★ v71 人设优先：用户设置的 systemPrompt 始终注入（qtai-sj 时追加到沙盒提示词后，不被覆盖）
         val userPrompt = bot.systemPrompt.trim()
@@ -253,42 +257,87 @@ object WeixinBotManager {
         } else {
             userPrompt.ifBlank { "你是綦桐小助理，运行在綦桐AI网关微信渠道。" }
         }
-        val body = JSONObject()
-            .put("model", bot.aiModel)
-            .put("messages", JSONArray()
-                .put(JSONObject().put("role", "system").put("content", baseSys))
-                .put(JSONObject().put("role", "user").put("content", userText)))
-            .put("stream", false)
-            .put("temperature", 0.8)
-            .toString()
+        val hist = history.getOrPut(key) { mutableListOf() }
         return try {
+            // 第一次请求：带上下文
+            val msgs = JSONArray().put(JSONObject().put("role", "system").put("content", baseSys))
+            hist.forEach { (r, c) -> msgs.put(JSONObject().put("role", r).put("content", c)) }
+            msgs.put(JSONObject().put("role", "user").put("content", userText))
+            val body = JSONObject()
+                .put("model", bot.aiModel)
+                .put("messages", msgs)
+                .put("stream", false)
+                .put("temperature", 0.8)
+                .toString()
             val req = Request.Builder()
                 .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
                 .addHeader("Content-Type", "application/json")
                 .post(body.toRequestBody(jsonCt))
                 .build()
-            http.newCall(req).execute().use { resp ->
+            var content = http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return null
-                var content = JSONObject(resp.body?.string().orEmpty())
+                JSONObject(resp.body?.string().orEmpty())
                     .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
                     ?.optString("content")?.trim().orEmpty()
-                // qtai-sj 沙盒 Agent 循环（单轮工具执行，结果回填）
-                if (sandboxOn && content.isNotBlank()) {
-                    val isAdmin = d.getWeixinUserPerm(msg.from) >= 3 ||
-                        d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
-                    val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
-                    if (calls.isNotEmpty()) {
-                        val sb = StringBuilder()
-                        for ((fn, args) in calls) {
-                            val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d)
-                            sb.append("【$fn 执行结果】\n$r\n")
-                        }
-                        content = cleanFunctionTags(content) + "\n\n" + sb.toString().trim()
-                    }
-                }
-                content
             }
-        } catch (e: Exception) { null }
+            // ★ v74 qtai-sj 完整 Agent 循环：思考推送 → 解析函数 → 执行 → 结果回填 → 再调模型（最多5轮）
+            if (sandboxOn && content.isNotBlank()) {
+                val isAdmin = d.getWeixinUserPerm(msg.from) >= 3 ||
+                    d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
+                var loop = 0
+                while (loop < 5) {
+                    loop++
+                    val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
+                    if (calls.isEmpty()) break
+                    val results = StringBuilder()
+                    for ((fn, args) in calls) {
+                        // 💭 思考推送：AI 自己讲在干嘛、调了什么工具（像真人一样）
+                        val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
+                        send("💭 我在帮你处理，正在调用 ${fn}(${argTxt})…")
+                        val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d)
+                        results.append("【$fn 执行结果】\n$r\n")
+                        send("✅ $fn：${r.take(300)}")
+                    }
+                    val cleanText = cleanFunctionTags(content)
+                    // 结果回填给模型继续决策
+                    val nextBody = JSONObject()
+                        .put("model", bot.aiModel)
+                        .put("messages", JSONArray()
+                            .put(JSONObject().put("role", "system").put("content", baseSys))
+                            .put(JSONObject().put("role", "user").put("content", userText))
+                            .put(JSONObject().put("role", "assistant").put("content", cleanText))
+                            .put(JSONObject().put("role", "user").put("content",
+                                "【工具执行结果（已同步给用户）】\n$results\n\n根据结果：如果任务完成，直接给出简洁总结（不要复述工具输出）；如果还需要其他操作，继续调用工具。"))) .toString()
+                    val nextReq = Request.Builder()
+                        .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
+                        .addHeader("Content-Type", "application/json")
+                        .post(nextBody.toRequestBody(jsonCt))
+                        .build()
+                    val nextContent = http.newCall(nextReq).execute().use { resp2 ->
+                        if (!resp2.isSuccessful) null
+                        else JSONObject(resp2.body?.string().orEmpty())
+                            .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                            ?.optString("content")?.trim().orEmpty()
+                    }
+                    if (nextContent.isNullOrBlank()) {
+                        content = cleanText + "\n\n" + results
+                        break
+                    }
+                    content = nextContent
+                }
+                hist.add("user" to userText)
+                hist.add("assistant" to cleanFunctionTags(content))
+                while (hist.size > 20) hist.removeAt(0)
+            } else {
+                hist.add("user" to userText)
+                hist.add("assistant" to content)
+                while (hist.size > 20) hist.removeAt(0)
+            }
+            cleanFunctionTags(content)
+        } catch (e: Exception) {
+            System.err.println("[WeixinBot] 模型调用异常: ${e.message}")
+            null
+        }
     }
 
     /** 清洗回复里的函数调用标签（防 XML/JSON 泄漏给用户，对齐 QQ 侧逻辑） */
