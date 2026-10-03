@@ -223,6 +223,12 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v3.18.22-69（2026-10-03）· 微信 ilink 通道（微信扫码登录 + 微信管理网关）
+- 📱 **微信通道上线**：新增 `weixin/` 包（对齐 QQ 结构）——微信个人号通过腾讯官方 ilink Bot API 接入，扫码登录后可直接在微信里管理网关
+- 🔐 **协议实测**：基于官方 @tencent-weixin/openclaw-weixin@2.4.9 源码——get_bot_qrcode 扫码 / getupdates 长轮询收消息(35s) / sendmessage 发消息 / 游标续传 / ret=-14 风控暂停1h
+- 🛡 **管理能力**：微信里发「绑定账号 用户名 密码」或「绑定码 xxx」绑定网关账号；管理员可查状态/余额/体检/管理指令（非管理员拦截）
+- 🗄 **存储**：新增 weixin_bots / weixin_user_bindings / weixin_logs 三表；后台管理 API（/api/weixin/*）+ 启动自动拉起
+- ⚠️ 个人微信自动化有风控/封号风险（官方通道风险最低），接口为腾讯灰度能力可能变更
 ### v3.18.22-68（2026-10-03）· 终端危险命令加固（防删容器/镜像/数据）
 - 🛡 **危险命令黑名单加固**：TerminalManager + SandboxEngine 同步新增 docker 全家桶拦截（docker rm/rmi/volume/network/compose down/stop/kill/prune/restart）+ 高危系统操作（systemctl stop、kill -9 1、umount、mv /、cp -r / /、crontab -r、userdel、find / -delete、fork炸弹等）
 - 🚨 **事故复盘**：线上容器被删根因——旧黑名单只拦 rm -rf / 等，未拦 docker 命令；已用现有镜像+数据恢复线上（数据库 gateway.db 完好）

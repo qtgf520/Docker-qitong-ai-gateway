@@ -1,6 +1,7 @@
 package com.qitong.gateway.db
 
 import com.qitong.gateway.model.*
+import com.qitong.gateway.weixin.WeixinBot
 import java.math.BigDecimal
 import java.sql.Connection
 import java.sql.DriverManager
@@ -349,6 +350,43 @@ class Database(private val dbPath: String) {
             // 旧库迁移：补 app_secret / use_sandbox 列（已存在则忽略）
             runCatching { st.executeUpdate("ALTER TABLE qq_bots ADD COLUMN app_secret TEXT NOT NULL DEFAULT ''") }
             runCatching { st.executeUpdate("ALTER TABLE qq_bots ADD COLUMN use_sandbox INTEGER NOT NULL DEFAULT 0") }
+            // ★ v69 微信 ilink 机器人（多号管理，对齐 qq_bots）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS weixin_bots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL DEFAULT '',
+                    bot_token TEXT NOT NULL DEFAULT '',
+                    ilink_bot_id TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    ai_model TEXT NOT NULL DEFAULT 'qtai-sj',
+                    system_prompt TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            // ★ v69 微信用户绑定（对齐 qq_user_bindings）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS weixin_user_bindings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    wx_openid TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    bound_user_id INTEGER NOT NULL DEFAULT 0,
+                    perm_level INTEGER NOT NULL DEFAULT 1,
+                    perm_flags TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            // ★ v69 微信运行日志（对齐 qq_logs）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS weixin_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL DEFAULT 0,
+                    wx_openid TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL DEFAULT '',
+                    latency_ms INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
             // QQ 群配置（按群 openid 隔离：AI开关/欢迎语/人格覆盖）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_groups (
@@ -1942,6 +1980,101 @@ class Database(private val dbPath: String) {
             stmt("UPDATE qq_user_bindings SET perm_level=?, perm_flags=? WHERE qq_openid=?", level.coerceIn(0, 4), flags, openid)
         }
     }
+    fun getQqUserPerm(openid: String): Int {
+        return (queryOne("SELECT perm_level FROM qq_user_bindings WHERE qq_openid=?", openid) as? Number)?.toInt() ?: 1
+    }
+
+    // ============ 微信 ilink 机器人（v69，对齐 QQ 结构） ============
+
+    fun getWeixinBots(): List<WeixinBot> =
+        query("SELECT * FROM weixin_bots ORDER BY id").map { row ->
+            WeixinBot(
+                id = (row["id"] as Number).toLong(),
+                name = row["name"] as? String ?: "",
+                botToken = row["bot_token"] as? String ?: "",
+                ilinkBotId = row["ilink_bot_id"] as? String ?: "",
+                enabled = (row["enabled"] as? Number)?.toInt() != 0,
+                aiModel = row["ai_model"] as? String ?: "qtai-sj",
+                systemPrompt = row["system_prompt"] as? String ?: "",
+                createdAt = (row["created_at"] as? Number)?.toLong() ?: 0L
+            )
+        }
+
+    fun getWeixinBotById(id: Long): WeixinBot? =
+        query("SELECT * FROM weixin_bots WHERE id=?", id).firstOrNull()?.let { row ->
+            WeixinBot(
+                id = (row["id"] as Number).toLong(),
+                name = row["name"] as? String ?: "",
+                botToken = row["bot_token"] as? String ?: "",
+                ilinkBotId = row["ilink_bot_id"] as? String ?: "",
+                enabled = (row["enabled"] as? Number)?.toInt() != 0,
+                aiModel = row["ai_model"] as? String ?: "qtai-sj",
+                systemPrompt = row["system_prompt"] as? String ?: "",
+                createdAt = (row["created_at"] as? Number)?.toLong() ?: 0L
+            )
+        }
+
+    fun saveWeixinBot(b: WeixinBot) {
+        if (b.id > 0) {
+            stmt("UPDATE weixin_bots SET name=?, bot_token=?, ilink_bot_id=?, enabled=?, ai_model=?, system_prompt=? WHERE id=?",
+                b.name, b.botToken, b.ilinkBotId, if (b.enabled) 1 else 0, b.aiModel, b.systemPrompt, b.id)
+        } else {
+            stmt("INSERT INTO weixin_bots (name,bot_token,ilink_bot_id,enabled,ai_model,system_prompt,created_at) VALUES (?,?,?,?,?,?,?)",
+                b.name, b.botToken, b.ilinkBotId, if (b.enabled) 1 else 0, b.aiModel, b.systemPrompt, System.currentTimeMillis())
+        }
+    }
+
+    fun deleteWeixinBot(id: Long) { stmt("DELETE FROM weixin_bots WHERE id=?", id) }
+
+    /** 绑定微信 openid 到网关账号 users.id */
+    fun setWeixinUserBound(openid: String, userId: Long) {
+        val exists = queryOne("SELECT COUNT(*) FROM weixin_user_bindings WHERE wx_openid=?", openid) ?: 0
+        if (exists == 0L) stmt("INSERT INTO weixin_user_bindings (wx_openid,bound_user_id,created_at) VALUES (?,?,?)", openid, userId, System.currentTimeMillis())
+        else stmt("UPDATE weixin_user_bindings SET bound_user_id=? WHERE wx_openid=?", userId, openid)
+    }
+
+    /** 获取微信 openid 绑定的网关账号 User（未绑定返回 null） */
+    fun getWeixinBoundUser(openid: String): com.qitong.gateway.model.User? {
+        val boundId = (queryOne("SELECT bound_user_id FROM weixin_user_bindings WHERE wx_openid=?", openid) as? Number)?.toLong() ?: 0
+        return if (boundId > 0) getUserById(boundId) else null
+    }
+
+    fun clearWeixinUserBound(openid: String) {
+        stmt("UPDATE weixin_user_bindings SET bound_user_id=0 WHERE wx_openid=?", openid)
+    }
+
+    fun setWeixinUserPerm(openid: String, level: Int) {
+        val exists = queryOne("SELECT COUNT(*) FROM weixin_user_bindings WHERE wx_openid=?", openid) ?: 0
+        if (exists == 0L) stmt("INSERT INTO weixin_user_bindings (wx_openid,perm_level,created_at) VALUES (?,?,?)", openid, level.coerceIn(0, 4), System.currentTimeMillis())
+        else stmt("UPDATE weixin_user_bindings SET perm_level=? WHERE wx_openid=?", level.coerceIn(0, 4), openid)
+    }
+
+    fun getWeixinUserPerm(openid: String): Int {
+        return (queryOne("SELECT perm_level FROM weixin_user_bindings WHERE wx_openid=?", openid) as? Number)?.toInt() ?: 1
+    }
+
+    /** 微信运行日志（只保留最近 50 条，对齐 qq_logs） */
+    fun addWeixinLog(botId: Long, wxOpenid: String, type: String, content: String, latencyMs: Long = 0) {
+        stmt("INSERT INTO weixin_logs (bot_id,wx_openid,type,content,latency_ms,created_at) VALUES (?,?,?,?,?,?)",
+            botId, wxOpenid, type, content.take(500), latencyMs, System.currentTimeMillis())
+        runCatching {
+            val cnt = (queryOne("SELECT COUNT(*) FROM weixin_logs") as? Number)?.toLong() ?: 0
+            if (cnt > 50) stmt("DELETE FROM weixin_logs WHERE id NOT IN (SELECT id FROM weixin_logs ORDER BY id DESC LIMIT 50)")
+        }
+    }
+
+    fun getWeixinLogs(limit: Int = 200): List<Map<String, Any?>> =
+        query("SELECT * FROM weixin_logs ORDER BY id DESC LIMIT $limit").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "botId" to ((row["bot_id"] as? Number)?.toLong() ?: 0L),
+                "wxOpenid" to (row["wx_openid"] as? String ?: ""),
+                "type" to (row["type"] as? String ?: ""),
+                "content" to (row["content"] as? String ?: ""),
+                "latencyMs" to ((row["latency_ms"] as? Number)?.toLong() ?: 0L),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
 
     fun getQqUsers(limit: Int = 200): List<Map<String, Any?>> =
         query("SELECT * FROM qq_user_bindings ORDER BY last_active_at DESC LIMIT $limit").map { row ->
