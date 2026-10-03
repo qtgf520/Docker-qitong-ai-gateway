@@ -145,6 +145,7 @@ ${adminCss()}
       <a data-page="rules"><svg viewBox="0 0 24 24"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg><b>路由规则</b></a>
       <a data-page="keys"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><b>API密钥</b></a>
       <a data-page="qqbot" class="admin-only"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg><b>QQ机器人</b></a>
+      <a data-page="weixin" class="admin-only"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/><path d="M9 6.5a3 3 0 0 1 6 0"/></svg><b>微信机器人</b></a>
       <div class="nav-group">工具</div>
       <a data-page="chat"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><b>内置聊天</b></a>
       <a data-page="tickets"><svg viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.83z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><b>工单中心</b></a>
@@ -171,6 +172,7 @@ ${adminCss()}
     <div id="view-chat" class="view"></div>
     <div id="view-keys" class="view"></div>
     <div id="view-qqbot" class="view"></div>
+    <div id="view-weixin" class="view"></div>
     <div id="view-rules" class="view"></div>
     <div id="view-usage" class="view"></div>
     <div id="view-tickets" class="view"></div>
@@ -487,6 +489,6 @@ background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none;box-
 }
 """.trimIndent()
 
-    /** 后台 JS：核心 + 模型测速聊天 + 密钥规则用量用户 + UX 增强包 + QQ + 技能工作流MCP */
-    fun adminJs(): String = "var APP_VER = '" + VER + "';\n" + AdminJs1.js() + AdminJs2.js() + AdminJs3.js() + AdminJs4.js() + AdminJs5.js() + AdminJs6.js()
+    /** 后台 JS：核心 + 模型测速聊天 + 密钥规则用量用户 + UX 增强包 + QQ + 技能工作流MCP + 微信 */
+    fun adminJs(): String = "var APP_VER = '" + VER + "';\n" + AdminJs1.js() + AdminJs2.js() + AdminJs3.js() + AdminJs4.js() + AdminJs5.js() + AdminJs6.js() + AdminJs7.js()
 }
