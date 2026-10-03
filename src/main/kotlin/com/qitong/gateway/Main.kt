@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-69
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-70
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-69    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-70    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -187,7 +187,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-69"))
+                put("version", JsonPrimitive("3.18.22-70"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -805,20 +805,29 @@ fun Application.moduleWeb(database: Database) {
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
             val body = call.receive<JsonObject>()
             val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
+            // ★ v70 编辑保存不覆盖 token：botToken 为空且已存在 → 保留原 token（防止编辑后机器人死）
+            val old = if (id > 0) database.getWeixinBotById(id) else null
+            val newToken = body["botToken"]?.jsonPrimitive?.content ?: ""
+            val botToken = if (newToken.isBlank() && old != null) old.botToken else newToken
             val bot = com.qitong.gateway.weixin.WeixinBot(
                 id = id,
                 name = body["name"]?.jsonPrimitive?.content ?: "微信机器人",
-                botToken = body["botToken"]?.jsonPrimitive?.content ?: "",
-                ilinkBotId = body["ilinkBotId"]?.jsonPrimitive?.content ?: "",
-                enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
+                botToken = botToken,
+                ilinkBotId = body["ilinkBotId"]?.jsonPrimitive?.content ?: old?.ilinkBotId ?: "",
+                enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: (old?.enabled ?: true),
                 aiModel = body["aiModel"]?.jsonPrimitive?.content ?: "qtai-sj",
                 systemPrompt = body["systemPrompt"]?.jsonPrimitive?.content ?: ""
             )
             database.saveWeixinBot(bot)
-            val saved = database.getWeixinBots().lastOrNull { it.name == bot.name } ?: bot
+            // ★ v70 保存后取真实 id（不能用 name 匹配——重名会取错）
+            val saved = if (id > 0) {
+                database.getWeixinBotById(id)
+            } else {
+                database.getWeixinBots().lastOrNull { it.ilinkBotId == bot.ilinkBotId && it.name == bot.name }
+            } ?: bot
             if (saved.enabled && saved.botToken.isNotBlank()) com.qitong.gateway.weixin.WeixinBotManager.startBot(saved)
             else com.qitong.gateway.weixin.WeixinBotManager.stopBot(saved.id)
-            AdminApi.ok(call, mapOf("id" to saved.id), "微信机器人已保存")
+            AdminApi.ok(call, mapOf("id" to saved.id, "token" to saved.botToken.isNotBlank()), "微信机器人已保存")
         }
         delete("/api/weixin/bots/{id}") {
             val u = call.requireAuth(database) ?: return@delete
@@ -1620,7 +1629,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-69"))
+                put("version", JsonPrimitive("3.18.22-70"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2340,7 +2349,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-69"))
+                    put("version", JsonPrimitive("3.18.22-70"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

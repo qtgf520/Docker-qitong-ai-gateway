@@ -106,7 +106,10 @@ object WeixinBotManager {
             botToken = botToken, ilinkBotId = botId, enabled = true
         )
         d.saveWeixinBot(bot)
-        startBot(bot)
+        // ★ v70 用保存后的真实 id 启动（避免 id=0 存到 clients 导致状态查不到=一直停止）
+        val saved = d.getWeixinBots().lastOrNull { it.ilinkBotId == botId }
+            ?: d.getWeixinBots().lastOrNull { it.name == bot.name }
+        if (saved != null) startBot(saved)
         return "✅ 微信 bot 扫码连接成功！\n🆔 bot_id: $botId\n📊 已自动保存并启动长轮询\n\n现在微信里发「绑定账号 用户名 密码」即可管理网关"
     }
 
