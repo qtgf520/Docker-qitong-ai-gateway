@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-71
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-72
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-71    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-72    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -187,7 +187,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-71"))
+                put("version", JsonPrimitive("3.18.22-72"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -772,6 +772,7 @@ fun Application.moduleWeb(database: Database) {
                 mapOf(
                     "id" to b.id, "name" to b.name, "enabled" to b.enabled,
                     "aiModel" to b.aiModel, "ilinkBotId" to b.ilinkBotId,
+                    "systemPrompt" to (b.systemPrompt ?: ""),
                     "hasToken" to b.botToken.isNotBlank(),
                     "online" to (st.status == com.qitong.gateway.weixin.WeixinBotStatus.ONLINE),
                     "status" to st.status.name, "lastError" to st.lastError,
@@ -860,6 +861,37 @@ fun Application.moduleWeb(database: Database) {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
             AdminApi.ok(call, database.getWeixinLogs(limit = 200), "ok")
+        }
+        // ★ v72 微信动态概览（对齐 QQ overview）
+        get("/api/weixin/overview") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val bots = database.getWeixinBots()
+            val totalMsgs = com.qitong.gateway.weixin.WeixinBotManager.allStatus().values.sumOf { it.messagesHandled }
+            val onlineCount = com.qitong.gateway.weixin.WeixinBotManager.allStatus().values.count { it.status == com.qitong.gateway.weixin.WeixinBotStatus.ONLINE }
+            AdminApi.ok(call, mapOf(
+                "bots" to bots.map { b ->
+                    val st = com.qitong.gateway.weixin.WeixinBotManager.statusOf(b.id)
+                    mapOf("id" to b.id, "name" to b.name, "online" to (st.status == com.qitong.gateway.weixin.WeixinBotStatus.ONLINE),
+                        "status" to st.status.name, "lastError" to st.lastError, "messagesHandled" to st.messagesHandled)
+                },
+                "overview" to mapOf("totalMessages" to totalMsgs, "onlineBots" to onlineCount, "totalBots" to bots.size)
+            ), "ok")
+        }
+        // ★ v72 微信日志单条删除
+        delete("/api/weixin/logs/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            database.deleteWeixinLog(id)
+            AdminApi.ok(call, null, "日志已删除")
+        }
+        // ★ v72 微信日志清空
+        post("/api/weixin/logs/clear") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            database.clearWeixinLogs()
+            AdminApi.ok(call, null, "日志已清空")
         }
         // QQ 动态概览（流动面板数据源）
         get("/api/qq/overview") {
@@ -1629,7 +1661,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-71"))
+                put("version", JsonPrimitive("3.18.22-72"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2349,7 +2381,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-71"))
+                    put("version", JsonPrimitive("3.18.22-72"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

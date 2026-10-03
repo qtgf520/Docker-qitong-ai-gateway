@@ -2076,6 +2076,11 @@ class Database(private val dbPath: String) {
             )
         }
 
+    /** ★ v72 微信日志单条删除 */
+    fun deleteWeixinLog(id: Long) { stmt("DELETE FROM weixin_logs WHERE id=?", id) }
+    /** ★ v72 微信日志清空 */
+    fun clearWeixinLogs() { stmt("DELETE FROM weixin_logs") }
+
     fun getQqUsers(limit: Int = 200): List<Map<String, Any?>> =
         query("SELECT * FROM qq_user_bindings ORDER BY last_active_at DESC LIMIT $limit").map { row ->
             mapOf(

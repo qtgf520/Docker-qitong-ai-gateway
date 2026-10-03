@@ -8,13 +8,37 @@ object AdminJs7 {
   var box = $('view-weixin');
   if(!box) return;
   box.innerHTML = '<div class="card"><div class="qq-tabs">'+
-   '<button class="log-tab" onclick="wxLoadBots()">🤖 机器人</button>'+
-   '<button class="log-tab" onclick="wxScan()">📱 扫码登录</button>'+
-   '<button class="log-tab" onclick="wxLoadLogs()">📋 运行日志</button></div>'+
+   '<button class="log-tab" onclick="wxTab(0)">📊 动态预览</button>'+
+   '<button class="log-tab" onclick="wxTab(1)">🤖 机器人</button>'+
+   '<button class="log-tab" onclick="wxTab(2)">📱 扫码登录</button>'+
+   '<button class="log-tab" onclick="wxTab(3)">📋 运行日志</button></div>'+
    '<div id="wxPane"><div style="color:var(--muted);padding:20px">加载中…</div></div></div>';
-  wxLoadBots();
+  wxTab(0);
  };
+var wxTabIdx = 0;
+function wxTab(i){ wxTabIdx = i; if(i===0) wxOverview(); else if(i===1) wxLoadBots(); else if(i===2) wxScan(); else if(i===3) wxLoadLogs(); }
 function wxTime(ts){ if(!ts) return '-'; var d=new Date(ts); return d.toLocaleString('zh-CN',{hour12:false}); }
+// ★ v72 微信动态预览（对齐 QQ 动态概览）
+ var wxFeedTimer = null;
+function wxOverview(){
+ var el=$('wxPane'); if(!el) return;
+ el.innerHTML = '<div id="wxOverview"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
+ api('/api/weixin/overview').then(function(r){
+  var box=$('wxOverview'); if(!box) return;
+  var d=r.data||{}; var ov=d.overview||{}; var bots=d.bots||[];
+  var stats = '<div class="grid grid-4" style="margin-bottom:14px">'+
+   '<div class="stat"><div class="num">'+(ov.totalMessages||0)+'</div><div class="lbl">累计消息</div></div>'+
+   '<div class="stat"><div class="num" style="color:var(--green)">'+(ov.onlineBots||0)+'/'+(ov.totalBots||0)+'</div><div class="lbl">在线机器人</div></div>'+
+   '<div class="stat"><div class="num">'+(bots.length)+'</div><div class="lbl">已配机器人</div></div></div>';
+  var rows=bots.map(function(b){
+   return '<tr><td><b>'+esc(b.name||'未命名')+'</b></td>'+
+    '<td>'+(b.online?'<span class="badge green">在线</span>':'<span class="badge gray">'+(b.status||'离线')+'</span>')+'</td>'+
+    '<td>'+(b.messagesHandled||0)+'</td>'+
+    '<td style="font-size:11px;color:var(--red)">'+esc(b.lastError||'')+'</td></tr>';
+  }).join('');
+  box.innerHTML = stats + '<div style="overflow-x:auto"><table class="tb"><thead><tr><th>名称</th><th>状态</th><th>消息数</th><th>最近错误</th></tr></thead><tbody>'+(rows||'<tr><td colspan="4" style="color:var(--muted)">暂无机器人，点「📱扫码登录」接入</td></tr>')+'</tbody></table></div>';
+ }).catch(function(){ var el2=$('wxOverview'); if(el2) el2.innerHTML='<div style="color:var(--red);padding:16px">加载失败</div>'; });
+}
 // ---- 机器人列表 ----
 function wxLoadBots(){
  var el=$('wxPane'); if(!el) return;
@@ -122,17 +146,29 @@ function wxScan(){
 function wxLoadLogs(){
  var el=$('wxPane'); if(!el) return;
  el.innerHTML = '<div class="action-bar"><button class="btn-ghost" onclick="wxLoadLogs()">刷新</button>'+
-  '<span style="font-size:12px;color:var(--muted)">微信通道运行日志（最近 200 条）</span></div><div id="wxLogList"></div>';
+  '<button class="btn-ghost danger" onclick="wxLogsClear()">🗑 清空全部</button>'+
+  '<span style="font-size:12px;color:var(--muted)">微信通道运行日志（单条可删，最近 200 条）</span></div><div id="wxLogList"></div>';
  api('/api/weixin/logs').then(function(r){
   var box=$('wxLogList'); if(!box) return;
   var list=r.data||[];
   if(!list.length){ box.innerHTML='<div style="color:var(--muted);padding:18px">暂无日志</div>'; return; }
   box.innerHTML = list.map(function(l){
-   return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">'+
-    '<span style="color:var(--muted)">'+wxTime(l.createdAt)+'</span> <code>'+esc(l.type||'')+'</code> '+
-    '<span>'+esc(l.content||'')+'</span></div>';
+   return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;display:flex;align-items:center;gap:8px">'+
+    '<span style="color:var(--muted);flex-shrink:0">'+wxTime(l.createdAt)+'</span> <code>'+esc(l.type||'')+'</code> '+
+    '<span style="flex:1;word-break:break-all">'+esc(l.content||'')+'</span>'+
+    '<button class="btn-ghost btn-sm danger" onclick="wxLogDel('+l.id+')">删</button></div>';
   }).join('');
  });
+}
+// ★ v72 单条删除
+function wxLogDel(id){
+ if(!confirm('确认删除该条日志？')) return;
+ api('/api/weixin/logs/'+id,{method:'DELETE'}).then(function(r){ toast(r.msg||'已删除', r.code===0); wxLoadLogs(); });
+}
+// ★ v72 清空全部
+function wxLogsClear(){
+ if(!confirm('确认清空全部微信日志？')) return;
+ api('/api/weixin/logs/clear',{method:'POST'}).then(function(r){ toast(r.msg||'已清空', r.code===0); wxLoadLogs(); });
 }
 """
 }

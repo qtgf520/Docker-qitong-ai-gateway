@@ -28,17 +28,37 @@ object AdminJs8 {
    }).join('')+'</div></div>'+
    '<div class="card" style="margin-top:14px"><div style="font-size:14px;font-weight:700;margin-bottom:10px">📊 通道状态一览</div><div id="aiToolsStatus" style="font-size:13px;color:var(--muted)">加载中…</div></div>';
   box.innerHTML = html;
-  // 状态一览
+  // ★ v72 真融合：状态一览加载真实数据（QQ/微信/插件/游戏/工作流/技能）
   var statusHtml = '';
-  api('/api/qq/bots').then(function(r){
-   var bots=r.data||[];
-   statusHtml += '💬 QQ机器人：<b>'+(bots.filter(function(b){return b.online}).length)+'</b>/'+bots.length+' 在线<br/>';
-   api('/api/weixin/bots').then(function(w){
-    var wx=w.data||[];
-    statusHtml += '💚 微信bot：<b>'+(wx.filter(function(b){return b.online}).length)+'</b>/'+wx.length+' 在线<br/>';
-    var el=$('aiToolsStatus'); if(el) el.innerHTML = statusHtml + '<span style="color:var(--muted)">（点击上方卡片进入对应功能）</span>';
-   });
-  }).catch(function(){ var el=$('aiToolsStatus'); if(el) el.innerHTML='状态加载失败'; });
+  var loadSeq = 0;
+  function refreshStatus(){
+   loadSeq++;
+   var seq = loadSeq;
+   api('/api/qq/overview').then(function(r){
+    if(seq!==loadSeq) return;
+    var d=r.data||{}; var ov=d.overview||{}; var bots=d.bots||[];
+    statusHtml = '💬 QQ机器人：<b>'+(bots.filter(function(b){return b.online}).length)+'</b>/'+bots.length+' 在线 · 消息 '+(ov.todayMessages||0)+'<br/>';
+    api('/api/weixin/overview').then(function(w){
+     if(seq!==loadSeq) return;
+     var wd=w.data||{}; var wov=wd.overview||{}; var wx=wd.bots||[];
+     statusHtml += '💚 微信bot：<b>'+(wov.onlineBots||0)+'</b>/'+(wx.length||0)+' 在线 · 消息 '+(wov.totalMessages||0)+'<br/>';
+     // 插件/游戏/工作流统计
+     api('/api/qq/plugins').then(function(p){
+      if(seq!==loadSeq) return;
+      var plugins=(p.data||[]).length;
+      statusHtml += '🧩 插件：<b>'+plugins+'</b> 个<br/>';
+      api('/api/workflows').then(function(wf){
+       if(seq!==loadSeq) return;
+       var wfs=(wf.data||[]).length;
+       statusHtml += '⚙️ 工作流：<b>'+wfs+'</b> 个<br/>';
+       statusHtml += '🎮 游戏：QQ群内置 81 款 · 微信可复用<br/>⏰ 提醒：QQ/微信通用<br/>🧠 qtai-sj：全部工具自由调度';
+       var el=$('aiToolsStatus'); if(el) el.innerHTML = statusHtml;
+      });
+     });
+    });
+   }).catch(function(){ var el=$('aiToolsStatus'); if(el) el.innerHTML='状态加载失败（可能权限不足）'; });
+  }
+  refreshStatus();
  };
 // 跳页
 function goPage(pg){ switchView(pg); }
