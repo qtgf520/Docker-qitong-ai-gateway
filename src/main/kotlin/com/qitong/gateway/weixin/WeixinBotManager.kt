@@ -25,6 +25,8 @@ object WeixinBotManager {
     private val lastReplyTs = ConcurrentHashMap<String, Long>()
     // ★ v74 每用户多轮上下文（微信 openid 隔离，对齐 QQ history）
     private val history = ConcurrentHashMap<String, MutableList<Pair<String, String>>>()
+    // ★ v75 停止信号：用户发「停止/停一下/中断」→ 打断当前 Agent 思考/执行（大模型自由调度感知停止，对齐 QQ）
+    private val stopSignals = ConcurrentHashMap<String, Boolean>()
     private var db: Database? = null
     private var gatewayPort = 18889
 
@@ -162,6 +164,15 @@ object WeixinBotManager {
             return
         }
 
+        // ★ v75 停止指令：用户发「停止/停一下/中断/不干了」→ 打断当前 Agent 思考/执行（大模型自由调度感知，对齐 QQ）
+        if (t.equals("停止", true) || t.equals("停", true) || t.equals("停一下", true) ||
+            t.equals("中断", true) || t.equals("不干了", true) || t.equals("算了", true) || t.equals("停止执行", true)) {
+            stopSignals[msg.from] = true
+            send("🛑 已停止任务（用户中断）。")
+            d.addWeixinLog(bot.id, msg.from, "command", "停止指令", System.currentTimeMillis() - t0)
+            return
+        }
+
         // 管理指令（白名单 + 权限校验）
         val bound = d.getWeixinBoundUser(msg.from)
         val isAdmin = bound?.let { it.role == "admin" || it.role == "agent" } == true ||
@@ -192,9 +203,30 @@ object WeixinBotManager {
             t.startsWith("管理 ") && isAdmin -> {
                 val cmd = t.substringAfter(" ").trim()
                 when {
-                    cmd == "状态" || cmd == "status" -> send("✅ 网关运行中（微信通道在线）")
-                    cmd == "机器人" -> send("🤖 微信机器人运行中")
-                    else -> send("📋 管理指令示例：\n管理 状态 / 管理 机器人 / 管理 重启\n（更多能力开发中）")
+                    cmd == "状态" || cmd == "status" -> {
+                        val r = kotlinx.coroutines.runBlocking { com.qitong.gateway.http.SkillExecutor.execute(d, "600001", "", bound?.id ?: 0L) }
+                        send(r)
+                    }
+                    cmd == "体检" || cmd == "健康" || cmd == "全部功能" -> {
+                        val r = com.qitong.gateway.sandbox.SandboxEngine.execute("sys_health", emptyMap(), isAdmin, bound?.id ?: 0L, d)
+                        send(r)
+                    }
+                    cmd == "机器人" -> {
+                        val wxbots = d.getWeixinBots()
+                        val online = wxbots.count { it.enabled && runCatching { statusOf(it.id).status == WeixinBotStatus.ONLINE }.getOrDefault(false) }
+                        val qqbotCount = runCatching { d.getQqBots().size }.getOrDefault(0)
+                        send("🤖 机器人状态：\n💚 微信bot：$online/${wxbots.size} 在线\n💙 QQ机器人：$qqbotCount 个配置\n\n发「体检」看全功能在线状态")
+                    }
+                    cmd == "模型" -> {
+                        val r = kotlinx.coroutines.runBlocking { com.qitong.gateway.http.SkillExecutor.execute(d, "600008", "", bound?.id ?: 0L) }
+                        send(r)
+                    }
+                    cmd == "余额" -> {
+                        val r = com.qitong.gateway.sandbox.SandboxEngine.execute("user_balance", emptyMap(), isAdmin, bound?.id ?: 0L, d)
+                        send(r)
+                    }
+                    cmd == "重启" -> send("🔄 微信通道重启指令已收到（网关自动维护，无需手动重启）")
+                    else -> send("📋 管理指令（管理员）：\n管理 状态 / 管理 体检 / 管理 机器人 / 管理 模型 / 管理 余额\n\n更多能力直接说需求，qtai-sj 会自动调工具帮你完成！")
                 }
                 return
             }
@@ -286,6 +318,12 @@ object WeixinBotManager {
                     d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
                 var loop = 0
                 while (loop < 5) {
+                    // ★ v75 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考（对齐 QQ v64）
+                    if (stopSignals[msg.from] == true) {
+                        stopSignals.remove(msg.from)
+                        content = "🛑 已停止任务（用户中断）。"
+                        break
+                    }
                     loop++
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
                     if (calls.isEmpty()) break
