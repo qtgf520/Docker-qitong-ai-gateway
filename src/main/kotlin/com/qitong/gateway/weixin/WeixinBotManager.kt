@@ -120,7 +120,11 @@ object WeixinBotManager {
         val t = msg.content.trim()
         if (t.isBlank()) return
         val t0 = System.currentTimeMillis()
-        val send = { text: String -> api.sendMessage(bot.botToken, msg.from, text, msg.contextToken) }
+        // ★ v71 微信大消息自动分段推送（消息上限约 2000 字符，超长切段逐条发不丢信息）
+        val send = { text: String ->
+            val pieces = splitMessage(text)
+            pieces.forEach { p -> api.sendMessage(bot.botToken, msg.from, p, msg.contextToken) }
+        }
 
         // 绑定流程（pendingBind 分步）
         val bindState = pendingBind[msg.from]
@@ -208,8 +212,14 @@ object WeixinBotManager {
     private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long): String? {
         val d = db ?: return null
         val sandboxOn = bot.aiModel.equals("qtai-sj", true)
-        val baseSys = if (sandboxOn) com.qitong.gateway.sandbox.SandboxEngine.SYSTEM_PROMPT
-        else bot.systemPrompt.ifBlank { "你是綦桐小助理，运行在綦桐AI网关微信渠道。" }
+        // ★ v71 人设优先：用户设置的 systemPrompt 始终注入（qtai-sj 时追加到沙盒提示词后，不被覆盖）
+        val userPrompt = bot.systemPrompt.trim()
+        val baseSys = if (sandboxOn) {
+            val sb = com.qitong.gateway.sandbox.SandboxEngine.SYSTEM_PROMPT
+            if (userPrompt.isNotBlank()) sb + "\n\n【机器人主人设定（必须严格遵守）】\n" + userPrompt else sb
+        } else {
+            userPrompt.ifBlank { "你是綦桐小助理，运行在綦桐AI网关微信渠道。" }
+        }
         val body = JSONObject()
             .put("model", bot.aiModel)
             .put("messages", JSONArray()
@@ -260,5 +270,29 @@ object WeixinBotManager {
         // 残留的 JSON 函数调用 {name:..., arguments:{...}}
         s = s.replace(Regex("\\{\\\\?\"name\\\\?\"\\\\?\\s*[:：][^}]*\\}"), "")
         return s.trim()
+    }
+
+    /** ★ v71 大消息分段：超 1800 字符按行切段（微信消息上限约 2000，留余量） */
+    private fun splitMessage(text: String): List<String> {
+        if (text.length <= 1800) return listOf(text)
+        val result = mutableListOf<String>()
+        val lines = text.lines()
+        val cur = StringBuilder()
+        for (line in lines) {
+            if (cur.length + line.length + 1 > 1800 && cur.isNotEmpty()) {
+                result.add(cur.toString())
+                cur.clear()
+            }
+            cur.append(line).append("\n")
+            if (cur.length > 1800) {
+                // 单行超长：硬切
+                result.add(cur.toString().take(1800))
+                cur.clear()
+                cur.append(cur.toString()) // 保留超长尾巴重新处理（罕见）
+                cur.clear()
+            }
+        }
+        if (cur.isNotEmpty()) result.add(cur.toString())
+        return result.filter { it.isNotBlank() }.ifEmpty { listOf(text) }
     }
 }

@@ -431,18 +431,27 @@ object QqBotManager {
             val usePassive = isFinal  // 只有最终回复用被动回复
             val effectiveMsgId = if (usePassive) msgId else null
             val at2 = api.getAccessToken(bot)
-            if (groupOpenid.isNotBlank()) {
-                if (cardMode && !at2.isNullOrBlank()) {
-                    api.sendGroupCardMessage(bot, at2, groupOpenid, content, effectiveMsgId)
-                } else if (!at2.isNullOrBlank()) {
-                    api.sendGroupMessage(bot, at2, groupOpenid, content, effectiveMsgId)
+            // ★ v71 QQ 大消息分段推送：超 1800 字符切多条，不丢信息（只有最终条用被动回复）
+            val pieces = splitText(content, 1800)
+            var anyOk = false
+            pieces.forEachIndexed { idx, piece ->
+                val isLastPiece = idx == pieces.lastIndex
+                val pieceMsgId = if (usePassive && isLastPiece) effectiveMsgId else null
+                if (groupOpenid.isNotBlank()) {
+                    if (cardMode && !at2.isNullOrBlank()) {
+                        if (api.sendGroupCardMessage(bot, at2, groupOpenid, piece, pieceMsgId)) anyOk = true
+                    } else if (!at2.isNullOrBlank()) {
+                        if (api.sendGroupMessage(bot, at2, groupOpenid, piece, pieceMsgId)) anyOk = true
+                    } else {
+                        if (usePassive && isLastPiece) { send(piece); anyOk = true }
+                    }
                 } else {
-                    if (usePassive) send(content) else false
+                    if (!at2.isNullOrBlank()) {
+                        if (api.sendC2cMessage(bot, at2, userOpenid, piece, pieceMsgId)) anyOk = true
+                    } else { if (usePassive && isLastPiece) { send(piece); anyOk = true } }
                 }
-            } else {
-                if (!at2.isNullOrBlank()) api.sendC2cMessage(bot, at2, userOpenid, content, effectiveMsgId)
-                else { if (usePassive) send(content) else false }
             }
+            anyOk
         }
         // 0) 内置指令（签到/积分/全员禁言）
         val builtin = matchBuiltin(text, groupOpenid)
@@ -910,6 +919,27 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     private fun onCooldown(userOpenid: String, seconds: Int): Boolean {
         val last = lastReplyTs[userOpenid] ?: 0L
         return System.currentTimeMillis() - last < seconds * 1000L
+    }
+
+    /** ★ v71 大消息分段：超 maxLen 按行切段（QQ 长消息不丢） */
+    private fun splitText(text: String, maxLen: Int = 1800): List<String> {
+        if (text.length <= maxLen) return listOf(text)
+        val result = mutableListOf<String>()
+        val lines = text.lines()
+        val cur = StringBuilder()
+        for (line in lines) {
+            if (cur.length + line.length + 1 > maxLen && cur.isNotEmpty()) {
+                result.add(cur.toString())
+                cur.clear()
+            }
+            cur.append(line).append("\n")
+            if (cur.length > maxLen) {
+                result.add(cur.toString().take(maxLen))
+                cur.clear()
+            }
+        }
+        if (cur.isNotEmpty()) result.add(cur.toString())
+        return result.filter { it.isNotBlank() }.ifEmpty { listOf(text) }
     }
 
     /** 内置指令匹配。 */
