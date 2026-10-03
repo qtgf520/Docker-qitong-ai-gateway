@@ -167,13 +167,21 @@ class WeixinApiClient {
         }
     }
 
-    /** 发文本消息：回传 context_token 表示成功 */
+    /** 发文本消息（★ v69e 对齐官方 send.js：msg 包裹 + message_type=BOT + text_item 嵌套 + base_info） */
     fun sendMessage(token: String, to: String, text: String, contextToken: String? = null): JSONObject {
-        val item = JSONObject().put("type", 1).put("content", text.take(2000))
-        val body = JSONObject()
-            .put("to", to)
+        val msg = JSONObject()
+            .put("from_user_id", "")
+            .put("to_user_id", to)
+            .put("client_id", "qitong-gateway-" + System.currentTimeMillis())
+            .put("message_type", 2)       // MessageType.BOT
+            .put("message_state", 2)      // MessageState.FINISH
+            .put("item_list", JSONArray().put(JSONObject()
+                .put("type", 1)           // MessageItemType.TEXT
+                .put("text_item", JSONObject().put("text", text.take(2000)))))
             .put("context_token", contextToken ?: "")
-            .put("item_list", JSONArray().put(item))
+        val body = JSONObject()
+            .put("msg", msg)
+            .put("base_info", JSONObject().put("channel_version", "2.4.9").put("bot_agent", "QitongAI/1.0"))
             .toString()
         return apiPost("ilink/bot/sendmessage", body, token, 15000)
     }

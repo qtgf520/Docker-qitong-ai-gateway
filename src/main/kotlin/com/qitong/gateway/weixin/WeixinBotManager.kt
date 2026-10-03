@@ -53,6 +53,18 @@ object WeixinBotManager {
             onStatusChange = { s, err ->
                 state.status = s; state.lastError = err
                 if (s == WeixinBotStatus.ONLINE) state.readyAt = System.currentTimeMillis()
+                // ★ v69e 状态写日志（后台可看连接过程）
+                runCatching {
+                    val msg = when (s) {
+                        WeixinBotStatus.ONLINE -> "✅ 微信bot已连接（长轮询在线）"
+                        WeixinBotStatus.CONNECTING -> "🔄 正在连接微信 ilink…"
+                        WeixinBotStatus.ERROR -> "❌ 连接异常：$err"
+                        WeixinBotStatus.PAUSED -> "⏸ 风控暂停：$err"
+                        WeixinBotStatus.OFFLINE -> "⏹ 已停止/离线：$err"
+                        WeixinBotStatus.LOGIN_WAIT -> "等待扫码确认"
+                    }
+                    db?.addWeixinLog(bot.id, "", "bot_status", msg, 0)
+                }
             }
         )
         clients[bot.id] = client

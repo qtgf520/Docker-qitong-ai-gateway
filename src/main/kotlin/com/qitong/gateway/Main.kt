@@ -833,7 +833,19 @@ fun Application.moduleWeb(database: Database) {
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
             val id = call.parameters["id"]?.toLongOrNull() ?: return@post
             com.qitong.gateway.weixin.WeixinBotManager.restartBot(id)
-            AdminApi.ok(call, null, "已重启")
+            AdminApi.ok(call, null, "已重连")
+        }
+        // ★ v69e 启停切换
+        post("/api/weixin/bots/{id}/toggle") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val bot = database.getWeixinBotById(id) ?: run { AdminApi.fail(call, "机器人不存在", 404); return@post }
+            val nowOn = !bot.enabled
+            database.saveWeixinBot(bot.copy(enabled = nowOn))
+            if (nowOn) com.qitong.gateway.weixin.WeixinBotManager.startBot(bot.copy(enabled = true))
+            else com.qitong.gateway.weixin.WeixinBotManager.stopBot(id)
+            AdminApi.ok(call, mapOf("enabled" to nowOn), if (nowOn) "已启用" else "已停用")
         }
         get("/api/weixin/logs") {
             val u = call.requireAuth(database) ?: return@get

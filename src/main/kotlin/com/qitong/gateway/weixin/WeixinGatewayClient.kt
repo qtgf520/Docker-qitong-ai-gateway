@@ -73,16 +73,21 @@ class WeixinGatewayClient(
     }
 
     private fun parseMessage(m: JSONObject): WeixinMessage? {
-        // 字段名以官方返回为准（兼容 msg_id/from/content/context_token）
-        val msgId = m.optString("msg_id").ifBlank { m.optString("id") }
-        if (msgId.isBlank()) return null
-        val from = m.optString("from").ifBlank { m.optString("openid") }
-        // 文本内容：content 或 item_list[0].content
-        var content = m.optString("content")
-        if (content.isBlank()) {
-            val items = m.optJSONArray("item_list")
-            if (items != null && items.length() > 0) content = items.optJSONObject(0)?.optString("content").orEmpty()
+        // ★ v69e 对齐官方 inbound.js：from_user_id + item_list[].text_item.text
+        val from = m.optString("from_user_id").ifBlank { m.optString("from").ifBlank { m.optString("openid") } }
+        val items = m.optJSONArray("item_list")
+        var content = ""
+        var msgId = m.optString("msg_id").ifBlank { m.optString("id") }
+        if (items != null && items.length() > 0) {
+            val first = items.optJSONObject(0)
+            // 文本：type=1 时 text_item.text
+            content = first?.optJSONObject("text_item")?.optString("text").orEmpty()
+            if (content.isBlank()) content = first?.optString("content").orEmpty()
+            // msg_id 可能在 item 上
+            if (msgId.isBlank()) msgId = first?.optString("msg_id").orEmpty()
         }
+        if (content.isBlank() && m.has("content")) content = m.optString("content")
+        if (msgId.isBlank()) return null
         val ctx = m.optString("context_token")
         return WeixinMessage(
             msgId = msgId,

@@ -19,23 +19,33 @@ function wxTime(ts){ if(!ts) return '-'; var d=new Date(ts); return d.toLocaleSt
 function wxLoadBots(){
  var el=$('wxPane'); if(!el) return;
  el.innerHTML = '<div class="action-bar"><button class="btn" onclick="wxForm()">+ 添加微信机器人</button><button class="btn-ghost" onclick="wxLoadBots()">刷新</button>'+
-  '<span style="font-size:12px;color:var(--muted)">微信个人号通过腾讯官方 ilink 通道接入（扫码登录，token 本地存储）</span></div><div id="wxBotList"></div>';
+  '<span style="font-size:12px;color:var(--muted)">微信 bot（腾讯官方 ilink 通道）扫码接入，token 本地存储</span></div><div style="overflow-x:auto"><div id="wxBotList"></div></div>';
  api('/api/weixin/bots').then(function(r){
   var box=$('wxBotList'); if(!box) return;
   var list=r.data||[];
   if(!list.length){ box.innerHTML='<div style="color:var(--muted);padding:18px">暂无微信机器人，点「+ 添加」或「📱 扫码登录」接入</div>'; return; }
   var rows=list.map(function(b){
+   var statusTxt = b.online ? '<span class="badge green">在线</span>' : '<span class="badge gray">'+(b.status||'离线')+'</span>';
    return '<tr><td><b>'+esc(b.name||'未命名')+'</b></td>'+
-    '<td>'+(b.online?'<span class="badge green">在线</span>':'<span class="badge gray">'+(b.status||'离线')+'</span>')+'</td>'+
+    '<td>'+statusTxt+'</td>'+
     '<td>'+(b.messagesHandled||0)+'</td>'+
     '<td style="font-size:11px;color:var(--red)">'+esc(b.lastError||'')+'</td>'+
     '<td style="white-space:nowrap">'+
-    '<button class="btn-ghost btn-sm" onclick="wxForm('+JSON.stringify(b).replace(/\"/g,'"')+')">编辑</button> '+
+    '<button class="btn-ghost btn-sm" onclick="wxEdit('+b.id+')">编辑</button> '+
     '<button class="btn-ghost btn-sm" onclick="wxRestart('+b.id+')">重连</button> '+
+    '<button class="btn-ghost btn-sm" onclick="wxToggle('+b.id+')">'+(b.enabled?'停用':'启用')+'</button> '+
     '<button class="btn-ghost btn-sm danger" onclick="wxDel('+b.id+')">删</button></td></tr>';
   }).join('');
   box.innerHTML = '<table class="tb"><thead><tr><th>名称</th><th>状态</th><th>消息数</th><th>最近错误</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table>';
  }).catch(function(e){ el.innerHTML='<div style="color:var(--red);padding:16px">加载失败：'+esc(e.message||e)+'</div>'; });
+}
+// ★ v69e 编辑改为传 ID 拉取（避免 JSON 引号闭合 onclick 老坑）
+function wxEdit(id){
+ api('/api/weixin/bots').then(function(r){
+  var list=r.data||[];
+  var b=list.filter(function(x){return x.id===id;})[0]||{};
+  wxForm(b);
+ });
 }
 function wxForm(b){
  b=b||{};
@@ -60,7 +70,14 @@ function wxForm(b){
  });
 }
 function wxRestart(id){
- api('/api/weixin/bots/'+id+'/restart',{method:'POST'}).then(function(){ toast('已重连'); setTimeout(wxLoadBots,800); });
+ api('/api/weixin/bots/'+id+'/restart',{method:'POST'}).then(function(r){ toast(r.msg||'已重连', r.code===0); setTimeout(wxLoadBots,800); });
+}
+// ★ v69e 启停切换
+function wxToggle(id){
+ api('/api/weixin/bots/'+id+'/toggle',{method:'POST'}).then(function(r){
+  toast(r.msg||'', r.code===0);
+  if(r.code===0) setTimeout(wxLoadBots,800);
+ });
 }
 function wxDel(id){
  if(!confirm('确认删除该微信机器人？')) return;
