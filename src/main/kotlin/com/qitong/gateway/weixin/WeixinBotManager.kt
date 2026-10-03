@@ -198,6 +198,39 @@ object WeixinBotManager {
             }
         }
 
+        // ★ v73 微信功能对齐 QQ：技能/游戏/插件/工作流/提醒 走同一套
+        // 1) 网关技能（查状态/排行/余额/模型/启停 等，绑定账号身份）
+        com.qitong.gateway.qq.QqBotManager.matchGatewaySkillPublic(t)?.let { (code, param) ->
+            val r = kotlinx.coroutines.runBlocking { com.qitong.gateway.http.SkillExecutor.execute(d, code, param, bound?.id ?: 0L) }
+            send(r)
+            d.addWeixinLog(bot.id, msg.from, "skill", "[$code] $t", System.currentTimeMillis() - t0)
+            return
+        }
+        // 2) 文字游戏（猜数字/成语接龙/骰子/抽卡，复用 QQ 游戏状态）
+        val gameR = com.qitong.gateway.qq.QqBotManager.handleGamePublic(msg.from, t)
+        if (gameR != null) { send(gameR); return }
+        // 3) 插件（QQ 插件包：菜单 + 命令脚本，微信直接可用）
+        val pluginR = com.qitong.gateway.qq.QqBotManager.matchPluginPublic(t, msg.from)
+        if (pluginR != null) { send(pluginR.second); return }
+        // 4) 工作流（按名称触发）
+        if (t.startsWith("执行工作流", true) || t.startsWith("触发工作流", true)) {
+            val wfName = t.substringAfter(" ").trim()
+            val wfs = try { d.getWorkflows(0) } catch (e: Exception) { emptyList() }
+            val wf = wfs.firstOrNull { (it["name"] as? String)?.contains(wfName, true) == true }
+            if (wf == null) send("❌ 未找到工作流「$wfName」")
+            else {
+                val stepsJson = try { org.json.JSONArray(wf["steps"] as? String ?: "[]") } catch (e: Exception) { org.json.JSONArray() }
+                val sb = StringBuilder("⚙️ 工作流「${wf["name"]}」执行：\n")
+                for (i in 0 until stepsJson.length()) {
+                    val step = stepsJson.optJSONObject(i) ?: continue
+                    val out = com.qitong.gateway.http.WorkflowEngine.runStep(d, step.optString("type", "reply"), step.optString("content", ""))
+                    sb.append("【${i + 1}·${step.optString("type", "reply")}】\n$out\n\n")
+                }
+                send(sb.toString().trim())
+            }
+            return
+        }
+
         // AI 对话（loopback 网关大脑；冷却 3s）
         val last = lastReplyTs[msg.from] ?: 0L
         if (System.currentTimeMillis() - last < 3000) return

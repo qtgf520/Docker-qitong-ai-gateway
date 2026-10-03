@@ -942,6 +942,15 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return result.filter { it.isNotBlank() }.ifEmpty { listOf(text) }
     }
 
+    /** ★ v73 微信通道复用：网关技能匹配（public 暴露） */
+    fun matchGatewaySkillPublic(text: String): Pair<String, String>? = matchGatewaySkill(text)
+
+    /** ★ v73 微信通道复用：文字游戏（public 暴露） */
+    fun handleGamePublic(userOpenid: String, text: String): String? = handleGame(userOpenid, text)
+
+    /** ★ v73 微信通道复用：插件匹配（public 暴露） */
+    fun matchPluginPublic(text: String, userOpenid: String): Pair<String, String>? = matchPlugin(text, userOpenid)
+
     /** 内置指令匹配。 */
     private fun matchBuiltin(text: String, groupOpenid: String): Pair<String, String>? {
         val t = text.trim()
