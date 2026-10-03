@@ -46,6 +46,22 @@ object WeixinBotManager {
         runCatching { database.getWeixinBots().filter { it.enabled }.forEach { startBot(it) } }
     }
 
+    /** ★ v76 全网广播（心跳/计划任务到期推送给所有在线微信 bot 的最近联系人） */
+    fun broadcastAll(text: String) {
+        try {
+            val bots = db?.getWeixinBots()?.filter { it.enabled } ?: return
+            bots.forEach { bot ->
+                val st = statusOf(bot.id)
+                if (st.status != WeixinBotStatus.ONLINE) return@forEach
+                // 找最近活跃联系人（从历史上下文反查，没有则跳过）
+                val recent = history.entries.filter { it.value.isNotEmpty() }.maxByOrNull { entry ->
+                    entry.value.lastOrNull()?.second?.length ?: 0
+                }?.key ?: return@forEach
+                api.sendMessage(bot.botToken, recent, text, "")
+            }
+        } catch (e: Exception) { System.err.println("[WeixinBot] broadcastAll 异常: ${e.message}") }
+    }
+
     fun startBot(bot: WeixinBot) {
         stopBot(bot.id)
         if (bot.botToken.isBlank()) return
@@ -265,6 +281,38 @@ object WeixinBotManager {
             return
         }
 
+        // 5) ★ v76 提醒/计划任务（微信复用 scheduled_tasks 表，心跳扫描到期推送）
+        if (t.startsWith("提醒", true) && (t.contains("分钟后", true) || t.contains("小时后", true) || t.contains("秒后", true))) {
+            val m = Regex("""提醒我?\s*(\d+)\s*(秒|分钟|小时)后\s*(.*)""").find(t)
+            if (m == null) { send("⚠️ 语法：提醒我 10分钟后 喝水"); return }
+            val num = m.groupValues[1].toLongOrNull() ?: 10
+            val unit = m.groupValues[2]
+            val content = m.groupValues[3].ifBlank { "时间到！" }
+            val delayMs = when (unit) { "秒" -> num * 1000; "小时" -> num * 3600_000L; else -> num * 60_000L }
+            if (delayMs < 5000) { send("⚠️ 提醒时间太短（至少5秒）"); return }
+            d.addScheduledTask("weixin", msg.from, "remind", content, System.currentTimeMillis() + delayMs)
+            send("⏰ 好的，${num}${unit}后提醒你：$content（可发「查看提醒」/「取消提醒」管理）")
+            d.addWeixinLog(bot.id, msg.from, "remind", "设置提醒 $content", System.currentTimeMillis() - t0)
+            return
+        }
+        if (t.equals("查看提醒", true) || t.equals("我的提醒", true)) {
+            val mine = d.getScheduledTasks(channel = "weixin", userOpenid = msg.from, status = "pending")
+            if (mine.isEmpty()) send("📭 你当前没有提醒")
+            else send("📋 我的提醒（${mine.size}条）：\n" + mine.mapIndexed { i, r ->
+                val remain = ((r["runAt"] as? Long ?: 0) - System.currentTimeMillis())
+                "${i+1}. ${r["content"]}（${if (remain > 0) "剩${remain / 60_000L}分" else "已到期"}）"
+            }.joinToString("\n"))
+            return
+        }
+        if (t.startsWith("取消提醒", true)) {
+            val n = t.substringAfter("取消提醒").trim().toIntOrNull()
+            val mine = d.getScheduledTasks(channel = "weixin", userOpenid = msg.from, status = "pending")
+            if (n == null || n < 1 || n > mine.size) { send("⚠️ 请输入有效序号，如「取消提醒 1」"); return }
+            d.cancelScheduledTask((mine[n-1]["id"] as? Number)?.toLong() ?: 0L, msg.from)
+            send("✅ 已取消提醒：${mine[n-1]["content"]}")
+            return
+        }
+
         // AI 对话（loopback 网关大脑；冷却 3s）
         val last = lastReplyTs[msg.from] ?: 0L
         if (System.currentTimeMillis() - last < 3000) return
@@ -283,11 +331,23 @@ object WeixinBotManager {
         val sandboxOn = bot.aiModel.equals("qtai-sj", true)
         // ★ v71 人设优先：用户设置的 systemPrompt 始终注入（qtai-sj 时追加到沙盒提示词后，不被覆盖）
         val userPrompt = bot.systemPrompt.trim()
-        val baseSys = if (sandboxOn) {
+        var baseSys = if (sandboxOn) {
             val sb = com.qitong.gateway.sandbox.SandboxEngine.SYSTEM_PROMPT
             if (userPrompt.isNotBlank()) sb + "\n\n【机器人主人设定（必须严格遵守）】\n" + userPrompt else sb
         } else {
             userPrompt.ifBlank { "你是綦桐小助理，运行在綦桐AI网关微信渠道。" }
+        }
+        // ★ v76 微信长期记忆：绑定账号后按 userId 注入大脑记忆（每条消息带上下文，对齐 QQ）
+        if (userId > 0) {
+            runCatching {
+                val mems = d.getMemories(userId, limit = 8)
+                if (mems.isNotEmpty()) {
+                    val memSection = "\n\n【你对这位用户的长期记忆】\n" + mems.reversed().joinToString("\n") { m ->
+                        "- ${m["content"]}"
+                    }
+                    baseSys += memSection
+                }
+            }
         }
         val hist = history.getOrPut(key) { mutableListOf() }
         return try {
@@ -332,7 +392,7 @@ object WeixinBotManager {
                         // 💭 思考推送：AI 自己讲在干嘛、调了什么工具（像真人一样）
                         val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
                         send("💭 我在帮你处理，正在调用 ${fn}(${argTxt})…")
-                        val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d)
+                        val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
                         results.append("【$fn 执行结果】\n$r\n")
                         send("✅ $fn：${r.take(300)}")
                     }
@@ -370,6 +430,16 @@ object WeixinBotManager {
                 hist.add("user" to userText)
                 hist.add("assistant" to content)
                 while (hist.size > 20) hist.removeAt(0)
+            }
+            // ★ v76 微信记忆存储：绑定账号后把有信息量的话存大脑记忆（对话期间存储，下次带上下文；受 memory_enabled 开关控制）
+            if (userId > 0 && !sandboxOn && d.getConfig("memory_enabled", "true") != "false") {
+                runCatching {
+                    val memText = userText.trim()
+                    if (memText.length in 4..200 && !memText.startsWith("绑定") && !memText.startsWith("停止") &&
+                        !memText.startsWith("管理") && memText != "我的账号" && memText != "退出账号") {
+                        d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
+                    }
+                }
             }
             cleanFunctionTags(content)
         } catch (e: Exception) {

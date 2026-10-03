@@ -216,10 +216,11 @@ object QqBotManager {
                 }.onFailure { e -> System.err.println("[QQBot] 掉线重登检查异常: ${e.message}") }
             }
         }
-        // ★ v47 自主心跳（对齐 Kai Heartbeat）：每 30 分钟自检，发现问题推送到第一个启用机器人的第一个群
+        // ★ v47 自主心跳（对齐 Kai Heartbeat）：每 N 分钟自检，发现问题推送到 QQ 群 + 微信（双渠道）
         runCatching {
             com.qitong.gateway.sandbox.HeartbeatEngine.onIssue = { msg ->
                 runCatching {
+                    // QQ 群推送
                     val bots = database.getQqBots().filter { (it["enabled"] as? Boolean) == true }
                     if (bots.isNotEmpty()) {
                         val b = botFromRow(bots.first())
@@ -232,6 +233,8 @@ object QqBotManager {
                             }
                         }
                     }
+                    // ★ v76 微信双渠道推送（心跳/计划任务到期也到微信）
+                    com.qitong.gateway.weixin.WeixinBotManager.broadcastAll(msg)
                 }
             }
             com.qitong.gateway.sandbox.HeartbeatEngine.start(database)
@@ -250,6 +253,9 @@ object QqBotManager {
         systemPrompt = row["systemPrompt"] as? String ?: "",
         welcome = row["welcome"] as? String ?: ""
     )
+
+    /** ★ v76 公开版 botFromRow（沙盒启停 QQ 机器人用） */
+    fun botFromRowPublic(row: Map<String, Any?>): QqBot = botFromRow(row)
 
     fun startBot(bot: QqBot) {
         stopBot(bot.id)

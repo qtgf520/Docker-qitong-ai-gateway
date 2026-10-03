@@ -545,6 +545,20 @@ class Database(private val dbPath: String) {
             )
             // 旧库迁移：补群字段（已存在则忽略）；旧表是 openid 单主键 → 若已建旧表则加列
             runCatching { st.executeUpdate("ALTER TABLE qq_points ADD COLUMN group_openid TEXT NOT NULL DEFAULT ''") }
+
+            // ★ v76 计划任务表（AI 安排未来执行任务：提醒/稍后操作）
+            st.execute(
+                """CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel TEXT NOT NULL DEFAULT 'qq',          -- qq / weixin
+                    user_openid TEXT NOT NULL DEFAULT '',
+                    task_type TEXT NOT NULL DEFAULT 'remind',     -- remind / action
+                    content TEXT NOT NULL DEFAULT '',
+                    run_at INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'pending',       -- pending / done / cancelled
+                    created_at INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
         }
     }
 
@@ -1201,6 +1215,50 @@ class Database(private val dbPath: String) {
 
     fun clearMemories(userId: Long) {
         stmt("DELETE FROM brain_memory WHERE user_id=?", userId)
+    }
+
+    // ============ 计划任务（v76：AI 安排未来执行任务） ============
+
+    fun addScheduledTask(channel: String, userOpenid: String, taskType: String, content: String, runAt: Long): Long {
+        stmt(
+            "INSERT INTO scheduled_tasks (channel,user_openid,task_type,content,run_at,status,created_at) VALUES (?,?,?,?,?,?,?)",
+            channel, userOpenid, taskType, content, runAt, "pending", System.currentTimeMillis()
+        )
+        return lastInsertId()
+    }
+
+    fun getScheduledTasks(channel: String? = null, userOpenid: String? = null, status: String? = null, limit: Int = 100): List<Map<String, Any?>> {
+        val conds = mutableListOf<String>()
+        val args = mutableListOf<Any>()
+        if (channel != null) { conds.add("channel=?"); args.add(channel) }
+        if (userOpenid != null) { conds.add("user_openid=?"); args.add(userOpenid) }
+        if (status != null) { conds.add("status=?"); args.add(status) }
+        val where = if (conds.isEmpty()) "" else " WHERE " + conds.joinToString(" AND ")
+        return query("SELECT * FROM scheduled_tasks$where ORDER BY run_at ASC LIMIT $limit", *args.toTypedArray()).map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "channel" to (it["channel"] as? String ?: ""),
+                "userOpenid" to (it["user_openid"] as? String ?: ""),
+                "taskType" to (it["task_type"] as? String ?: "remind"),
+                "content" to (it["content"] as? String ?: ""),
+                "runAt" to ((it["run_at"] as? Number)?.toLong() ?: 0),
+                "status" to (it["status"] as? String ?: "pending"),
+                "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    }
+
+    /** 到期且 pending 的任务（心跳扫描用） */
+    fun getDueScheduledTasks(now: Long): List<Map<String, Any?>> =
+        getScheduledTasks(status = "pending").filter { (it["runAt"] as? Long ?: 0) <= now }
+
+    fun markScheduledTaskDone(id: Long) {
+        stmt("UPDATE scheduled_tasks SET status='done' WHERE id=?", id)
+    }
+
+    fun cancelScheduledTask(id: Long, userOpenid: String? = null) {
+        if (userOpenid != null) stmt("UPDATE scheduled_tasks SET status='cancelled' WHERE id=? AND user_openid=?", id, userOpenid)
+        else stmt("UPDATE scheduled_tasks SET status='cancelled' WHERE id=?", id)
     }
 
     // ============ 配置（替代 SharedPreferences） ============

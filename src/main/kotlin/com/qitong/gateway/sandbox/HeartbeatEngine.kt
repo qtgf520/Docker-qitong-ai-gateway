@@ -21,13 +21,27 @@ object HeartbeatEngine {
     private val running = AtomicBoolean(false)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** 心跳间隔：默认 30 分钟（可从系统配置 heartbeat_interval_minutes 覆盖） */
-    @Volatile var intervalMs: Long = 30 * 60 * 1000L
+    /** 心跳间隔：默认 60 分钟（可从系统配置 heartbeat_interval_minutes 覆盖） */
+    @Volatile var intervalMs: Long = 60 * 60 * 1000L
 
     /** 自检回调：发现问题时推送（传入检查结果文本） */
     @Volatile var onIssue: ((String) -> Unit)? = null
 
-    /** 启动心跳（幂等）：从系统配置读 heartbeat_enabled / heartbeat_interval_minutes */
+    /** 心跳提示词（可从配置 heartbeat_prompt 覆盖，写入自检输出） */
+    @Volatile var prompt: String = ""
+
+    /** 活跃时段（24h 制，默认 5:00-23:00，可从配置 heartbeat_active_start/heartbeat_active_end 覆盖） */
+    @Volatile var activeStartHour: Int = 5
+    @Volatile var activeEndHour: Int = 23
+
+    /** 是否处于活跃时段（供循环判断） */
+    private fun inActiveWindow(): Boolean {
+        val h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        return if (activeStartHour <= activeEndHour) h >= activeStartHour && h < activeEndHour
+        else h >= activeStartHour || h < activeEndHour  // 跨午夜
+    }
+
+    /** 启动心跳（幂等）：从系统配置读 heartbeat_enabled / heartbeat_interval_minutes / 活跃时段 / 提示词 */
     fun start(db: Database) {
         if (started) return
         val enabled = db.getConfig("heartbeat_enabled", "true") != "false"
@@ -35,16 +49,23 @@ object HeartbeatEngine {
             println("[Heartbeat] 心跳未启用（heartbeat_enabled=false），跳过")
             return
         }
-        val minutes = db.getConfig("heartbeat_interval_minutes", "30").toIntOrNull() ?: 30
+        val minutes = db.getConfig("heartbeat_interval_minutes", "60").toIntOrNull() ?: 60
         intervalMs = minutes.coerceIn(5, 24 * 60) * 60 * 1000L
+        prompt = db.getConfig("heartbeat_prompt", "")
+        activeStartHour = db.getConfig("heartbeat_active_start", "5").toIntOrNull() ?: 5
+        activeEndHour = db.getConfig("heartbeat_active_end", "23").toIntOrNull() ?: 23
         started = true
         job = scope.launch {
+            // 启动后立即自检一次
+            runCatching { checkOnce(db) }
             while (isActive) {
                 delay(intervalMs)
-                runCatching { checkOnce(db) }
+                // ★ v76 活跃时段内才自检（无用户输入时检查记忆+任务）
+                if (inActiveWindow()) runCatching { checkOnce(db) }
+                else println("[Heartbeat] 非活跃时段，跳过本轮自检")
             }
         }
-        println("[Heartbeat] 自主心跳已启动，间隔 $minutes 分钟")
+        println("[Heartbeat] 自主心跳已启动，间隔 $minutes 分钟（活跃时段 ${activeStartHour}:00-${activeEndHour}:00）")
     }
 
     /** 停止心跳（可从沙盒/设置页调用） */
@@ -92,11 +113,31 @@ object HeartbeatEngine {
                 }
             }
 
-            // 5. 高重要性未处理记忆（importance >= 9 视为待办）
+            // 5. 高重要性未处理记忆（importance >= 9 视为待办） + 到期计划任务
             runCatching {
                 val todos = db.getMemories(0, limit = 50).filter { (it["importance"] as? Number)?.toInt() ?: 0 >= 9 }
                 if (todos.isNotEmpty()) okLines.add("📌 有 ${todos.size} 条高优先级记忆待回顾")
             }
+            // ★ v76 到期计划任务检查（无用户输入时也能跑，受 scheduled_tasks_enabled 开关控制）
+            runCatching {
+                if (db.getConfig("scheduled_tasks_enabled", "true") != "false") {
+                    val dueTasks = db.getDueScheduledTasks(System.currentTimeMillis())
+                    if (dueTasks.isNotEmpty()) {
+                        okLines.add("⏰ 有 ${dueTasks.size} 条计划任务到期：")
+                        dueTasks.forEach { task ->
+                            okLines.add("  · [${task["channel"]}] ${task["content"]}")
+                            // 标记完成（推送回调里处理实际送达）
+                            db.markScheduledTaskDone((task["id"] as? Number)?.toLong() ?: 0L)
+                        }
+                        // 到期的计划任务内容放进 result（有实质内容就推送）
+                        dueTasks.forEach { task ->
+                            issues.add("⏰ 计划任务到期：${task["content"]}")
+                        }
+                    }
+                }
+            }
+            // ★ v76 心跳提示词注入（用户自定义）
+            if (prompt.isNotBlank()) okLines.add("💬 心跳提示词：$prompt")
 
             val result = if (issues.isNotEmpty()) {
                 "🔔 【自主心跳自检 ${java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date())}】\n" +

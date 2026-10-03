@@ -51,11 +51,20 @@ object SandboxEngine {
             .put(func("web_search", "联网搜索信息（只读）", "user", "read", listOf(param("query", true, "搜索关键词")), "搜索结果摘要"))
             .put(func("workflow_run", "执行工作流（按名称触发，管理员）", "admin", "modify", listOf(param("name", true, "工作流名称")), "工作流执行结果"))
             .put(func("workflow_list", "查看已配置工作流列表（管理员）", "admin", "read", emptyList(), "工作流名称/触发词/步骤数"))
+            .put(func("heartbeat_get", "查看自主心跳完整配置（只读）", "admin", "read", emptyList(), "心跳开关/间隔/活跃时段/提示词"))
             .put(func("heartbeat_status", "查看自主心跳状态（只读）", "user", "read", emptyList(), "心跳是否运行/间隔分钟"))
             .put(func("sys_health", "全功能在线体检（只读）：网关/模型/服务商/心跳/QQ机器人/终端/工作流/MCP/磁盘 一键检查", "user", "read", emptyList(), "各功能在线状态汇总"))
-            .put(func("heartbeat_start", "启动自主心跳（修改）", "admin", "modify", listOf(param("minutes", false, "间隔分钟，默认30")), "启动结果"))
+            .put(func("heartbeat_start", "启动自主心跳（修改）", "admin", "modify", listOf(param("minutes", false, "间隔分钟，默认60"), param("start", false, "活跃时段开始（24h制，默认5）"), param("end", false, "活跃时段结束（24h制，默认23）"), param("prompt", false, "心跳提示词，可选")), "启动结果"))
             .put(func("heartbeat_stop", "停止自主心跳（修改）", "admin", "modify", emptyList(), "停止结果"))
             .put(func("heartbeat_check", "立即执行一次心跳自检（只读）", "user", "read", emptyList(), "自检结果"))
+            .put(func("weixin_bots_list", "获取全部微信机器人配置（只读）", "admin", "read", emptyList(), "机器人 ID/名称/启用状态/模型"))
+            .put(func("weixin_bot_start", "启动指定微信机器人（修改，管理员）", "admin", "modify", listOf(param("id", true, "微信机器人ID")), "启动结果"))
+            .put(func("weixin_bot_stop", "停止指定微信机器人（修改，管理员）", "admin", "modify", listOf(param("id", true, "微信机器人ID")), "停止结果"))
+            .put(func("qq_bot_start", "启动指定QQ机器人（修改，管理员）", "admin", "modify", listOf(param("id", true, "QQ机器人ID")), "启动结果"))
+            .put(func("qq_bot_stop", "停止指定QQ机器人（修改，管理员）", "admin", "modify", listOf(param("id", true, "QQ机器人ID")), "停止结果"))
+            .put(func("task_create", "创建计划任务（AI 安排未来执行，如提醒/稍后操作）", "user", "modify", listOf(param("content", true, "任务内容/提醒内容"), param("minutes", true, "几分钟后执行，如 10"), param("type", false, "任务类型：remind提醒/action操作，默认remind")), "创建结果/任务ID"))
+            .put(func("task_list", "查看我的计划任务（只读）", "user", "read", emptyList(), "任务列表/状态/剩余时间"))
+            .put(func("task_cancel", "取消计划任务（修改）", "user", "modify", listOf(param("id", true, "任务ID")), "取消结果"))
             .put(func("account_info", "查看当前绑定账号信息（只读）", "user", "read", emptyList(), "账号/角色/余额/绑定模型"))
             .put(func("account_bind", "远程登录绑定网关账号（修改）", "user", "modify", listOf(param("username", true, "网关用户名"), param("password", true, "账号密码")), "绑定结果"))
             .put(func("account_unbind", "退出当前绑定账号（修改）", "user", "modify", emptyList(), "解绑结果"))
@@ -259,17 +268,19 @@ $KNOWLEDGE_JSON
      * @param isAdmin QQ 用户是否管理员
      * @param userId 网关用户ID（用于技能的用户级操作，QQ 用户传 0=全局）
      */
-    fun execute(fn: String, args: Map<String, String>, isAdmin: Boolean, userId: Long, db: Database): String = runBlocking { executeSuspend(fn, args, isAdmin, userId, db) }
+    fun execute(fn: String, args: Map<String, String>, isAdmin: Boolean, userId: Long, db: Database, channel: String = "qq"): String = runBlocking { executeSuspend(fn, args, isAdmin, userId, db, channel) }
 
     /** suspend 版本（SkillExecutor.execute 是 suspend） */
-    suspend fun executeSuspend(fn: String, args: Map<String, String>, isAdmin: Boolean, userId: Long, db: Database): String {
+    suspend fun executeSuspend(fn: String, args: Map<String, String>, isAdmin: Boolean, userId: Long, db: Database, channel: String = "qq"): String {
         // 权限表：函数 -> (最低权限, 风险)
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
-            "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health" -> "user" to "read"
+            "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
+            "heartbeat_get", "task_list" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
-            "qq_bots_list", "qq_bots_groups", "mcp_list", "terminal_list", "terminal_status", "workflow_list" -> "admin" to "read"
-            "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run", "heartbeat_start", "heartbeat_stop" -> "admin" to "modify"
+            "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list" -> "admin" to "read"
+            "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
+            "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -506,22 +517,105 @@ $KNOWLEDGE_JSON
                     sb.toString().trim()
                 }
                 "heartbeat_check" -> com.qitong.gateway.sandbox.HeartbeatEngine.checkOnce(db)
+                "heartbeat_get" -> {
+                    val enabled = db.getConfig("heartbeat_enabled", "true") != "false"
+                    val minutes = db.getConfig("heartbeat_interval_minutes", "60")
+                    val start = db.getConfig("heartbeat_active_start", "5")
+                    val end = db.getConfig("heartbeat_active_end", "23")
+                    val prompt = db.getConfig("heartbeat_prompt", "")
+                    "⚙️ 【自主心跳配置】\n开关: ${if (enabled) "✅ 启用" else "⛔ 停用"}\n间隔: $minutes 分钟\n活跃时段: $start:00 - $end:00\n提示词: ${if (prompt.isBlank()) "（空）" else prompt}\n运行状态: ${com.qitong.gateway.sandbox.HeartbeatEngine.statusText()}"
+                }
                 "heartbeat_start" -> {
-                    val minutes = args["minutes"]?.toIntOrNull() ?: 30
+                    val minutes = args["minutes"]?.toIntOrNull() ?: 60
                     if (minutes < 5) "⚠️ 间隔最少 5 分钟"
                     else {
                         db.setConfig("heartbeat_enabled", "true")
                         db.setConfig("heartbeat_interval_minutes", minutes.toString())
+                        args["start"]?.let { db.setConfig("heartbeat_active_start", it) }
+                        args["end"]?.let { db.setConfig("heartbeat_active_end", it) }
+                        args["prompt"]?.let { db.setConfig("heartbeat_prompt", it) }
                         // 重启心跳协程
                         if (com.qitong.gateway.sandbox.HeartbeatEngine.isRunning()) com.qitong.gateway.sandbox.HeartbeatEngine.stop()
                         com.qitong.gateway.sandbox.HeartbeatEngine.start(db)
-                        "✅ 自主心跳已启动（间隔 $minutes 分钟）"
+                        "✅ 自主心跳已启动（间隔 $minutes 分钟）\n📅 活跃时段 ${db.getConfig("heartbeat_active_start", "5")}:00-${db.getConfig("heartbeat_active_end", "23")}:00\n💬 提示词: ${db.getConfig("heartbeat_prompt", "（空）")}"
                     }
                 }
                 "heartbeat_stop" -> {
                     db.setConfig("heartbeat_enabled", "false")
                     com.qitong.gateway.sandbox.HeartbeatEngine.stop()
                     "✅ 自主心跳已停止"
+                }
+                "weixin_bots_list" -> {
+                    val bots = db.getWeixinBots()
+                    if (bots.isEmpty()) "📋 暂无微信机器人（后台「微信机器人」页可添加）"
+                    else "📋 微信机器人（${bots.size}个）：\n" + bots.joinToString("\n") { b ->
+                        "· #${b.id} ${b.name}（${if (b.enabled) "✅ 启用" else "⛔ 停用"}，模型 ${b.aiModel}）"
+                    }
+                }
+                "weixin_bot_start" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val bot = db.getWeixinBots().firstOrNull { it.id == id }
+                    if (bot == null) "❌ 未找到微信机器人 #$id"
+                    else {
+                        com.qitong.gateway.weixin.WeixinBotManager.startBot(bot)
+                        "✅ 微信机器人「${bot.name}」已启动"
+                    }
+                }
+                "weixin_bot_stop" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val bot = db.getWeixinBots().firstOrNull { it.id == id }
+                    if (bot == null) "❌ 未找到微信机器人 #$id"
+                    else {
+                        com.qitong.gateway.weixin.WeixinBotManager.stopBot(id)
+                        "✅ 微信机器人「${bot.name}」已停止"
+                    }
+                }
+                "qq_bot_start" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val bots = db.getQqBots()
+                    val row = bots.firstOrNull { (it["id"] as? Number)?.toLong() == id }
+                    if (row == null) "❌ 未找到 QQ 机器人 #$id"
+                    else {
+                        val b = com.qitong.gateway.qq.QqBotManager.botFromRowPublic(row)
+                        com.qitong.gateway.qq.QqBotManager.startBot(b)
+                        "✅ QQ机器人 #$id 已启动"
+                    }
+                }
+                "qq_bot_stop" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val bot = db.getQqBots().firstOrNull { (it["id"] as? Number)?.toLong() == id }
+                    if (bot == null) "❌ 未找到 QQ 机器人 #$id"
+                    else {
+                        com.qitong.gateway.qq.QqBotManager.stopBot(id)
+                        "✅ QQ机器人 #$id 已停止"
+                    }
+                }
+                "task_create" -> {
+                    if (db.getConfig("scheduled_tasks_enabled", "true") == "false") "⛔ 计划任务已停用（后台设置可开启）"
+                    else {
+                        val content = args["content"] ?: ""
+                        val minutes = args["minutes"]?.toLongOrNull() ?: 0
+                        val type = args["type"] ?: "remind"
+                        if (content.isBlank() || minutes < 1) "⚠️ 语法：task_create(content=任务内容, minutes=几分钟后执行, type=remind/action)"
+                        else {
+                            val id = db.addScheduledTask(channel, userId.toString(), type, content, System.currentTimeMillis() + minutes * 60_000L)
+                            "✅ 计划任务已创建 #$id：$minutes 分钟后「$content」（发 task_list 查看）"
+                        }
+                    }
+                }
+                "task_list" -> {
+                    val tasks = db.getScheduledTasks(channel = channel, userOpenid = userId.toString())
+                    if (tasks.isEmpty()) "📭 你当前没有计划任务"
+                    else "📋 我的计划任务（${tasks.size}条）：\n" + tasks.joinToString("\n") { t ->
+                        val remain = ((t["runAt"] as? Long ?: 0) - System.currentTimeMillis())
+                        val st = t["status"]
+                        "· #${t["id"]} [${st}] ${t["content"]}（${if (remain > 0) "剩${remain / 60_000L}分" else "已到期"}）"
+                    }
+                }
+                "task_cancel" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    db.cancelScheduledTask(id, userId.toString())
+                    "✅ 计划任务 #$id 已取消"
                 }
                 "account_info" -> {
                     // 查看当前绑定账号信息（沙盒用 userId 推断，若 0 说明未绑定）

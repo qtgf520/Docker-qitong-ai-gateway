@@ -321,8 +321,13 @@ loaders.settings = function(){
    '<div class="form-row"><label><input type="checkbox" id="cfgFailover"'+(cfg.auto_failover!=='false'?' checked':'')+'>启用自动故障转移</label><small style="color:var(--muted);display:block;margin-top:4px">模型失败时自动切换池内下一个可用模型</small></div>' +
    '<div class="form-row"><label>活跃模型Key（qtai-sj 解析目标）</label><input id="cfgActive" class="input" value="'+esc(cfg.active_model_key||'')+'" placeholder="如 1::gpt-4o"></div>' +
 '<div class="form-row"><label>强制故障池（逗号分隔）</label><input id="cfgPool" class="input" value="'+esc(cfg.forced_pool_keys||'')+'" placeholder="如 1::gpt-4o,1::gpt-3.5-turbo"></div>' +
-    '<div class="form-row"><label><input type="checkbox" id="cfgHeartbeat"'+(cfg.heartbeat_enabled!=='false'?' checked':'')+'>启用自主心跳（qtai-sj 自检）</label><small style="color:var(--muted);display:block;margin-top:4px">每 N 分钟后台自检网关状态，发现问题推送 QQ 群</small></div>' +
-    '<div class="form-row"><label>心跳间隔（分钟，5-1440）</label><input id="cfgHbm" class="input" type="number" min="5" max="1440" value="'+esc(cfg.heartbeat_interval_minutes||'30')+'" style="width:120px"></div>' +
+    '<div class="form-row"><label><input type="checkbox" id="cfgHeartbeat"'+(cfg.heartbeat_enabled!=='false'?' checked':'')+'>启用自主心跳（qtai-sj 自检）</label><small style="color:var(--muted);display:block;margin-top:4px">无用户输入时检查记忆和任务，在活跃时段每 N 分钟自动自检一次，发现问题推送 QQ/微信</small></div>' +
+    '<div class="form-row"><label>心跳间隔（分钟，5-1440，建议60）</label><input id="cfgHbm" class="input" type="number" min="5" max="1440" value="'+esc(cfg.heartbeat_interval_minutes||'60')+'" style="width:120px"></div>' +
+    '<div class="form-row"><label>活跃时段开始（24h制）</label><input id="cfgHbStart" class="input" type="number" min="0" max="23" value="'+esc(cfg.heartbeat_active_start||'5')+'" style="width:80px"></div>' +
+    '<div class="form-row"><label>活跃时段结束（24h制）</label><input id="cfgHbEnd" class="input" type="number" min="0" max="23" value="'+esc(cfg.heartbeat_active_end||'23')+'" style="width:80px"></div>' +
+    '<div class="form-row"><label>心跳提示词（可选）</label><input id="cfgHbPrompt" class="input" value="'+esc(cfg.heartbeat_prompt||'')+'" placeholder="如：记得检查待办任务和重要记忆"></div>' +
+    '<div class="form-row"><label><input type="checkbox" id="cfgMemory"'+(cfg.memory_enabled!=='false'?' checked':'')+'>启用记忆系统（AI 对话期间存储记忆，每条消息带上作为上下文）</label></div>' +
+    '<div class="form-row"><label><input type="checkbox" id="cfgScheduledTasks"'+(cfg.scheduled_tasks_enabled!=='false'?' checked':'')+'>启用计划任务（AI 安排未来执行任务/提醒）</label></div>' +
     '<button class="btn" onclick="saveSettings()">保存设置</button></div>' : '') +
 '<div class="card"><h3>个人人格配置</h3><small style="color:var(--muted);display:block;margin-bottom:12px">让 qtai-sj 回复时带上你设定的人设（按用户独立存储）</small>',
    '<div class="form-row"><label>名字</label><input id="psName" class="input" placeholder="如：綦小桐"></div>',
@@ -617,7 +622,7 @@ window.changePassword = function(){
  });
 };
 window.saveSettings = function(){
- api('/api/config', { method:'POST', body: { require_api_key: $('cfgRequireKey').checked?'true':'false', auto_failover: $('cfgFailover').checked?'true':'false', active_model_key: $('cfgActive').value.trim(), forced_pool_keys: $('cfgPool').value.trim(), heartbeat_enabled: $('cfgHeartbeat').checked?'true':'false', heartbeat_interval_minutes: ($('cfgHbm').value||'30') } }).then(function(r){
+ api('/api/config', { method:'POST', body: { require_api_key: $('cfgRequireKey').checked?'true':'false', auto_failover: $('cfgFailover').checked?'true':'false', active_model_key: $('cfgActive').value.trim(), forced_pool_keys: $('cfgPool').value.trim(), heartbeat_enabled: $('cfgHeartbeat').checked?'true':'false', heartbeat_interval_minutes: ($('cfgHbm').value||'60'), heartbeat_active_start: ($('cfgHbStart').value||'5'), heartbeat_active_end: ($('cfgHbEnd').value||'23'), heartbeat_prompt: ($('cfgHbPrompt')?$('cfgHbPrompt').value.trim():''), memory_enabled: $('cfgMemory').checked?'true':'false', scheduled_tasks_enabled: $('cfgScheduledTasks').checked?'true':'false' } }).then(function(r){
   if(r.code === 0){ toast('设置已保存', true); } else toast(r.msg, false);
  });
 };
