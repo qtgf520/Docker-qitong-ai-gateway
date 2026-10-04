@@ -1306,17 +1306,43 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
                     if (calls.isEmpty()) break
                     val results = StringBuilder()
-                    var isFirst = true
-                    for ((fn, args) in calls) {
-                        // 💭 过程推送：执行前告诉用户 AI 在干嘛（精简为一条）
+                    // ★ v82 并行工具执行（Hermes 理念落地）：独立调用并发跑，结果按序汇总
+                    if (calls.size <= 1) {
+                        val (fn, args) = calls[0]
                         val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
                         smartSend("💭 qtai-sj 正在调用：${fn}(${argTxt}) …", false)
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
-                        results.append(if (isFirst) "" else "\n").append("【$fn 执行结果】\n$r")
-                        isFirst = false
-                        // 📤 执行结果推送（结果简洁展示，不再重复"执行完成"）
+                        results.append("【$fn 执行结果】\n$r")
                         smartSend("✅ ${fn}：${r.take(500)}", false)
                         db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args -> ${r.take(80)}", 0)
+                    } else {
+                        // 多调用并行
+                        calls.forEach { (fn, args) ->
+                            val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
+                            smartSend("💭 qtai-sj 并行处理：${fn}(${argTxt}) …", false)
+                        }
+                        val executor = java.util.concurrent.Executors.newFixedThreadPool(calls.size.coerceAtMost(5))
+                        try {
+                            val futures = calls.map { (fn, args) ->
+                                executor.submit<Pair<String, String>> {
+                                    val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
+                                    fn to r
+                                }
+                            }
+                            futures.forEach { fut ->
+                                try {
+                                    val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
+                                    results.append(if (results.isEmpty()) "" else "\n").append("【$fn 执行结果】\n$r")
+                                    smartSend("✅ ${fn}：${r.take(500)}", false)
+                                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] 并行执行", 0)
+                                } catch (e: Exception) {
+                                    results.append(if (results.isEmpty()) "" else "\n").append("【工具执行异常】\n${e.message}")
+                                    smartSend("❌ 工具执行异常：${e.message}", false)
+                                }
+                            }
+                        } finally {
+                            executor.shutdown()
+                        }
                     }
                     // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
                     val cleanText = cleanFunctionTags(content)

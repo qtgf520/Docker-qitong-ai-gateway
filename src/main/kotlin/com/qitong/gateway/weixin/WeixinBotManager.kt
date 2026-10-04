@@ -420,14 +420,44 @@ object WeixinBotManager {
                         break
                     }
                     val results = StringBuilder()
-                    for ((fn, args) in calls) {
-                        // 💭 思考推送：AI 自己讲在干嘛、调了什么工具（像真人一样）
+                    // ★ v82 并行工具执行（Hermes PARALLEL 理念落地）：独立调用并发跑，结果按序汇总
+                    if (calls.size <= 1) {
+                        // 单调用直接执行
+                        val (fn, args) = calls[0]
                         val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
                         send("💭 我在帮你处理，正在调用 ${fn}(${argTxt})…")
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
                         results.append("【$fn 执行结果】\n$r\n")
                         send("✅ $fn：${r.take(300)}")
-                        executedCalls = true  // ★ v78 标记：结果已实时推送
+                        executedCalls = true
+                    } else {
+                        // 多调用并行：先统一推送思考（用户看到一次批次），再并发执行，结果按序推送
+                        calls.forEach { (fn, args) ->
+                            val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
+                            send("💭 我在并行处理：${fn}(${argTxt})…")
+                        }
+                        val executor = java.util.concurrent.Executors.newFixedThreadPool(calls.size.coerceAtMost(5))
+                        try {
+                            val futures = calls.map { (fn, args) ->
+                                executor.submit<Pair<String, String>> {
+                                    val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
+                                    fn to r
+                                }
+                            }
+                            futures.forEach { fut ->
+                                try {
+                                    val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
+                                    results.append("【$fn 执行结果】\n$r\n")
+                                    send("✅ $fn：${r.take(300)}")
+                                    executedCalls = true
+                                } catch (e: Exception) {
+                                    results.append("【工具执行异常】\n${e.message}\n")
+                                    send("❌ 工具执行异常：${e.message}")
+                                }
+                            }
+                        } finally {
+                            executor.shutdown()
+                        }
                     }
                     val cleanText = cleanFunctionTags(content)
                     // 结果回填给模型继续决策
