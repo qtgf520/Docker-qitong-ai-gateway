@@ -428,7 +428,8 @@ object WeixinBotManager {
                         send("💭 我在帮你处理，正在调用 ${fn}(${argTxt})…")
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
                         results.append("【$fn 执行结果】\n$r\n")
-                        send("✅ $fn：${r.take(300)}")
+                        // ★ v83 不截断：完整结果交给 send 内置分段（超长自动多条）
+                        send("✅ $fn：\n$r")
                         executedCalls = true
                     } else {
                         // 多调用并行：先统一推送思考（用户看到一次批次），再并发执行，结果按序推送
@@ -448,7 +449,8 @@ object WeixinBotManager {
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append("【$fn 执行结果】\n$r\n")
-                                    send("✅ $fn：${r.take(300)}")
+                                    // ★ v83 不截断：完整结果交给 send 内置分段
+                                    send("✅ $fn：\n$r")
                                     executedCalls = true
                                 } catch (e: Exception) {
                                     results.append("【工具执行异常】\n${e.message}\n")

@@ -730,7 +730,7 @@ object QqBotManager {
                 val out = com.qitong.gateway.http.WorkflowEngine.runStep(db, step.optString("type", "reply"), step.optString("content", ""))
                 sb.append("【").append(i + 1).append("·").append(step.optString("type", "reply")).append("】\n").append(out).append("\n\n")
             }
-            send("✅ 工作流「${wfHit["name"]}」完成：\n" + sb.toString().take(800))
+            send("✅ 工作流「${wfHit["name"]}」完成：\n" + sb.toString())
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "workflow", "触发 ${wfHit["name"]}", System.currentTimeMillis() - t0)
             return
         }
@@ -758,7 +758,7 @@ object QqBotManager {
             val (ok, out) = com.qitong.gateway.http.TerminalManager.exec(sid, cmd)
             if (!ok) { smartSend("⚠️ $out", true); return }
             // ★ v58 结果也走 active（避免思考中占了被动名额后结果静默）；最终汇总才 isFinal=true
-            smartSend("💻 需求「$req」\n命令: $cmd\n\n" + out.take(700), false)
+            smartSend("💻 需求「$req」\n命令: $cmd\n\n" + out, false)
             smartSend("✅ 终端执行完成 [${sid}]，结果已推送。", true)
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "ai_term", "[$req] -> $cmd", System.currentTimeMillis() - t0)
             return
@@ -853,7 +853,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             }
             val (ok, out) = com.qitong.gateway.http.TerminalManager.exec(targetId!!, rest)
             if (!ok) { send("⚠️ $out"); return }
-            send("🖥 [${targetId}] 终端执行：\n$ rest\n\n" + out.take(800))
+            send("🖥 [${targetId}] 终端执行：\n$rest\n\n" + out)
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "shell", "[$targetId] $rest → ${out.take(60)}", System.currentTimeMillis() - t0)
             return
         }
@@ -1313,8 +1313,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         smartSend("💭 qtai-sj 正在调用：${fn}(${argTxt}) …", false)
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
                         results.append("【$fn 执行结果】\n$r")
-                        smartSend("✅ ${fn}：${r.take(500)}", false)
-                        db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args -> ${r.take(80)}", 0)
+                        // ★ v83 不截断：完整结果交给 smartSend 内置分段（超长自动多条）
+                        smartSend("✅ ${fn}：\n$r", false)
+                        db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args", 0)
                     } else {
                         // 多调用并行
                         calls.forEach { (fn, args) ->
@@ -1333,7 +1334,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append(if (results.isEmpty()) "" else "\n").append("【$fn 执行结果】\n$r")
-                                    smartSend("✅ ${fn}：${r.take(500)}", false)
+                                    // ★ v83 不截断：完整结果交给 smartSend 内置分段
+                                    smartSend("✅ ${fn}：\n$r", false)
                                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] 并行执行", 0)
                                 } catch (e: Exception) {
                                     results.append(if (results.isEmpty()) "" else "\n").append("【工具执行异常】\n${e.message}")
