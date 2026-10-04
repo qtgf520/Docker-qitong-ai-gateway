@@ -77,8 +77,8 @@ object SandboxEngine {
             .put(func("weixin_bot_stop", "停止指定微信机器人（修改，管理员）", "admin", "modify", listOf(param("id", true, "微信机器人ID")), "停止结果"))
             .put(func("qq_bot_start", "启动指定QQ机器人（修改，管理员）", "admin", "modify", listOf(param("id", true, "QQ机器人ID")), "启动结果"))
             .put(func("qq_bot_stop", "停止指定QQ机器人（修改，管理员）", "admin", "modify", listOf(param("id", true, "QQ机器人ID")), "停止结果"))
-            .put(func("task_create", "创建计划任务（AI 安排未来执行，如提醒/稍后操作）", "user", "modify", listOf(param("content", true, "任务内容/提醒内容"), param("minutes", true, "几分钟后执行，如 10"), param("type", false, "任务类型：remind提醒/action操作，默认remind")), "创建结果/任务ID"))
-            .put(func("task_list", "查看我的计划任务（只读）", "user", "read", emptyList(), "任务列表/状态/剩余时间"))
+            .put(func("task_create", "创建计划任务（AI 安排未来执行；支持 cron 周期如 每天早上8点）", "user", "modify", listOf(param("content", true, "任务内容/提醒内容"), param("minutes", false, "几分钟后执行，如 10（与 cron 二选一）"), param("cron", false, "cron表达式如 0 8 * * * 每天8点、*/30 * * * * 每30分钟（与 minutes 二选一）"), param("type", false, "任务类型：remind提醒/action操作，默认remind")), "创建结果/任务ID"))
+            .put(func("task_list", "查看我的计划任务（只读，含周期任务）", "user", "read", emptyList(), "任务列表/状态/剩余时间/周期"))
             .put(func("task_cancel", "取消计划任务（修改）", "user", "modify", listOf(param("id", true, "任务ID")), "取消结果"))
             .put(func("account_info", "查看当前绑定账号信息（只读）", "user", "read", emptyList(), "账号/角色/余额/绑定模型"))
             .put(func("account_bind", "远程登录绑定网关账号（修改）", "user", "modify", listOf(param("username", true, "网关用户名"), param("password", true, "账号密码")), "绑定结果"))
@@ -636,10 +636,19 @@ $KNOWLEDGE_JSON
                         val content = args["content"] ?: ""
                         val minutes = args["minutes"]?.toLongOrNull() ?: 0
                         val type = args["type"] ?: "remind"
-                        if (content.isBlank() || minutes < 1) "⚠️ 语法：task_create(content=任务内容, minutes=几分钟后执行, type=remind/action)"
-                        else {
-                            val id = db.addScheduledTask(channel, userId.toString(), type, content, System.currentTimeMillis() + minutes * 60_000L)
-                            "✅ 计划任务已创建 #$id：$minutes 分钟后「$content」（发 task_list 查看）"
+                        val cronExpr = args["cron"] ?: ""
+                        if (content.isBlank() || (minutes < 1 && cronExpr.isBlank())) "⚠️ 语法：task_create(content=任务内容, minutes=几分钟后执行, cron=可选cron表达式如 0 8 * * *, type=remind/action)"
+                        else if (cronExpr.isNotBlank() && !com.qitong.gateway.sandbox.CronExpression.isValid(cronExpr)) {
+                            "⚠️ cron 表达式无效（标准5字段：分 时 日 月 周，如 0 8 * * * = 每天8点、*/30 * * * * = 每30分钟）"
+                        } else {
+                            val runAt = if (cronExpr.isNotBlank()) {
+                                com.qitong.gateway.sandbox.CronExpression.parse(cronExpr)?.next(System.currentTimeMillis()) ?: (System.currentTimeMillis() + 60_000L)
+                            } else {
+                                System.currentTimeMillis() + minutes * 60_000L
+                            }
+                            val id = db.addScheduledTask(channel, userId.toString(), type, content, runAt, cronExpr)
+                            if (cronExpr.isNotBlank()) "✅ 周期任务已创建 #$id：cron「$cronExpr」→「$content」（发 task_list 查看，到期自动执行并滚动到下一周期）"
+                            else "✅ 计划任务已创建 #$id：$minutes 分钟后「$content」（发 task_list 查看）"
                         }
                     }
                 }
@@ -649,7 +658,12 @@ $KNOWLEDGE_JSON
                     else "📋 我的计划任务（${tasks.size}条）：\n" + tasks.joinToString("\n") { t ->
                         val remain = ((t["runAt"] as? Long ?: 0) - System.currentTimeMillis())
                         val st = t["status"]
-                        "· #${t["id"]} [${st}] ${t["content"]}（${if (remain > 0) "剩${remain / 60_000L}分" else "已到期"}）"
+                        val cron = (t["cronExpr"] as? String) ?: ""
+                        val cronTxt = if (cron.isNotBlank()) "【周期 ${cron}】" else ""
+                        val timeTxt = try {
+                            java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date((t["runAt"] as? Long ?: 0)))
+                        } catch (e: Exception) { "-" }
+                        "· #${t["id"]} [${st}] $cronTxt ${t["content"]}（下次 $timeTxt${if (remain > 0 && cron.isBlank()) "·剩${remain / 60_000L}分" else ""}）"
                     }
                 }
                 "task_cancel" -> {

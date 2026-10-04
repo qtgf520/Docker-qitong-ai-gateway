@@ -552,13 +552,16 @@ class Database(private val dbPath: String) {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     channel TEXT NOT NULL DEFAULT 'qq',          -- qq / weixin
                     user_openid TEXT NOT NULL DEFAULT '',
-                    task_type TEXT NOT NULL DEFAULT 'remind',     -- remind / action
+                    task_type TEXT NOT NULL DEFAULT 'remind',     -- remind / action / loop
                     content TEXT NOT NULL DEFAULT '',
                     run_at INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'pending',       -- pending / done / cancelled
-                    created_at INTEGER NOT NULL DEFAULT 0
+                    created_at INTEGER NOT NULL DEFAULT 0,
+                    cron_expr TEXT NOT NULL DEFAULT ''            -- ★ v84 Agora cron：5字段表达式，空=一次性
                 )"""
             )
+            // ★ v84 旧库迁移：补 cron_expr 列（cron 周期任务）
+            runCatching { st.executeUpdate("ALTER TABLE scheduled_tasks ADD COLUMN cron_expr TEXT NOT NULL DEFAULT ''") }
         }
     }
 
@@ -1217,12 +1220,12 @@ class Database(private val dbPath: String) {
         stmt("DELETE FROM brain_memory WHERE user_id=?", userId)
     }
 
-    // ============ 计划任务（v76：AI 安排未来执行任务） ============
+    // ============ 计划任务（v76：AI 安排未来执行任务；v84：Agora CronExpression 周期任务） ============
 
-    fun addScheduledTask(channel: String, userOpenid: String, taskType: String, content: String, runAt: Long): Long {
+    fun addScheduledTask(channel: String, userOpenid: String, taskType: String, content: String, runAt: Long, cronExpr: String = ""): Long {
         stmt(
-            "INSERT INTO scheduled_tasks (channel,user_openid,task_type,content,run_at,status,created_at) VALUES (?,?,?,?,?,?,?)",
-            channel, userOpenid, taskType, content, runAt, "pending", System.currentTimeMillis()
+            "INSERT INTO scheduled_tasks (channel,user_openid,task_type,content,run_at,status,created_at,cron_expr) VALUES (?,?,?,?,?,?,?,?)",
+            channel, userOpenid, taskType, content, runAt, "pending", System.currentTimeMillis(), cronExpr
         )
         return lastInsertId()
     }
@@ -1243,7 +1246,8 @@ class Database(private val dbPath: String) {
                 "content" to (it["content"] as? String ?: ""),
                 "runAt" to ((it["run_at"] as? Number)?.toLong() ?: 0),
                 "status" to (it["status"] as? String ?: "pending"),
-                "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0)
+                "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0),
+                "cronExpr" to (it["cron_expr"] as? String ?: "")
             )
         }
     }
@@ -1254,6 +1258,16 @@ class Database(private val dbPath: String) {
 
     fun markScheduledTaskDone(id: Long) {
         stmt("UPDATE scheduled_tasks SET status='done' WHERE id=?", id)
+    }
+
+    /** ★ v84 cron 周期任务推进：执行后把 run_at 推到下一个匹配时刻（不带 cron 的任务保持 done） */
+    fun advanceScheduledTask(id: Long, cronExpr: String, now: Long) {
+        val next = com.qitong.gateway.sandbox.CronExpression.parse(cronExpr)?.next(now)
+        if (next != null) {
+            stmt("UPDATE scheduled_tasks SET run_at=?, status='pending' WHERE id=?", next, id)
+        } else {
+            stmt("UPDATE scheduled_tasks SET status='done' WHERE id=?", id)
+        }
     }
 
     fun cancelScheduledTask(id: Long, userOpenid: String? = null) {

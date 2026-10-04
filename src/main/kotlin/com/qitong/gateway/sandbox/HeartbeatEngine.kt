@@ -121,13 +121,21 @@ object HeartbeatEngine {
             // ★ v76 到期计划任务检查（无用户输入时也能跑，受 scheduled_tasks_enabled 开关控制）
             runCatching {
                 if (db.getConfig("scheduled_tasks_enabled", "true") != "false") {
-                    val dueTasks = db.getDueScheduledTasks(System.currentTimeMillis())
+                    val now = System.currentTimeMillis()
+                    val dueTasks = db.getDueScheduledTasks(now)
                     if (dueTasks.isNotEmpty()) {
                         okLines.add("⏰ 有 ${dueTasks.size} 条计划任务到期：")
                         dueTasks.forEach { task ->
                             okLines.add("  · [${task["channel"]}] ${task["content"]}")
-                            // 标记完成（推送回调里处理实际送达）
-                            db.markScheduledTaskDone((task["id"] as? Number)?.toLong() ?: 0L)
+                            val id = (task["id"] as? Number)?.toLong() ?: 0L
+                            val cronExpr = (task["cronExpr"] as? String) ?: ""
+                            if (cronExpr.isNotBlank()) {
+                                // ★ v84 cron 周期任务：执行后推进到下一匹配时刻（继续 pending）
+                                db.advanceScheduledTask(id, cronExpr, now)
+                            } else {
+                                // 一次性任务：标记完成（推送回调里处理实际送达）
+                                db.markScheduledTaskDone(id)
+                            }
                         }
                         // 到期的计划任务内容放进 result（有实质内容就推送）
                         dueTasks.forEach { task ->
