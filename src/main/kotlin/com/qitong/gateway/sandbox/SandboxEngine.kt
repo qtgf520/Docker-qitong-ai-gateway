@@ -20,6 +20,20 @@ import org.json.JSONObject
  * 5. 熔断保护：同一 QQ 用户短时间失败过多自动暂停
  */
 object SandboxEngine {
+    /** ★ v77 沙盒全部合法函数名集合（自然语言调用识别校验用） */
+    val KNOWN_FNS: Set<String> = setOf(
+        "model_batch_test", "model_test_single", "model_get_all", "model_enable", "model_disable",
+        "provider_get_all", "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
+        "user_balance", "user_recharge", "user_deduct",
+        "terminal_run", "terminal_create", "terminal_list", "terminal_status",
+        "qq_bots_list", "qq_bots_groups", "qq_points_rank", "help",
+        "mcp_list", "mcp_call", "web_search",
+        "workflow_run", "workflow_list",
+        "heartbeat_get", "heartbeat_status", "heartbeat_start", "heartbeat_stop", "heartbeat_check", "sys_health",
+        "weixin_bots_list", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop",
+        "task_create", "task_list", "task_cancel",
+        "account_info", "account_bind", "account_unbind"
+    )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
     val KNOWLEDGE_JSON: String by lazy {
@@ -243,8 +257,26 @@ $KNOWLEDGE_JSON
                 result.add(fn to args)
             }
         }
-        // ★ v56 过滤无意义函数名（模型误输出的字段名，不是真实沙盒函数）
+        // ★ v77 格式9：自然语言调用描述（模型假调用变种）——「正在调用 fn(args)」「调用沙盒执行 fn」「我需要调用 fn」等
+        //   让模型输出的"思考描述"也能被识别为真执行，避免只见思考不见干活
         val skip = setOf("params", "parameters", "arguments", "function", "function_name", "name", "value", "output", "result", "results", "resp", "response")
+        val nlCalls = listOf(
+            Regex("""正在调用\s*[：:]\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*?)\)"""),     // 正在调用：sys_health()
+            Regex("""调用沙盒(?:执行|引擎|调度)?\s*[：: ]?\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*?)\)"""), // 调用沙盒执行 sys_health()
+            Regex("""(?:调用|执行|使用|准备调用)\s+(?:了)?\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)"""),  // 调用 sys_health()
+            Regex("""我需要调用\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*?)\)""")            // 我需要调用 sys_health()
+        )
+        for (nl in nlCalls) {
+            nl.findAll(text).forEach { m ->
+                val fn = m.groupValues[1]
+                if (fn.isNotBlank() && result.none { it.first == fn } && fn !in skip) {
+                    val args = parseArgs(m.groupValues[2])
+                    // 校验函数名是否真存在（在知识库函数集合内），避免误抓普通文本里的词
+                    if (KNOWN_FNS.contains(fn)) result.add(fn to args)
+                }
+            }
+        }
+        // ★ v77 过滤无意义函数名（模型误输出的字段名，不是真实沙盒函数）
         return result.distinctBy { it.first to it.second }
             .filter { it.first !in skip }
     }

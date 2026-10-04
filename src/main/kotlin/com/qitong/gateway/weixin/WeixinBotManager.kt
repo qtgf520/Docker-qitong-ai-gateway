@@ -377,6 +377,7 @@ object WeixinBotManager {
                 val isAdmin = d.getWeixinUserPerm(msg.from) >= 3 ||
                     d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
                 var loop = 0
+                var noCallGuide = 0   // ★ v77 引导计数器：模型只输出描述不输出标签时引导它
                 while (loop < 5) {
                     // ★ v75 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考（对齐 QQ v64）
                     if (stopSignals[msg.from] == true) {
@@ -386,7 +387,36 @@ object WeixinBotManager {
                     }
                     loop++
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
-                    if (calls.isEmpty()) break
+                    if (calls.isEmpty()) {
+                        // ★ v77 假调用修复：模型只输出了"正在调用 xxx"描述但没输出严格标签 → 引导它输出真标签再执行
+                        if (noCallGuide < 2 && (content.contains("正在调用") || content.contains("调用沙盒") ||
+                                content.contains("准备调用") || content.contains("我需要调用") || content.contains("我来调用"))) {
+                            noCallGuide++
+                            val guideBody = JSONObject()
+                                .put("model", bot.aiModel)
+                                .put("messages", JSONArray()
+                                    .put(JSONObject().put("role", "system").put("content", baseSys))
+                                    .put(JSONObject().put("role", "user").put("content", userText))
+                                    .put(JSONObject().put("role", "assistant").put("content", content))
+                                    .put(JSONObject().put("role", "user").put("content",
+                                        "我看到你说要调用工具，但没有输出标准的沙盒函数调用标签。请严格按这个格式输出你要调用的工具（一次输出一个即可，不要解释）：\n[[沙盒:函数名(参数=值)]]\n可用函数见上面的知识库清单。"))) .toString()
+                            val guideReq = Request.Builder()
+                                .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
+                                .addHeader("Content-Type", "application/json")
+                                .post(guideBody.toRequestBody(jsonCt))
+                                .build()
+                            val guided = http.newCall(guideReq).execute().use { resp3 ->
+                                if (!resp3.isSuccessful) null
+                                else JSONObject(resp3.body?.string().orEmpty())
+                                    .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                    ?.optString("content")?.trim().orEmpty()
+                            }
+                            if (guided.isNullOrBlank()) { content = cleanFunctionTags(content); break }
+                            content = guided
+                            continue  // 下一轮用引导结果再解析
+                        }
+                        break
+                    }
                     val results = StringBuilder()
                     for ((fn, args) in calls) {
                         // 💭 思考推送：AI 自己讲在干嘛、调了什么工具（像真人一样）

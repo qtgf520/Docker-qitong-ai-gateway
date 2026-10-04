@@ -245,12 +245,15 @@ loaders.profile = function(){
     '<div class="card"><h3>账户</h3><div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div><div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div></div>',
     '<div class="card"><h3>邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag"></span></div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
    '</div>',
-   '<div class="card"><h3>余额账单 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadBalanceLogs()">刷新</button></h3><div id="balLogBox" style="color:var(--muted);font-size:12px">加载中...</div></div>',
+    '<div class="card"><h3>余额账单 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadBalanceLogs()">刷新</button></h3><div id="balLogBox" style="color:var(--muted);font-size:12px">加载中...</div></div>',
+    '<div class="card"><h3>模型扣费记录 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadUsageLogs()">刷新</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="clearUsageLogs()">清空全部</button></h3><div id="usageLogBox" style="color:var(--muted);font-size:12px">加载中...</div></div>',
     '<div class="card"><h3>限流设置 <span style="font-size:12px;color:var(--muted)">QPS + 每日配额，0=不限</span></h3><div id="rateBox">加载中...</div></div>'
   ].join('');
 
   // 加载余额账单
   loadBalanceLogs();
+  // ★ v77 加载模型扣费记录
+  loadUsageLogs();
   // 加载限流配置
   api('/api/me/rate').then(function(rr){
    if(rr.code === 0 && rr.data){
@@ -291,6 +294,45 @@ window.loadBalanceLogs = function(){
     return '<tr><td>' + t + '</td><td style="color:' + color + ';font-weight:600">' + sign + '¥' + (b.amount||0).toFixed(2) + '</td><td style="color:var(--muted)">' + esc(b.remark||'') + '</td><td style="font-size:11px;color:var(--muted)">' + new Date(b.createdAt).toLocaleString('zh-CN',{hour12:false}) + '</td></tr>';
    }).join('');
    el.innerHTML = '<div class="table-wrap"><table style="min-width:520px"><thead><tr><th>类型</th><th>金额</th><th>说明</th><th>时间</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  });
+ };
+ // ★ v77 模型扣费记录（/api/usage/recent 明细 + 清理 + 单删 + 按模型清理）
+window.loadUsageLogs = function(){
+  var el = $('usageLogBox'); if(!el) return;
+  el.innerHTML = '<div style="color:var(--muted);padding:8px">加载中...</div>';
+  api('/api/usage/recent?limit=100').then(function(r){
+   var list = (r && r.data) || [];
+   if(!list.length){ el.innerHTML = '<div style="color:var(--muted);padding:8px">暂无模型扣费记录。调用模型后会显示在这里。</div>'; return; }
+   var rows = list.map(function(u){
+    var cost = (u.cost||0);
+    return '<tr>' +
+     '<td style="font-family:monospace">' + esc(u.modelName || u.modelKey || '-') + '</td>' +
+     '<td>¥' + cost.toFixed(4) + '</td>' +
+     '<td>' + (u.totalTokens||0) + '</td>' +
+     '<td style="font-size:11px;color:var(--muted)">' + (u.createdAt ? new Date(u.createdAt).toLocaleString('zh-CN',{hour12:false}) : '-') + '</td>' +
+     '<td style="text-align:right"><button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="delUsageLog(' + (u.id||0) + ')">删</button></td>' +
+     '</tr>';
+   }).join('');
+   el.innerHTML = '<div style="font-size:11px;color:var(--muted);margin-bottom:6px">共 ' + list.length + ' 条（仅显示最近 100 条）。可单独删除某条，也可按模型清理。</div>' +
+    '<div class="table-wrap"><table style="min-width:620px"><thead><tr><th>模型</th><th>扣费</th><th>Token</th><th>时间</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  });
+ };
+window.clearUsageLogs = function(){
+  if(!confirm('确认清空全部模型扣费记录？此操作不可恢复')) return;
+  api('/api/usage/clear', { method:'POST' }).then(function(r){
+   if(r.code === 0){ toast(r.msg, true); loadUsageLogs(); } else toast(r.msg, false);
+  });
+ };
+window.delUsageLog = function(id){
+  if(!confirm('确认删除这条扣费记录？')) return;
+  api('/api/usage/delete', { method:'POST', body: { id: id } }).then(function(r){
+   if(r.code === 0){ toast(r.msg, true); loadUsageLogs(); } else toast(r.msg, false);
+  });
+ };
+window.clearUsageModel = function(modelKey){
+  if(!confirm('确认清空该模型全部扣费记录？')) return;
+  api('/api/usage/clear-model', { method:'POST', body: { modelKey: modelKey } }).then(function(r){
+   if(r.code === 0){ toast(r.msg, true); loadUsageLogs(); } else toast(r.msg, false);
   });
  };
 window.saveProfile = function(){
