@@ -19,7 +19,8 @@ object TerminalManager {
         var lastActiveAt: Long = System.currentTimeMillis(),
         var commands: Int = 0,
         var output: StringBuilder = StringBuilder(),
-        var ttlMinutes: Int = 30 // 0 = 永久；>0 = 该时长（分钟）无操作自动清理
+        var ttlMinutes: Int = 30, // 0 = 永久；>0 = 该时长（分钟）无操作自动清理
+        var ownerUserId: Long = 0 // ★ v79 沙盒按用户隔离：0=全局/管理员；>0=该用户私有
     )
 
     private val sessions = ConcurrentHashMap<String, TermSession>()
@@ -39,24 +40,33 @@ object TerminalManager {
         ":(){ :|:& };:"
     )
 
-    /** 创建临时终端会话（ttlMinutes: 0=永久；默认30分钟无操作清理） */
-    fun create(label: String = "", ttlMinutes: Int = 30): TermSession {
+    /** 创建临时终端会话（ttlMinutes: 0=永久；默认30分钟无操作清理；ownerUserId: 沙盒用户隔离） */
+    fun create(label: String = "", ttlMinutes: Int = 30, ownerUserId: Long = 0): TermSession {
         cleanup()
         val id = "term-" + idSeq.incrementAndGet()
         val s = TermSession(
             id = id,
             label = label.ifBlank { "终端会话 " + id + "-" + (sessions.size + 1) },
             createdAt = System.currentTimeMillis(),
-            ttlMinutes = ttlMinutes.coerceIn(0, 24 * 60 * 365) // 0..永久，上限1年
+            ttlMinutes = ttlMinutes.coerceIn(0, 24 * 60 * 365), // 0..永久，上限1年
+            ownerUserId = ownerUserId
         )
         sessions[id] = s
         return s
     }
 
-    /** 列出所有临时会话 */
-    fun list(): List<TermSession> {
+    /** ★ v79 按用户列出会话（管理员看全部；普通用户只看自己的） */
+    fun list(userId: Long = 0): List<TermSession> {
         cleanup()
-        return sessions.values.sortedByDescending { it.lastActiveAt }
+        val all = sessions.values.sortedByDescending { it.lastActiveAt }
+        return if (userId == 0L) all else all.filter { it.ownerUserId == 0L || it.ownerUserId == userId }
+    }
+
+    /** ★ v79 校验会话归属：管理员可操作全部，普通用户只能操作自己的（owner=0 的全局会话普通用户也可用） */
+    fun canAccess(id: String, userId: Long): Boolean {
+        if (userId == 0L) return true  // 管理员/系统
+        val s = sessions[id] ?: return false
+        return s.ownerUserId == 0L || s.ownerUserId == userId
     }
 
     /** 调整会话时长（0=永久；>0=分钟）；返回调整后是否成功 */

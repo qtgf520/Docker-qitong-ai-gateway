@@ -199,7 +199,7 @@ function mcpLoad(){
     '<td><b>'+esc(m.name)+'</b></td>'+
     '<td><span class="badge blue">'+esc(m.serverType||'http')+'</span></td>'+
     '<td><code style="font-size:11px">'+esc(m.url)+'</code></td>'+
-    '<td>'+(m.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
+    '<td>'+(m.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+' <span id="mcpState'+m.id+'" class="badge gray">未握手</span></td>'+
     '<td style="white-space:nowrap">'+
      '<button class="btn-ghost btn-sm" onclick="mcpTools('+m.id+')">🔍工具</button> '+
      '<button class="btn-ghost btn-sm" onclick="mcpTest('+m.id+')">测试</button> '+
@@ -210,15 +210,51 @@ function mcpLoad(){
   el.innerHTML='<div class="card" style="box-shadow:none"><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>地址</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
  });
 }
-// ★ v48 展开 MCP 工具列表：点击「🔍工具」握手后显示可调用工具（对齐 Kai）
+// ★ v79 展开 MCP 工具列表：握手后显示可调用工具（含入参 schema / 返回结构 / 连接状态，对齐 Kai）
 function mcpTools(id){
  var row=$('mcpToolsRow'+id);
  if(!row) return;
  if(row.style.display!=='none'){ row.style.display='none'; return; }
  row.style.display='';
+ row.innerHTML='<div style="padding:10px 14px;font-size:12px;color:var(--muted)">加载中…</div>';
  api('/api/mcp/'+id+'/tools').then(function(r){
-  var txt=(r&&r.data&&r.data.tools)||'❌ 获取工具失败';
-  row.innerHTML='<div style="padding:10px 14px;font-size:12px;white-space:pre-wrap;color:var(--muted);background:rgba(255,255,255,.03);border-radius:6px">'+esc(txt)+'</div>';
+  var data=(r&&r.data)||{};
+  if(data.ok===false){
+   mcpSetState(id, false, data.error);
+   row.innerHTML='<div style="padding:10px 14px;font-size:12px;color:var(--red)">❌ 连接失败：'+esc(data.error||'未知错误')+'</div>';
+   return;
+  }
+  mcpSetState(id, true, '');
+  var tools=[];
+  try{ tools=JSON.parse(data.tools||'[]')||[]; }catch(e){ tools=[]; }
+  if(!tools.length){
+   row.innerHTML='<div style="padding:10px 14px;font-size:12px;color:var(--muted)">📋 已连接（无工具）</div>';
+   return;
+  }
+  // 渲染每个工具：名称 / 描述 / 入参 schema（required 标红）/ 返回结构
+  var cards=tools.map(function(t){
+   var name=esc(t.name||'?');
+   var desc=esc(t.description||'');
+   // 入参 schema
+   var inSchema=t.inputSchema||{};
+   var props=inSchema.properties||{};
+   var reqArr=inSchema.required||[];
+   var propKeys=Object.keys(props);
+   var paramsHtml=propKeys.length?'<div style="margin-top:6px"><div style="font-size:11px;color:var(--cyan)">入参：</div>'+
+    propKeys.map(function(k){
+     var p=props[k]||{};
+     var req=reqArr.indexOf(k)>=0;
+     return '<div style="font-size:11px;color:var(--muted);margin-left:10px">· <code>'+esc(k)+'</code>'+(req?' <span style="color:var(--red)">必填</span>':'')+' — '+esc(p.type||'')+esc(p.description?(' '+p.description):'')+'</div>';
+    }).join('')+'</div>':'';
+   // 返回结构（简化为 JSON 预览）
+   var outSchema=t.outputSchema||{};
+   var outHtml=Object.keys(outSchema).length?'<div style="margin-top:4px;font-size:11px;color:var(--muted)">返回：<code>'+esc(JSON.stringify(outSchema).slice(0,120))+'</code></div>':'';
+   return '<div style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;background:rgba(255,255,255,.03)">'+
+    '<div style="font-weight:600;color:var(--text);font-family:monospace">🔧 '+name+'</div>'+
+    (desc?'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+desc+'</div>':'')+
+    paramsHtml+outHtml+'</div>';
+  }).join('');
+  row.innerHTML='<div style="padding:10px 14px;font-size:12px"><div style="margin-bottom:8px;color:var(--green)">✅ 已连接，共 '+tools.length+' 个工具</div>'+cards+'</div>';
  });
 }
 function mcpForm(id){
@@ -250,9 +286,17 @@ function mcpTest(id){
  api('/api/mcp').then(function(r){
   var list=(r&&r.data)||[]; var m=list.filter(function(x){return x.id===id;})[0];
   if(!m){ toast('未找到',false); return; }
-  toast('测试中…',false);
-  api('/api/mcp/test',{method:'POST',body:{url:m.url}}).then(function(rr){ toast(rr.msg||'', rr.code===0); });
+  api('/api/mcp/test',{method:'POST',body:{url:m.url}}).then(function(rr){
+   var st=$('mcpState'+id); if(st){ st.className='badge '+(rr.code===0?'green':'red'); st.textContent=rr.code===0?'已连接':'连接失败'; }
+   toast(rr.msg||'', rr.code===0);
+  });
  });
+}
+// ★ v79 工具展开成功后同步状态标识
+function mcpSetState(id, ok, err){
+ var st=$('mcpState'+id); if(!st) return;
+ st.className='badge '+(ok?'green':'red');
+ st.textContent=ok?'已连接':('失败'+(err?'：'+err:''));
 }
 function mcpDel(id){
  if(!confirm('删除该 MCP 服务器？')) return;

@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-78
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-79
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-78    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-79    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -187,7 +187,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-78"))
+                put("version", JsonPrimitive("3.18.22-79"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -914,8 +914,9 @@ fun Application.moduleWeb(database: Database) {
         get("/api/terminal/sessions") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            // ★ v79 沙盒用户隔离：管理员看全部
             val list = com.qitong.gateway.http.TerminalManager.list().map { s ->
-                mapOf("id" to s.id, "label" to s.label, "createdAt" to s.createdAt, "lastActiveAt" to s.lastActiveAt, "commands" to s.commands, "output" to s.output.toString(), "ttlMinutes" to s.ttlMinutes)
+                mapOf("id" to s.id, "label" to s.label, "createdAt" to s.createdAt, "lastActiveAt" to s.lastActiveAt, "commands" to s.commands, "output" to s.output.toString(), "ttlMinutes" to s.ttlMinutes, "ownerUserId" to s.ownerUserId)
             }
             AdminApi.ok(call, list, "ok")
         }
@@ -925,10 +926,11 @@ fun Application.moduleWeb(database: Database) {
             val body = call.receive<JsonObject>()
             val label = body["label"]?.jsonPrimitive?.content?.trim().orEmpty()
             val ttl = body["ttlMinutes"]?.jsonPrimitive?.content?.toIntOrNull() ?: 30
-            val s = com.qitong.gateway.http.TerminalManager.create(label, ttl)
+            // ★ v79 沙盒用户隔离：创建时记录归属人
+            val s = com.qitong.gateway.http.TerminalManager.create(label, ttl, u.id)
             val ttlTxt = if (ttl == 0) "永久" else "${ttl} 分钟"
             val msg = if (ttl == 0) "终端已创建（永久会话，不会自动清理）" else "终端已创建（$ttlTxt 无操作自动清理）"
-            AdminApi.ok(call, mapOf("id" to s.id, "label" to s.label, "ttlMinutes" to s.ttlMinutes), msg)
+            AdminApi.ok(call, mapOf("id" to s.id, "label" to s.label, "ttlMinutes" to s.ttlMinutes, "ownerUserId" to s.ownerUserId), msg)
         }
         // 调整终端会话时长（0=永久；>0=分钟）
         post("/api/terminal/set-ttl") {
@@ -938,6 +940,8 @@ fun Application.moduleWeb(database: Database) {
             val id = body["id"]?.jsonPrimitive?.content.orEmpty()
             val ttl = body["ttlMinutes"]?.jsonPrimitive?.content?.toIntOrNull() ?: 30
             if (id.isBlank()) { AdminApi.fail(call, "会话ID无效", 400); return@post }
+            // ★ v79 归属校验
+            if (!com.qitong.gateway.http.TerminalManager.canAccess(id, u.id)) { AdminApi.fail(call, "无权操作该终端", 403); return@post }
             if (com.qitong.gateway.http.TerminalManager.setTtl(id, ttl)) {
                 AdminApi.ok(call, mapOf("ttlMinutes" to ttl), if (ttl == 0) "已设为永久会话（不会自动清理）" else "已设为 $ttl 分钟无操作自动清理")
             } else AdminApi.fail(call, "会话不存在", 404)
@@ -950,9 +954,10 @@ fun Application.moduleWeb(database: Database) {
             val req = body["req"]?.jsonPrimitive?.content?.trim().orEmpty()
             val id = body["id"]?.jsonPrimitive?.content?.trim().orEmpty()
             if (req.isBlank()) { AdminApi.fail(call, "请描述你的需求", 400); return@post }
-            // 1) 创建或复用会话
-            val sessionId = if (id.isNotBlank() && com.qitong.gateway.http.TerminalManager.get(id) != null) id
-                else com.qitong.gateway.http.TerminalManager.create("AI终端-" + u.username).id
+            // ★ v79 沙盒用户隔离：创建/复用时带归属
+            val sessionId = if (id.isNotBlank() && com.qitong.gateway.http.TerminalManager.get(id) != null &&
+                com.qitong.gateway.http.TerminalManager.canAccess(id, u.id)) id
+                else com.qitong.gateway.http.TerminalManager.create("AI终端-" + u.username, 30, u.id).id
             // 2) 大模型把自然语言转成 Linux 命令（网关本机 /v1/chat/completions）
             val cmd = com.qitong.gateway.http.AiTermHelper.genCommand(req)
             if (cmd.isBlank()) { AdminApi.fail(call, "AI 无法生成命令，换个说法试试", 400); return@post }
@@ -972,6 +977,8 @@ fun Application.moduleWeb(database: Database) {
             val id = body["id"]?.jsonPrimitive?.content.orEmpty()
             val cmd = body["cmd"]?.jsonPrimitive?.content.orEmpty()
             if (id.isBlank()) { AdminApi.fail(call, "会话ID无效", 400); return@post }
+            // ★ v79 归属校验
+            if (!com.qitong.gateway.http.TerminalManager.canAccess(id, u.id)) { AdminApi.fail(call, "无权操作该终端", 403); return@post }
             val (ok, out) = com.qitong.gateway.http.TerminalManager.exec(id, cmd)
             if (!ok) { AdminApi.fail(call, out, 400); return@post }
             database.addOpLog(u.id, u.username, "终端执行", "会话$id 执行: $cmd", call.request.local.remoteHost)
@@ -982,7 +989,10 @@ fun Application.moduleWeb(database: Database) {
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
             val body = call.receive<JsonObject>()
             val id = body["id"]?.jsonPrimitive?.content.orEmpty()
-            val closed = if (id.isBlank()) { com.qitong.gateway.http.TerminalManager.closeAll(); true } else com.qitong.gateway.http.TerminalManager.close(id)
+            // ★ v79 归属校验
+            val closed = if (id.isBlank()) { com.qitong.gateway.http.TerminalManager.closeAll(); true }
+                else if (!com.qitong.gateway.http.TerminalManager.canAccess(id, u.id)) { AdminApi.fail(call, "无权操作该终端", 403); return@post }
+                else com.qitong.gateway.http.TerminalManager.close(id)
             AdminApi.ok(call, null, if (closed) "终端已关闭" else "会话不存在")
         }
         // ===== 技能库（独立管理界面：触发器 -> 动作） =====
@@ -1077,8 +1087,12 @@ fun Application.moduleWeb(database: Database) {
                 (cfg["url"] as? String ?: ""),
                 (cfg["authToken"] as? String ?: "")
             )
-            val toolsText = com.qitong.gateway.sandbox.McpClient.listTools(server)
-            AdminApi.ok(call, mapOf("tools" to toolsText), "ok")
+            // ★ v79 结构化返回（含入参 schema / 连接状态），前端渲染成展开面板
+            val r = com.qitong.gateway.sandbox.McpClient.listToolsJson(server)
+            val toolsJson: String = r.optJSONArray("tools")?.toString() ?: "[]"
+            val okFlag: Boolean = r.optBoolean("ok")
+            val errMsg: String = r.optString("error")
+            AdminApi.ok(call, mapOf("tools" to toolsJson, "ok" to okFlag, "error" to errMsg), "ok")
         }
 
         // ===== 工作流（可做任何事的自动化：触发条件 -> 动作序列；qtai-sj 可创建/修改/执行） =====
@@ -1661,7 +1675,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-78"))
+                put("version", JsonPrimitive("3.18.22-79"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2381,7 +2395,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-78"))
+                    put("version", JsonPrimitive("3.18.22-79"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()
