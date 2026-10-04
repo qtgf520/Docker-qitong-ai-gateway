@@ -62,7 +62,7 @@ object AdminJs8 {
  };
 // 跳页
 function goPage(pg){ switchView(pg); }
-// ★ v71 关于页渲染（修复被挡/空白）
+// ★ v71/v85 关于页渲染（修复被挡/空白 + 更新历史）
  loaders.about = function(){
   var box = $('view-about');
   if(!box) return;
@@ -74,11 +74,31 @@ function goPage(pg){ switchView(pg); }
    '<div style="font-size:13px;line-height:2;text-align:left;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;color:var(--text)">'+
    '<div>📌 版本：<b>'+APP_VER+'</b></div>'+
    '<div>🧠 通道：QQ机器人 · 微信bot（ilink）· 内置聊天</div>'+
-   '<div>🛠 能力：qtai-sj 自由调度 · 技能 · MCP · 工作流 · 终端 · 心跳 · 记忆</div>'+
+   '<div>🛠 能力：qtai-sj 自由调度 · 技能 · MCP · 工作流 · 终端 · 心跳 · 记忆 · 定时任务</div>'+
    '<div>🔐 权限：管理员/代理/普通用户 分级 · 账号绑定</div>'+
    '<div>💬 智能工具中心：侧边栏「智能工具」汇总全部功能入口</div>'+
    '</div>'+
-   '<div style="font-size:12px;color:var(--muted);margin-top:16px">© 2026 綦桐 · All rights reserved</div></div>';
+   '<div class="card" style="max-width:640px;margin:14px auto 0;padding:20px;text-align:left">'+
+   '<h3>📋 更新历史 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadUpdateLogs()">刷新</button></h3>'+
+   '<div id="updateLogBox" style="color:var(--muted);font-size:12px">加载中...</div>'+
+   '</div>'+
+   '<div style="font-size:12px;color:var(--muted);margin-top:16px;text-align:center">© 2026 綦桐 · All rights reserved</div>'+
+   '</div>';
+  loadUpdateLogs();
+ };
+ window.loadUpdateLogs = function(){
+  var el = $('updateLogBox'); if(!el) return;
+  api('/api/update-logs').then(function(r){
+   var logs = (r && r.data) || [];
+   if(!logs.length){ el.innerHTML = '暂无更新记录'; return; }
+   el.innerHTML = logs.map(function(l){
+    return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'+
+     '<div style="font-weight:600;color:var(--cyan)">【'+esc(l.version)+'】'+esc(l.title)+'</div>'+
+     '<div style="color:var(--muted);margin-top:3px;white-space:pre-wrap">'+esc(l.details)+'</div>'+
+     '<div style="font-size:10px;color:var(--muted);margin-top:3px">'+new Date(l.releasedAt).toLocaleString('zh-CN',{hour12:false})+'</div>'+
+     '</div>';
+   }).join('');
+  });
  };
 """
 }

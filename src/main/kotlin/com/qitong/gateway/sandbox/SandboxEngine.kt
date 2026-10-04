@@ -33,7 +33,7 @@ object SandboxEngine {
         "weixin_bots_list", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop",
         "task_create", "task_list", "task_cancel",
         "account_info", "account_bind", "account_unbind",
-        "mail_send"
+        "mail_send", "update_logs"
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -61,6 +61,7 @@ object SandboxEngine {
             .put(func("qq_bots_groups", "获取全部 QQ 群配置（只读）", "admin", "read", emptyList(), "群名/群 openid/AI 开关"))
             .put(func("qq_points_rank", "查看积分排行（只读）", "user", "read", emptyList(), "积分排行"))
             .put(func("help", "查看沙盒可用能力清单", "user", "read", emptyList(), "全部函数名与说明"))
+            .put(func("update_logs", "查看系统更新历史（最近发布了啥功能）", "user", "read", emptyList(), "版本号/更新标题/更新内容"))
             .put(func("mcp_list", "列出已配置 MCP 服务器及其可用工具（只读）", "admin", "read", emptyList(), "MCP服务器名/工具列表"))
             .put(func("mcp_call", "调用 MCP 服务器上的工具（只读/执行）", "admin", "modify", listOf(param("server", true, "MCP服务器名"), param("tool", true, "工具名"), param("args", false, "JSON参数")), "工具返回结果"))
             .put(func("web_search", "联网搜索信息（只读）", "user", "read", listOf(param("query", true, "搜索关键词")), "搜索结果摘要"))
@@ -77,7 +78,7 @@ object SandboxEngine {
             .put(func("weixin_bot_stop", "停止指定微信机器人（修改，管理员）", "admin", "modify", listOf(param("id", true, "微信机器人ID")), "停止结果"))
             .put(func("qq_bot_start", "启动指定QQ机器人（修改，管理员）", "admin", "modify", listOf(param("id", true, "QQ机器人ID")), "启动结果"))
             .put(func("qq_bot_stop", "停止指定QQ机器人（修改，管理员）", "admin", "modify", listOf(param("id", true, "QQ机器人ID")), "停止结果"))
-            .put(func("task_create", "创建计划任务（AI 安排未来执行；支持 cron 周期如 每天早上8点）", "user", "modify", listOf(param("content", true, "任务内容/提醒内容"), param("minutes", false, "几分钟后执行，如 10（与 cron 二选一）"), param("cron", false, "cron表达式如 0 8 * * * 每天8点、*/30 * * * * 每30分钟（与 minutes 二选一）"), param("type", false, "任务类型：remind提醒/action操作，默认remind")), "创建结果/任务ID"))
+            .put(func("task_create", "创建计划任务（支持一次性/周期cron/固定间隔循环）", "user", "modify", listOf(param("content", true, "任务内容/提醒内容"), param("minutes", false, "几分钟后执行一次性，如 10（三选一）"), param("cron", false, "cron周期如 0 8 * * * 每天8点、*/30 * * * * 每30分钟（三选一）"), param("interval", false, "固定间隔循环分钟数如 30 每30分钟一次（三选一）"), param("type", false, "任务类型：remind提醒/action操作，默认remind")), "创建结果/任务ID"))
             .put(func("task_list", "查看我的计划任务（只读，含周期任务）", "user", "read", emptyList(), "任务列表/状态/剩余时间/周期"))
             .put(func("task_cancel", "取消计划任务（修改）", "user", "modify", listOf(param("id", true, "任务ID")), "取消结果"))
             .put(func("account_info", "查看当前绑定账号信息（只读）", "user", "read", emptyList(), "账号/角色/余额/绑定模型"))
@@ -316,7 +317,7 @@ $KNOWLEDGE_JSON
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
-            "heartbeat_get", "task_list" -> "user" to "read"
+            "heartbeat_get", "task_list", "update_logs" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
             "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
@@ -332,6 +333,14 @@ $KNOWLEDGE_JSON
         return try {
             when (fn) {
                 "help" -> "📚 沙盒可用能力：\n" + parseKnowledgeBrief()
+                "update_logs" -> {
+                    // ★ v85 更新历史查询（前端/QQ/微信/qtai-sj 都能查更新了啥）
+                    val logs = db.getUpdateLogs(20)
+                    if (logs.isEmpty()) "📭 暂无更新记录"
+                    else "📋 【网关更新历史】\n" + logs.joinToString("\n\n") { l ->
+                        "【${l["version"]}】${l["title"]}\n${l["details"]}"
+                    }
+                }
                 "model_batch_test" -> SkillExecutor.execute(db, "100002", "", userId)
                 "model_test_single" -> SkillExecutor.execute(db, "100001", args["model_name"] ?: "", userId)
                 "model_get_all" -> SkillExecutor.execute(db, "600008", "", userId)
@@ -637,18 +646,24 @@ $KNOWLEDGE_JSON
                         val minutes = args["minutes"]?.toLongOrNull() ?: 0
                         val type = args["type"] ?: "remind"
                         val cronExpr = args["cron"] ?: ""
-                        if (content.isBlank() || (minutes < 1 && cronExpr.isBlank())) "⚠️ 语法：task_create(content=任务内容, minutes=几分钟后执行, cron=可选cron表达式如 0 8 * * *, type=remind/action)"
+                        val intervalMinutes = args["interval"]?.toIntOrNull() ?: 0
+                        if (content.isBlank() || (minutes < 1 && cronExpr.isBlank() && intervalMinutes < 1)) "⚠️ 语法：task_create(content=任务内容, minutes=几分钟后执行, cron=可选cron表达式如 0 8 * * *, interval=可选固定间隔分钟如 30, type=remind/action)"
                         else if (cronExpr.isNotBlank() && !com.qitong.gateway.sandbox.CronExpression.isValid(cronExpr)) {
                             "⚠️ cron 表达式无效（标准5字段：分 时 日 月 周，如 0 8 * * * = 每天8点、*/30 * * * * = 每30分钟）"
+                        } else if (intervalMinutes > 0 && intervalMinutes < 1) {
+                            "⚠️ 固定间隔至少 1 分钟"
                         } else {
-                            val runAt = if (cronExpr.isNotBlank()) {
-                                com.qitong.gateway.sandbox.CronExpression.parse(cronExpr)?.next(System.currentTimeMillis()) ?: (System.currentTimeMillis() + 60_000L)
-                            } else {
-                                System.currentTimeMillis() + minutes * 60_000L
+                            val runAt = when {
+                                cronExpr.isNotBlank() -> com.qitong.gateway.sandbox.CronExpression.parse(cronExpr)?.next(System.currentTimeMillis()) ?: (System.currentTimeMillis() + 60_000L)
+                                intervalMinutes > 0 -> System.currentTimeMillis() + intervalMinutes * 60_000L
+                                else -> System.currentTimeMillis() + minutes * 60_000L
                             }
-                            val id = db.addScheduledTask(channel, userId.toString(), type, content, runAt, cronExpr)
-                            if (cronExpr.isNotBlank()) "✅ 周期任务已创建 #$id：cron「$cronExpr」→「$content」（发 task_list 查看，到期自动执行并滚动到下一周期）"
-                            else "✅ 计划任务已创建 #$id：$minutes 分钟后「$content」（发 task_list 查看）"
+                            val id = db.addScheduledTask(channel, userId.toString(), type, content, runAt, cronExpr, intervalMinutes)
+                            when {
+                                cronExpr.isNotBlank() -> "✅ 周期任务已创建 #$id：cron「$cronExpr」→「$content」（发 task_list 查看，到期自动执行并滚动到下一周期）"
+                                intervalMinutes > 0 -> "✅ 循环任务已创建 #$id：每 $intervalMinutes 分钟执行「$content」（发 task_list 查看，到期自动执行并滚动到下一周期）"
+                                else -> "✅ 计划任务已创建 #$id：$minutes 分钟后「$content」（发 task_list 查看）"
+                            }
                         }
                     }
                 }

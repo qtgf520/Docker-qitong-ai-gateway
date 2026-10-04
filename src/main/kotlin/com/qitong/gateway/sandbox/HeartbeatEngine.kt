@@ -129,9 +129,10 @@ object HeartbeatEngine {
                             okLines.add("  · [${task["channel"]}] ${task["content"]}")
                             val id = (task["id"] as? Number)?.toLong() ?: 0L
                             val cronExpr = (task["cronExpr"] as? String) ?: ""
-                            if (cronExpr.isNotBlank()) {
-                                // ★ v84 cron 周期任务：执行后推进到下一匹配时刻（继续 pending）
-                                db.advanceScheduledTask(id, cronExpr, now)
+                            val intervalMinutes = (task["intervalMinutes"] as? Int) ?: 0
+                            if (cronExpr.isNotBlank() || intervalMinutes > 0) {
+                                // ★ v84/v85 周期/循环任务：执行后推进到下一时刻（继续 pending）
+                                db.advanceScheduledTask(id, cronExpr, intervalMinutes, now)
                             } else {
                                 // 一次性任务：标记完成（推送回调里处理实际送达）
                                 db.markScheduledTaskDone(id)

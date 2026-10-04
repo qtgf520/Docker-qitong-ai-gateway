@@ -562,6 +562,20 @@ class Database(private val dbPath: String) {
             )
             // ★ v84 旧库迁移：补 cron_expr 列（cron 周期任务）
             runCatching { st.executeUpdate("ALTER TABLE scheduled_tasks ADD COLUMN cron_expr TEXT NOT NULL DEFAULT ''") }
+
+            // ★ v85 旧库迁移：补 interval_minutes 列（固定间隔循环任务）
+            runCatching { st.executeUpdate("ALTER TABLE scheduled_tasks ADD COLUMN interval_minutes INTEGER NOT NULL DEFAULT 0") }
+
+            // ★ v85 更新历史表（前端/QQ/微信/qtai-sj 都可查；Git 对接在后续版本接入）
+            st.execute(
+                """CREATE TABLE IF NOT EXISTS update_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL DEFAULT '',
+                    details TEXT NOT NULL DEFAULT '',
+                    released_at INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
         }
     }
 
@@ -1222,14 +1236,13 @@ class Database(private val dbPath: String) {
 
     // ============ 计划任务（v76：AI 安排未来执行任务；v84：Agora CronExpression 周期任务） ============
 
-    fun addScheduledTask(channel: String, userOpenid: String, taskType: String, content: String, runAt: Long, cronExpr: String = ""): Long {
+    fun addScheduledTask(channel: String, userOpenid: String, taskType: String, content: String, runAt: Long, cronExpr: String = "", intervalMinutes: Int = 0): Long {
         stmt(
-            "INSERT INTO scheduled_tasks (channel,user_openid,task_type,content,run_at,status,created_at,cron_expr) VALUES (?,?,?,?,?,?,?,?)",
-            channel, userOpenid, taskType, content, runAt, "pending", System.currentTimeMillis(), cronExpr
+            "INSERT INTO scheduled_tasks (channel,user_openid,task_type,content,run_at,status,created_at,cron_expr,interval_minutes) VALUES (?,?,?,?,?,?,?,?,?)",
+            channel, userOpenid, taskType, content, runAt, "pending", System.currentTimeMillis(), cronExpr, intervalMinutes
         )
         return lastInsertId()
     }
-
     fun getScheduledTasks(channel: String? = null, userOpenid: String? = null, status: String? = null, limit: Int = 100): List<Map<String, Any?>> {
         val conds = mutableListOf<String>()
         val args = mutableListOf<Any>()
@@ -1247,7 +1260,8 @@ class Database(private val dbPath: String) {
                 "runAt" to ((it["run_at"] as? Number)?.toLong() ?: 0),
                 "status" to (it["status"] as? String ?: "pending"),
                 "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0),
-                "cronExpr" to (it["cron_expr"] as? String ?: "")
+                "cronExpr" to (it["cron_expr"] as? String ?: ""),
+                "intervalMinutes" to ((it["interval_minutes"] as? Number)?.toInt() ?: 0)
             )
         }
     }
@@ -1256,15 +1270,65 @@ class Database(private val dbPath: String) {
     fun getDueScheduledTasks(now: Long): List<Map<String, Any?>> =
         getScheduledTasks(status = "pending").filter { (it["runAt"] as? Long ?: 0) <= now }
 
+    // ============ 更新历史（v85：前端/QQ/微信/qtai-sj 可查更新了啥） ============
+
+    fun addUpdateLog(version: String, title: String, details: String, releasedAt: Long = System.currentTimeMillis()) {
+        stmt(
+            "INSERT INTO update_logs (version,title,details,released_at) VALUES (?,?,?,?)",
+            version, title, details, releasedAt
+        )
+    }
+
+    fun getUpdateLogs(limit: Int = 50): List<Map<String, Any?>> =
+        query("SELECT * FROM update_logs ORDER BY released_at DESC LIMIT $limit").map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "version" to (it["version"] as? String ?: ""),
+                "title" to (it["title"] as? String ?: ""),
+                "details" to (it["details"] as? String ?: ""),
+                "releasedAt" to ((it["released_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+
+    fun seedUpdateLogsIfEmpty() {
+        if (queryOne("SELECT COUNT(*) FROM update_logs") ?: 0 > 0) return
+        val logs = listOf(
+            Triple("v3.18.22-85", "循环任务 + 更新历史 + 并行执行完善", "新增固定间隔循环任务（task_create interval）；新增更新历史系统（前端关于页/QQ/微信/qtai-sj 可查）；Agent 并行批量执行；返回内容不截断；终端沙盒按用户隔离；技能/插件/工作流/提醒全通道打通"),
+            Triple("v3.18.22-84", "周期任务调度引擎", "新增标准 cron 周期任务：支持 分 时 日 月 周 表达式（如 0 8 * * * 每天8点、*/30 * * * * 每30分钟），到期自动执行并滚动到下一周期"),
+            Triple("v3.18.22-83", "返回内容不截断", "工具执行结果/工作流/终端大输出完整推送，超长自动分多条不丢内容"),
+            Triple("v3.18.22-82", "并行工具执行", "Agent 多工具并发执行，批量查询几秒全出"),
+            Triple("v3.18.22-81", "执行纪律强化", "说了就必须做/少问多干/交付真实成果/完成前自我验证/并行批处理"),
+            Triple("v3.18.22-80", "邮件发送", "新增邮件发送真功能，根除假调用"),
+            Triple("v3.18.22-79", "MCP 增强 + 沙盒隔离", "MCP 工具 schema 面板、连接状态、终端按用户隔离"),
+            Triple("v3.18.22-78", "微信回复去重", "工具结果实时推送后最终回复不重复"),
+            Triple("v3.18.22-77", "假调用修复", "自然语言描述也能识别执行"),
+            Triple("v3.18.22-76", "心跳高级配置 + 计划任务 + 远程启停 + 微信提醒/记忆", "网关设置页心跳UI、计划任务表、机器人远程启停、微信提醒/记忆"),
+            Triple("v3.18.22-75", "qtai-sj 真人化", "自主找工具、思考推送、自由停止"),
+            Triple("v3.18.22-74", "微信多轮上下文", "微信 Agent 循环 + 思考推送 + 每用户隔离"),
+            Triple("v3.18.22-73", "微信功能对齐QQ", "技能/游戏/插件/工作流微信全打通"),
+            Triple("v3.18.22-72", "智能工具真融合", "状态一览 + 微信动态预览 + 日志管理"),
+            Triple("v3.18.22-71", "大消息分段 + 人设生效", "超长消息分多条推送，人设始终注入"),
+            Triple("v3.18.22-70", "微信编辑修复", "编辑保存不覆盖 token")
+        )
+        logs.forEach { (v, t, d) -> addUpdateLog(v, t, d) }
+    }
+
     fun markScheduledTaskDone(id: Long) {
         stmt("UPDATE scheduled_tasks SET status='done' WHERE id=?", id)
     }
 
-    /** ★ v84 cron 周期任务推进：执行后把 run_at 推到下一个匹配时刻（不带 cron 的任务保持 done） */
-    fun advanceScheduledTask(id: Long, cronExpr: String, now: Long) {
-        val next = com.qitong.gateway.sandbox.CronExpression.parse(cronExpr)?.next(now)
-        if (next != null) {
-            stmt("UPDATE scheduled_tasks SET run_at=?, status='pending' WHERE id=?", next, id)
+    /** ★ v84/v85 周期/循环任务推进：执行后把 run_at 推到下一时刻（cron→下一匹配；interval→+间隔分钟；否则 done） */
+    fun advanceScheduledTask(id: Long, cronExpr: String, intervalMinutes: Int, now: Long) {
+        if (cronExpr.isNotBlank()) {
+            val next = com.qitong.gateway.sandbox.CronExpression.parse(cronExpr)?.next(now)
+            if (next != null) {
+                stmt("UPDATE scheduled_tasks SET run_at=?, status='pending' WHERE id=?", next, id)
+            } else {
+                stmt("UPDATE scheduled_tasks SET status='done' WHERE id=?", id)
+            }
+        } else if (intervalMinutes > 0) {
+            // 固定间隔循环：下次 = now + interval
+            stmt("UPDATE scheduled_tasks SET run_at=?, status='pending' WHERE id=?", now + intervalMinutes * 60_000L, id)
         } else {
             stmt("UPDATE scheduled_tasks SET status='done' WHERE id=?", id)
         }
