@@ -65,7 +65,8 @@ data class ChatMessage(
     val role: String,            // user / assistant / system
     val content: String,
     val modelId: String = "",
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val parentId: Long = 0       // ★ v86 树形分支：父消息ID（0=主线根）
 )
 
 /** 用量统计（对齐 token_usage 表 + 商业化扩展） */
@@ -184,7 +185,7 @@ data class GatewayConfig(
 data class GatewayStatus(
     val status: String = "ok",
     val service: String = "qitong-ai-gateway-docker",
-    val version: String = "3.18.22-85",
+    val version: String = "3.18.22-86",
     val running: Boolean = true,
     val port: Int,
     val failover: Boolean,

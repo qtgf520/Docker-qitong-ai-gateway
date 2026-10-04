@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v3.18.22-85
+ * 綦桐AI网关 · Docker 服务器版 v3.18.22-86
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v3.18.22-85    ║
+        ║   綦桐AI网关 · Docker Server v3.18.22-86    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -189,7 +189,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("3.18.22-85"))
+                put("version", JsonPrimitive("3.18.22-86"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1682,7 +1682,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("3.18.22-85"))
+                put("version", JsonPrimitive("3.18.22-86"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2366,6 +2366,38 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "重命名会话", "会话$id → $title", call.request.local.remoteHost)
             AdminApi.ok(call, null, "标题已更新")
         }
+        // ★ v86 编辑历史消息（树形分支：改了某条历史消息后，其后消息删除，重新生成）
+        post("/api/conversations/{id}/messages/{mid}/edit") {
+            val u = call.requireAuth(database) ?: return@post
+            val convId = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val mid = call.parameters["mid"]?.toLongOrNull() ?: return@post
+            val body = call.receive<JsonObject>()
+            val newContent = body["content"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (newContent.isBlank()) { AdminApi.fail(call, "内容不能为空", 400); return@post }
+            // 校验消息属于该会话
+            val msgs = database.getMessagesByConversation(convId)
+            val target = msgs.firstOrNull { it.id == mid } ?: run { AdminApi.fail(call, "消息不存在", 404); return@post }
+            if (target.role != "user") { AdminApi.fail(call, "仅用户消息可编辑", 400); return@post }
+            // 改内容 + 截断其后（形成新分支）
+            database.updateChatMessageContent(mid, newContent)
+            database.truncateMessagesAfter(convId, mid)
+            database.addOpLog(u.id, u.username, "编辑消息", "会话$convId 消息$mid 已编辑", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "已编辑，可继续发送重新生成")
+        }
+        // ★ v86 上下文压缩（Context Compact：保留最近 N 条，更早折叠成摘要）
+        post("/api/conversations/{id}/compact") {
+            val u = call.requireAuth(database) ?: return@post
+            val convId = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val body = call.receive<JsonObject>()
+            val keepLast = body["keepLast"]?.jsonPrimitive?.content?.toIntOrNull() ?: 12
+            val ok = database.compactContext(convId, keepLast.coerceIn(4, 50))
+            if (ok) {
+                database.addOpLog(u.id, u.username, "压缩上下文", "会话$convId 保留最近 ${keepLast}条", call.request.local.remoteHost)
+                AdminApi.ok(call, null, "上下文已压缩")
+            } else {
+                AdminApi.ok(call, null, "对话不够长，无需压缩")
+            }
+        }
         post("/api/chat") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -2402,7 +2434,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("3.18.22-85"))
+                    put("version", JsonPrimitive("3.18.22-86"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

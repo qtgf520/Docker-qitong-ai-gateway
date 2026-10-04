@@ -98,9 +98,12 @@ class Database(private val dbPath: String) {
                     content TEXT NOT NULL,
                     model_id TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL,
+                    parent_id INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
                 )"""
             )
+            // ★ v86 旧库迁移：补 parent_id 列（树形对话分支：分叉/重生成基点）
+            runCatching { st.executeUpdate("ALTER TABLE chat_messages ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0") }
             // 用量统计
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS token_usage (
@@ -810,16 +813,61 @@ class Database(private val dbPath: String) {
                 role = it["role"] as? String ?: "user",
                 content = it["content"] as? String ?: "",
                 modelId = it["model_id"] as? String ?: "",
-                createdAt = (it["created_at"] as? Number)?.toLong() ?: 0
+                createdAt = (it["created_at"] as? Number)?.toLong() ?: 0,
+                parentId = (it["parent_id"] as? Number)?.toLong() ?: 0
             )
         }
 
     fun addMessage(msg: ChatMessage): Long {
         stmt(
-            "INSERT INTO chat_messages (conversation_id, role, content, model_id, created_at) VALUES (?,?,?,?,?)",
-            msg.conversationId, msg.role, msg.content, msg.modelId, msg.createdAt
+            "INSERT INTO chat_messages (conversation_id, role, content, model_id, created_at, parent_id) VALUES (?,?,?,?,?,?)",
+            msg.conversationId, msg.role, msg.content, msg.modelId, msg.createdAt, msg.parentId
         )
         return lastInsertId()
+    }
+
+    /** ★ v86 更新消息内容（编辑历史消息用） */
+    fun updateChatMessageContent(id: Long, content: String) {
+        stmt("UPDATE chat_messages SET content=? WHERE id=?", content, id)
+    }
+
+    // ============ 树形对话分支（v86：重生成/编辑历史消息生成分叉） ============
+
+    /** ★ v86 从指定消息截断：删除该消息之后的所有消息（重生成时用） */
+    fun truncateMessagesAfter(convId: Long, afterId: Long) {
+        stmt("DELETE FROM chat_messages WHERE conversation_id=? AND id>?", convId, afterId)
+    }
+
+    /** ★ v86 获取消息链（沿 parent_id 追溯到根的主线消息，用于重生成上下文） */
+    fun getMessageChain(messages: List<ChatMessage>, startId: Long): List<ChatMessage> {
+        val byId = messages.associateBy { it.id }
+        val chain = mutableListOf<ChatMessage>()
+        var cur = byId[startId]
+        while (cur != null) {
+            chain.add(0, cur)
+            cur = if (cur.parentId > 0) byId[cur.parentId] else null
+        }
+        return chain
+    }
+
+    // ============ Token 预算上下文压缩（v86：Context Compact） ============
+
+    /** ★ v86 上下文压缩：保留最近 N 条原文，更早的折叠成一段摘要（摘要置于消息流头部，不丢脉络） */
+    fun compactContext(convId: Long, keepLast: Int): Boolean {
+        val msgs = getMessagesByConversation(convId)
+        if (msgs.size <= keepLast + 2) return false  // 不够长不压
+        val old = msgs.dropLast(keepLast)
+        val recent = msgs.takeLast(keepLast)
+        if (old.isEmpty() || recent.isEmpty()) return false
+        // 旧消息拼摘要（截断保护：最多 1500 字）
+        val oldContent = old.joinToString("\n") { m ->
+            "${if (m.role == "user") "用户" else if (m.role == "assistant") "助手" else "系统"}: ${m.content.take(200)}"
+        }.take(1500)
+        val summary = "【上下文已压缩】以下是更早的对话摘要（继续当前对话，历史细节已折叠）：\n$oldContent"
+        // 第一条旧消息改成摘要（id 最小→自然排在头部），其余旧消息删除
+        stmt("UPDATE chat_messages SET role='system', content=?, model_id='' WHERE id=?", summary, old.first().id)
+        old.drop(1).forEach { m -> stmt("DELETE FROM chat_messages WHERE id=?", m.id) }
+        return true
     }
 
     // ============ 用量统计 ============
@@ -1293,7 +1341,7 @@ class Database(private val dbPath: String) {
     fun seedUpdateLogsIfEmpty() {
         if (queryOne("SELECT COUNT(*) FROM update_logs") ?: 0 > 0) return
         val logs = listOf(
-            Triple("v3.18.22-85", "循环任务 + 更新历史 + 并行执行完善", "新增固定间隔循环任务（task_create interval）；新增更新历史系统（前端关于页/QQ/微信/qtai-sj 可查）；Agent 并行批量执行；返回内容不截断；终端沙盒按用户隔离；技能/插件/工作流/提醒全通道打通"),
+            Triple("v3.18.22-86", "循环任务 + 更新历史 + 并行执行完善", "新增固定间隔循环任务（task_create interval）；新增更新历史系统（前端关于页/QQ/微信/qtai-sj 可查）；Agent 并行批量执行；返回内容不截断；终端沙盒按用户隔离；技能/插件/工作流/提醒全通道打通"),
             Triple("v3.18.22-84", "周期任务调度引擎", "新增标准 cron 周期任务：支持 分 时 日 月 周 表达式（如 0 8 * * * 每天8点、*/30 * * * * 每30分钟），到期自动执行并滚动到下一周期"),
             Triple("v3.18.22-83", "返回内容不截断", "工具执行结果/工作流/终端大输出完整推送，超长自动分多条不丢内容"),
             Triple("v3.18.22-82", "并行工具执行", "Agent 多工具并发执行，批量查询几秒全出"),

@@ -223,6 +223,10 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v3.18.22-86（2026-10-05）· 树形对话分支 + 上下文压缩（Context Compact）
+- 🌳 **树形对话分支**：chat_messages 加 parent_id 列——聊天界面每条用户消息可 ✏️ 编辑、每条助手消息可 🔄 重新生成（截断其后形成新分叉），重生成走 regenFrom 从基点重建上下文
+- 🧹 **上下文压缩 Context Compact**：工具栏「🧹 压缩」一键把该会话更早的消息折叠成摘要、保留最近 12 条原文——长对话省 Token 不丢脉络（/api/conversations/{id}/compact）
+- 🎛 新路由：PUT /api/conversations/{id}/messages/{mid}（编辑历史消息）+ POST /{id}/compact（压缩）+ /api/chat 支持 regenFrom/parentId
 ### v3.18.22-85（2026-10-05）· 更新历史系统 + 固定间隔循环任务 + 能力全量补齐
 - 📋 **更新历史系统**：新增 update_logs 表 + /api/update-logs + 前端「关于」页更新历史卡片 + 沙盒 update_logs 函数——后台/QQ/微信/qtai-sj 全能查「更新了啥」
 - 🔁 **固定间隔循环任务**：scheduled_tasks 加 interval_minutes 列；task_create 支持 interval 参数（一次性/cron周期/固定间隔 三选一）；到期自动执行并滚动到下一周期——「每30分钟提醒我喝水」真能循环跑

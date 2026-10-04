@@ -738,6 +738,13 @@ private fun providerToMap(p: Provider) = mapOf(
         val userContent = body["content"]?.jsonPrimitive?.content ?: ""
         val modelId = body["model"]?.jsonPrimitive?.content ?: ""
         val stream = body["stream"]?.let { parseBool(it) } ?: false
+        // ★ v86 树形分支：regenFrom=重生成基点消息ID（截断其后并重新生成）；parentId=父消息ID
+        val regenFrom = body["regenFrom"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
+        val parentId = body["parentId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
+        if (regenFrom > 0) {
+            // 重生成：删除基点之后所有消息（形成新分叉）
+            database.truncateMessagesAfter(conversationId, regenFrom)
+        }
 
         // 自动生成标题：新建会话且标题仍是"新对话"时，用用户首条消息前 18 字作标题
         if (rawConvId <= 0 && userContent.isNotBlank()) {
@@ -745,8 +752,8 @@ private fun providerToMap(p: Provider) = mapOf(
             database.updateConversationTitle(conversationId, title)
         }
 
-        // 保存用户消息
-        database.addMessage(ChatMessage(conversationId = conversationId, role = "user", content = userContent, modelId = modelId))
+        // 保存用户消息（v86：带父消息ID 支持树形分叉）
+        database.addMessage(ChatMessage(conversationId = conversationId, role = "user", content = userContent, modelId = modelId, parentId = parentId))
 
         // 人格注入 + 远程控制（喊人格名直接触发）
         val persona = if (userId > 0) database.getPersona(userId) else null

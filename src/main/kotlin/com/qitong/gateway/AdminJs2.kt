@@ -326,6 +326,7 @@ loaders.chat = function(){
       '<span class="chat-toolbar-title" id="chatCurTitle">💬 聊天</span>'+
       '<select id="chatModel" class="input" style="width:170px;border-radius:16px;padding:6px 10px">'+modelOpts+'</select>'+
       '<button class="chat-toggle" id="thinkBtn" onclick="toggleThink()" title="开启后模型进行深度推理（思考型模型生效）">🧠 深度思考</button>'+
+      '<button class="btn-ghost btn-sm" onclick="compactChat()" title="压缩上下文：保留最近N条，更早折叠成摘要（长对话省Token）">🧹 压缩</button>'+
       '<button class="btn-ghost btn-sm" onclick="deleteConv()" title="删除当前会话">🗑</button>'+
      '</div>'+
      '<div id="chatMsgs" class="chat-msgs"><div class="msg-row system"><div class="bubble">👋 点 ☰ 打开会话列表，输入框固定在底部，📎可发图片/文件</div></div></div>',
@@ -379,11 +380,88 @@ window.loadConvMsgs = function(){
    var msgs = r.data.messages || [];
    $('chatMsgs').innerHTML = msgs.map(function(m){
     var t = fmtTime2(m.createdAt);
-    if(m.role==='user') return '<div class="msg-row user"><div class="bubble">'+renderMd(m.content)+'<div class="msg-time">'+t+'</div></div></div>';
-    return '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble">'+renderMd(m.content)+'<div class="msg-time">'+t+'</div></div></div>';
+    // ★ v86 树形分支：用户消息带 ✏️编辑（改后可重新生成）、助手消息带 🔄重生成
+    var ops = m.role==='user'
+     ? '<span style="opacity:.7;font-size:11px;margin-left:6px"><button class="btn-ghost btn-sm" style="padding:0 6px" onclick="editMsg('+m.id+')" title="编辑这条消息">✏️</button></span>'
+     : (m.role==='assistant' ? '<span style="opacity:.7;font-size:11px;margin-left:6px"><button class="btn-ghost btn-sm" style="padding:0 6px" onclick="regenFrom(this)" data-mid="'+m.id+'" title="在此重新生成（分叉）">🔄</button></span>' : '');
+    if(m.role==='user') return '<div class="msg-row user"><div class="bubble">'+renderMd(m.content)+ops+'<div class="msg-time">'+t+'</div></div></div>';
+    return '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble">'+renderMd(m.content)+ops+'<div class="msg-time">'+t+'</div></div></div>';
    }).join('') || '<div class="msg-row system"><div class="bubble">空对话</div></div>';
    var e3 = $('chatMsgs'); if(e3) e3.scrollTop = e3.scrollHeight;
   }
+ });
+};
+// ★ v86 编辑历史消息（改内容→其后删除→重新生成）
+window.editMsg = function(mid){
+ var msgs = window._chatMsgsCache || [];
+ var found = null;
+ api('/api/conversations/'+(state.currentChatConv||0)).then(function(r){
+  msgs = (r&&r.data&&r.data.messages)||[];
+  window._chatMsgsCache = msgs;
+  msgs.forEach(function(m){ if(m.id===mid) found = m; });
+  if(!found){ toast('消息不存在',false); return; }
+  prompt('编辑这条消息（编辑后将重新生成）：', found.content || '');
+ });
+};
+// 用 openModal 编辑（更稳）
+window.editMsg = function(mid){
+ var msgs = (window._chatMsgsCache)||[];
+ var found = null;
+ msgs.forEach(function(m){ if(m.id===mid) found = m; });
+ if(!found){
+  api('/api/conversations/'+(state.currentChatConv||0)).then(function(r){
+   window._chatMsgsCache = (r&&r.data&&r.data.messages)||[];
+   editMsg(mid);
+  });
+  return;
+ }
+ openModal('✏️ 编辑消息', '<div class="form-row"><label>新内容（保存后此条之后的回复会重新生成）</label><textarea id="editMsgContent" class="input" rows="5">'+esc(found.content||'')+'</textarea></div>', function(){
+  var nc = ($('editMsgContent')||{}).value ? $('editMsgContent').value.trim() : '';
+  if(!nc){ toast('内容不能为空',false); return; }
+  api('/api/conversations/'+(state.currentChatConv||0)+'/messages/'+mid, { method:'PUT', body:{ content: nc } }).then(function(rr){
+   toast(rr.msg || '已编辑', rr.code===0);
+   if(rr.code===0){ closeModal(); loadConvMsgs(); }
+  });
+ });
+};
+// ★ v86 重新生成（从该助手消息之前截断，发一条 continuation 触发分叉重生成）
+window.regenFrom = function(btn){
+ var mid = (btn&&btn.getAttribute && btn.getAttribute('data-mid')) || 0;
+ if(!mid){ toast('无法定位消息',false); return; }
+ if(!confirm('👉 从这条消息重新生成？此后的回复将被替换（树形分叉）')) return;
+ var msgs = window._chatMsgsCache || [];
+ api('/api/conversations/'+(state.currentChatConv||0)).then(function(r){
+  window._chatMsgsCache = (r&&r.data&&r.data.messages)||[];
+  msgs = window._chatMsgsCache;
+  // 找到该助手消息对应的上一条用户消息作为重生成基点
+  var idx = -1; msgs.forEach(function(m,i){ if(m.id===mid) idx=i; });
+  if(idx<0){ toast('消息未找到',false); return; }
+  // 找该条之前的最近 user 消息（重生成基点）
+  var base = 0;
+  for(var i=idx-1;i>=0;i--){ if(msgs[i].role==='user'){ base = msgs[i].id; break; } }
+  if(!base){ toast('没有可重生的基点',false); return; }
+  // 用基点之后的 user 内容重发（重建上下文，走 truncate + regenFrom）
+  var userContent = '';
+  for(var i=idx-1;i>=0;i--){ if(msgs[i].role==='user'){ userContent = msgs[i].content; break; } }
+  sendChatWithRegen(base, userContent);
+ });
+};
+// 重生成：先截断再发（复用 sendChat 逻辑，但带 regenFrom）
+window.sendChatWithRegen = function(baseId, content){
+ setTimeout(function(){
+  api('/api/chat', { method:'POST', body: { conversationId: state.currentChatConv||0, content: content, model: $('chatModel').value||'qtai-sj', thinking: window._thinkOn(), regenFrom: baseId } }).then(function(r){
+   if(r.code===0){ toast('已重新生成',true); loadConvMsgs(); } else toast(r.msg||'重生成失败',false);
+  });
+ }, 300);
+};
+// ★ v86 压缩上下文（Context Compact：保留最近 12 条，更早折叠成摘要）
+window.compactChat = function(){
+ var convId = state.currentChatConv || 0;
+ if(!convId){ toast('请先打开会话',false); return; }
+ if(!confirm('🧹 压缩当前对话上下文？保留最近 12 条，更早内容折叠成摘要（长对话省 Token，可随时继续）')) return;
+ api('/api/conversations/'+convId+'/compact', { method:'POST', body:{ keepLast: 12 } }).then(function(r){
+  toast(r.msg || '已压缩', true);
+  if(r.code===0) loadConvMsgs();
  });
 };
 // ===== 深度思考开关（开启后请求带 thinking，思考型模型生效） =====
