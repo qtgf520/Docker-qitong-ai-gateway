@@ -372,6 +372,8 @@ object WeixinBotManager {
                     .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
                     ?.optString("content")?.trim().orEmpty()
             }
+             // ★ v78 收敛标记：本轮是否真执行过工具（结果已实时推送，最终回复不再复述）
+            var executedCalls = false
             // ★ v74 qtai-sj 完整 Agent 循环：思考推送 → 解析函数 → 执行 → 结果回填 → 再调模型（最多5轮）
             if (sandboxOn && content.isNotBlank()) {
                 val isAdmin = d.getWeixinUserPerm(msg.from) >= 3 ||
@@ -425,6 +427,7 @@ object WeixinBotManager {
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
                         results.append("【$fn 执行结果】\n$r\n")
                         send("✅ $fn：${r.take(300)}")
+                        executedCalls = true  // ★ v78 标记：结果已实时推送
                     }
                     val cleanText = cleanFunctionTags(content)
                     // 结果回填给模型继续决策
@@ -461,17 +464,51 @@ object WeixinBotManager {
                 hist.add("assistant" to content)
                 while (hist.size > 20) hist.removeAt(0)
             }
-            // ★ v76 微信记忆存储：绑定账号后把有信息量的话存大脑记忆（对话期间存储，下次带上下文；受 memory_enabled 开关控制）
-            if (userId > 0 && !sandboxOn && d.getConfig("memory_enabled", "true") != "false") {
-                runCatching {
-                    val memText = userText.trim()
-                    if (memText.length in 4..200 && !memText.startsWith("绑定") && !memText.startsWith("停止") &&
-                        !memText.startsWith("管理") && memText != "我的账号" && memText != "退出账号") {
-                        d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
+            // ★ v78 收敛：工具结果已实时推送（executedCalls=true）→ 不再返回模型复述结果的总结
+            //   （对齐 QQ v60：过程推送已展示，最终只留简短收尾/AI 意见，不重复已推送结果）
+            if (executedCalls) {
+                // 让模型基于结果生成一句简短收尾（不重复数字/结果），失败用兜底文案
+                try {
+                    val closeBody = JSONObject()
+                        .put("model", bot.aiModel)
+                        .put("messages", JSONArray()
+                            .put(JSONObject().put("role", "system").put("content", baseSys))
+                            .put(JSONObject().put("role", "user").put("content", userText))
+                            .put(JSONObject().put("role", "assistant").put("content", cleanFunctionTags(content)))
+                            .put(JSONObject().put("role", "user").put("content",
+                                "工具结果已经实时推送给用户了。现在请只回复一句简短的收尾或你的看法（不要复述刚才的结果/数字/数据，一句话即可）。"))) .toString()
+                    val closeReq = Request.Builder()
+                        .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
+                        .addHeader("Content-Type", "application/json")
+                        .post(closeBody.toRequestBody(jsonCt))
+                        .build()
+                    val closeContent = http.newCall(closeReq).execute().use { resp4 ->
+                        if (!resp4.isSuccessful) null
+                        else JSONObject(resp4.body?.string().orEmpty())
+                            .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                            ?.optString("content")?.trim().orEmpty()
+                    }
+                    if (closeContent.isNullOrBlank() || closeContent.length <= 2) {
+                        "✅ 已完成，结果已实时推送。如需继续操作，直接告诉我～"
+                    } else {
+                        cleanFunctionTags(closeContent).ifBlank { "✅ 已完成，结果已实时推送。如需继续操作，直接告诉我～" }
+                    }
+                } catch (e: Exception) {
+                    "✅ 已完成，结果已实时推送。如需继续操作，直接告诉我～"
+                }
+            } else {
+                // ★ v76 微信记忆存储：绑定账号后把有信息量的话存大脑记忆（对话期间存储，下次带上下文；受 memory_enabled 开关控制）
+                if (userId > 0 && !sandboxOn && d.getConfig("memory_enabled", "true") != "false") {
+                    runCatching {
+                        val memText = userText.trim()
+                        if (memText.length in 4..200 && !memText.startsWith("绑定") && !memText.startsWith("停止") &&
+                            !memText.startsWith("管理") && memText != "我的账号" && memText != "退出账号") {
+                            d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
+                        }
                     }
                 }
+                cleanFunctionTags(content)
             }
-            cleanFunctionTags(content)
         } catch (e: Exception) {
             System.err.println("[WeixinBot] 模型调用异常: ${e.message}")
             null
