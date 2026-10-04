@@ -1208,8 +1208,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         out = out.replace('＜', '<').replace('＞', '>').replace('｜', '|')
         out = out.replace(Regex("<\\s*\\|\\s*(dots_function_call|function_call|invoke|calls)\\s*\\|?\\s*>"), "<$1>")
         out = out.replace(Regex("<\\s*/\\s*(dots_function_call|function_call|invoke|calls)\\s*\\|?\\s*>"), "</$1>")
-        // 移除 [[沙盒:...]] 调用
-        out = out.replace(Regex("\\[\\[沙盒:[^\\]]*\\]\\]"), "（已调用）")
+        // 移除 [[沙盒:...]] 调用（v80 改为移除，不再替换成"（已调用）"占位——防假调用假象）
+        out = out.replace(Regex("\\[\\[沙盒:[^\\]]*\\]\\]"), "")
         // 移除完整的 XML 函数调用标签对（含嵌套 parameter/param / JSON）
         out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>[\\s\\S]*?</(?:dots_function_call|function_call|invoke)>"), "")
         // 移除 JSON 风格调用（<dots_function_call>:{"name":...} 或 {"name":...}）

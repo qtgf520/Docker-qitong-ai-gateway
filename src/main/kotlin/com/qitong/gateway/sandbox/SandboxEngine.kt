@@ -32,7 +32,8 @@ object SandboxEngine {
         "heartbeat_get", "heartbeat_status", "heartbeat_start", "heartbeat_stop", "heartbeat_check", "sys_health",
         "weixin_bots_list", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop",
         "task_create", "task_list", "task_cancel",
-        "account_info", "account_bind", "account_unbind"
+        "account_info", "account_bind", "account_unbind",
+        "mail_send"
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -82,6 +83,7 @@ object SandboxEngine {
             .put(func("account_info", "查看当前绑定账号信息（只读）", "user", "read", emptyList(), "账号/角色/余额/绑定模型"))
             .put(func("account_bind", "远程登录绑定网关账号（修改）", "user", "modify", listOf(param("username", true, "网关用户名"), param("password", true, "账号密码")), "绑定结果"))
             .put(func("account_unbind", "退出当前绑定账号（修改）", "user", "modify", emptyList(), "解绑结果"))
+            .put(func("mail_send", "发送邮件（SMTP，管理员；复用网关通知配置；to可为任意收件人）", "admin", "modify", listOf(param("to", true, "收件人邮箱"), param("title", false, "邮件主题"), param("content", true, "邮件内容")), "发送结果"))
             .toString()
     }
 
@@ -113,6 +115,7 @@ object SandboxEngine {
 10. 【像真人一样干活】你是一个有脑子的真人助理，不是机械回复机器。每次收到任务：先在心里想清楚用户要什么 → 需要用什么工具（在下面知识库/工具清单里自主挑，去找！）→ 说一句「💭 我在帮你xxx」让用户知道你在干嘛 → 调工具 → 拿到结果 → 继续下一步 → 最后用大白话总结。别一上来就长篇大论，先干再说。
 11. 【自主找工具，不等用户点名】用户说的需求如果对应网关某个能力/插件/MCP/技能/工作流/终端，你要自己判断该调哪个工具并直接调用，不要反问用户「你要我用什么工具」——你才是专家，用户只要结果！找不到明确工具就先 help() 看能力清单，或 mcp_list() 看用户配置的 MCP，总能找到办法。
 12. 【自由停止】用户说「停止/停/停一下/中断/不干了/算了」= 立即停止当前所有动作，输出「🛑 已停止任务（用户中断）。」并结束，不要继续调工具、不要继续思考。
+13. 【找不到工具必须如实说】如果用户的需求在当前知识库/MCP 工具清单里找不到对应工具，必须如实告知「❌ 当前没有这个能力/工具」，禁止编造「已调用/已执行/正在发送」等文字假装完成！没有任何工具能完成时，直接明说并给替代建议。
 ## 1. 身份与权限体系
 - QQ普通用户：仅支持闲聊、只读查询（查状态/排行/余额/流量），禁止任何修改类操作。
 - QQ管理员：拥有完整网关调度权限，可读写网关所有功能。
@@ -312,7 +315,7 @@ $KNOWLEDGE_JSON
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
             "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
-            "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel" -> "admin" to "modify"
+            "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -674,6 +677,15 @@ $KNOWLEDGE_JSON
                     }
                 }
                 "account_unbind" -> "✅ 已在 QQ 私聊发送「退出账号」解绑"
+                "mail_send" -> {
+                    // ★ v80 真实发信：复用网关 SMTP 通知配置，可发任意收件人
+                    val to = args["to"]?.trim().orEmpty()
+                    val content = args["content"]?.trim().orEmpty()
+                    val title = args["title"]?.trim().orEmpty()
+                    if (to.isBlank() || !to.contains("@")) "⚠️ 语法：mail_send(to=收件人邮箱, title=主题, content=内容)"
+                    else if (content.isBlank()) "⚠️ 邮件内容不能为空"
+                    else com.qitong.gateway.notify.NotificationManager.sendMail(db, to, title, content)
+                }
                 else -> "❌ 未知沙盒函数: $fn（发「沙盒帮助」查看可用能力）"
             }
         } catch (e: Exception) {

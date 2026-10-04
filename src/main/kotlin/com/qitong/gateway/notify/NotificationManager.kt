@@ -111,4 +111,37 @@ object NotificationManager {
         }
         Transport.send(msg)
     }
+
+    /** ★ v80 通用发信（沙盒 mail_send 用）：发给任意收件人；返回结果文本 */
+    fun sendMail(database: Database, to: String, title: String, content: String): String {
+        val cfg = getConfig(database)
+        val host = cfg["email_smtp_host"] ?: ""
+        val username = cfg["email_username"] ?: ""
+        if (host.isBlank() || username.isBlank()) return "❌ 网关未配置 SMTP 发信（后台「通知设置」填 SMTP 服务器/邮箱/授权码）"
+        if (to.isBlank()) return "⚠️ 收件人为空"
+        return try {
+            val props = Properties().apply {
+                put("mail.smtp.host", host)
+                put("mail.smtp.port", (cfg["email_smtp_port"]?.toIntOrNull() ?: 465).toString())
+                put("mail.smtp.auth", "true")
+                put("mail.smtp.ssl.enable", if (cfg["email_tls"] != "false") "true" else "false")
+                put("mail.smtp.ssl.trust", host)
+                put("mail.smtp.timeout", "15000")
+                put("mail.smtp.connectiontimeout", "15000")
+            }
+            val session = Session.getInstance(props, object : Authenticator() {
+                override fun getPasswordAuthentication() = PasswordAuthentication(username, cfg["email_password"] ?: "")
+            })
+            val msg = MimeMessage(session).apply {
+                setFrom(InternetAddress(username))
+                setRecipients(Message.RecipientType.TO, InternetAddress.parse(to))
+                subject = title.ifBlank { "綦桐AI网关消息" }
+                setText(content, "UTF-8", "html")
+            }
+            Transport.send(msg)
+            "✅ 邮件已发送到 $to（主题：${title.ifBlank { "綦桐AI网关消息" }}）"
+        } catch (e: Exception) {
+            "❌ 邮件发送失败：${e.message}"
+        }
+    }
 }
