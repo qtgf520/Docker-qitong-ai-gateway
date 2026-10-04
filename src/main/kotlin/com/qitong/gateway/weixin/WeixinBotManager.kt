@@ -66,6 +66,8 @@ object WeixinBotManager {
         stopBot(bot.id)
         if (bot.botToken.isBlank()) return
         val state = statusOf(bot.id)
+        // ★ v87 有 token 即先标记连接中（不再一直 OFFLINE，长轮询一成功即 ONLINE 且稳定保持）
+        state.status = WeixinBotStatus.CONNECTING; state.lastError = "启动中"
         val client = WeixinGatewayClient(
             bot = bot,
             api = api,
@@ -140,6 +142,11 @@ object WeixinBotManager {
         val t = msg.content.trim()
         if (t.isBlank()) return
         val t0 = System.currentTimeMillis()
+        // ★ v87 消息动态数：每收到一条真实消息就 +1（后台/动态预览可见）
+        runCatching {
+            val st = statusOf(bot.id)
+            st.messagesHandled += 1
+        }
         // ★ v71 微信大消息自动分段推送（消息上限约 2000 字符，超长切段逐条发不丢信息）
         val send = { text: String ->
             val pieces = splitMessage(text)

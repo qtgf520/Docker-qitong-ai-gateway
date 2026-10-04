@@ -223,10 +223,15 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v3.18.22-87（2026-10-05）· 微信机器人状态显示完善（在线/离线 + 消息动态数）
+- 🟢 **微信状态稳定化**：长轮询每轮不再跳"连接中/在线"来回闪——成功后保持 ONLINE 稳定显示；真正断线/报错才变「离线·异常」；启动先显示「连接中」
+- 💬 **消息动态数实时涨**：微信每收到一条真实消息 messagesHandled+1（之前只定义没累加）——动态预览/机器人列表的「消息数」真会跳了
+- 📡 **动态预览 5 秒自动刷新**（对齐 QQ）：实时动态流（消息/状态/命令）+ 友好状态文字（在线绿/连接中橙/离线·异常红/风控暂停橙）
+- 🎨 动态预览 + 机器人列表都套用 wxStatusText（不再显示英文 ONLINE/OFFLINE）
 ### v3.18.22-86（2026-10-05）· 树形对话分支 + 上下文压缩（Context Compact）
 - 🌳 **树形对话分支**：chat_messages 加 parent_id 列——聊天界面每条用户消息可 ✏️ 编辑、每条助手消息可 🔄 重新生成（截断其后形成新分叉），重生成走 regenFrom 从基点重建上下文
 - 🧹 **上下文压缩 Context Compact**：工具栏「🧹 压缩」一键把该会话更早的消息折叠成摘要、保留最近 12 条原文——长对话省 Token 不丢脉络（/api/conversations/{id}/compact）
-- 🎛 新路由：PUT /api/conversations/{id}/messages/{mid}（编辑历史消息）+ POST /{id}/compact（压缩）+ /api/chat 支持 regenFrom/parentId
+- 🎛 新路由：POST /api/conversations/{id}/messages/{mid}/edit（编辑历史消息）+ POST /{id}/compact（压缩）+ /api/chat 支持 regenFrom/parentId
 ### v3.18.22-85（2026-10-05）· 更新历史系统 + 固定间隔循环任务 + 能力全量补齐
 - 📋 **更新历史系统**：新增 update_logs 表 + /api/update-logs + 前端「关于」页更新历史卡片 + 沙盒 update_logs 函数——后台/QQ/微信/qtai-sj 全能查「更新了啥」
 - 🔁 **固定间隔循环任务**：scheduled_tasks 加 interval_minutes 列；task_create 支持 interval 参数（一次性/cron周期/固定间隔 三选一）；到期自动执行并滚动到下一周期——「每30分钟提醒我喝水」真能循环跑

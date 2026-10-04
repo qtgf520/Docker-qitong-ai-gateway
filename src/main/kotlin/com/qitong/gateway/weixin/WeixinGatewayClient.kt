@@ -41,7 +41,7 @@ class WeixinGatewayClient(
                 continue
             }
             try {
-                onStatusChange(WeixinBotStatus.CONNECTING, "长轮询连接中…")
+                // ★ v87 状态稳定化：只在真正断线/重连时才显示 CONNECTING，长轮询每轮不再跳（避免"连接中/在线"来回闪）
                 val resp = api.getUpdates(bot.botToken, buf)
                 // ret=-14 风控
                 if (resp.optInt("ret", 0) == -14) {
@@ -60,10 +60,12 @@ class WeixinGatewayClient(
                         runCatching { onMessage(parsed) }
                     }
                 } else {
-                    onStatusChange(WeixinBotStatus.ONLINE, "在线（无新消息）")
+                    // 长轮询正常返回（即使无消息）→ 保持 ONLINE，不重复推送"在线（无新消息）"避免刷屏
+                    if (backoffMs > 2000L) onStatusChange(WeixinBotStatus.ONLINE, "在线")
                 }
                 backoffMs = 2000L // 成功后重置退避
             } catch (e: Exception) {
+                // ★ v87 显示离线：真正异常才离线（用户要求：报错=离线）
                 onStatusChange(WeixinBotStatus.ERROR, e.message ?: "长轮询异常")
                 // 指数退避重连
                 try { Thread.sleep(backoffMs) } catch (_: InterruptedException) {}
