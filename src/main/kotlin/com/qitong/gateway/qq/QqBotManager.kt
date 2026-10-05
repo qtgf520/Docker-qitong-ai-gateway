@@ -196,10 +196,10 @@ object QqBotManager {
             }
             println("[QQBot] 已尝试启动 ${bots.count { (it["enabled"] as? Boolean) == true }} 个机器人")
         }
-        // ★ 掉线自动重登监控：每 5 分钟检查所有已启用机器人，掉线（ERROR/OFFLINE 且重试后仍离线）自动重启
+        // ★ v91 掉线自动重登监控：每 60 秒检查所有已启用机器人，掉线（ERROR/OFFLINE 且重试后仍离线）自动重启
         scope.launch(Dispatchers.IO) {
             while (true) {
-                kotlinx.coroutines.delay(5 * 60 * 1000L)
+                kotlinx.coroutines.delay(60 * 1000L)
                 runCatching {
                     val bots = database.getQqBots().filter { (it["enabled"] as? Boolean) == true }
                     bots.forEach { row ->
@@ -258,8 +258,20 @@ object QqBotManager {
     fun botFromRowPublic(row: Map<String, Any?>): QqBot = botFromRow(row)
 
     fun startBot(bot: QqBot) {
-        stopBot(bot.id)
+        // ★ v91 修复：先尝试换 token，成功才停旧连接启新的；换 token 失败时保留旧连接（若还在线），避免手动重连把自己搞下线
         val state = statusOf(bot.id)
+        val at = api.getAccessToken(bot)
+        if (at.isNullOrBlank()) {
+            // 换 token 失败：若旧 client 仍在线则保留，仅更新状态；否则置错误，等掉线监控/手动重试
+            val old = clients[bot.id]
+            val stillOnline = old != null && state.status == QqBotStatus.ONLINE
+            state.lastError = "获取AccessToken失败（检查 AppID/AppSecret/沙箱开关）"
+            if (!stillOnline) state.status = QqBotStatus.ERROR
+            System.err.println("[QQBot] ${bot.appid} 获取AccessToken失败，保留旧连接=$stillOnline")
+            try { if (!stillOnline) db.addQqLog(bot.appid, "", "", "bot_status", "❌ 登录失败：获取AccessToken失败（检查 AppID/AppSecret/沙箱开关）", 0) } catch (e: Exception) {}
+            return
+        }
+        stopBot(bot.id)
         val client = QqGatewayClient(
             bot = bot,
             onGroupMessage = { msg -> scopeIo { handleGroup(bot, msg) } },
@@ -285,14 +297,6 @@ object QqBotManager {
         clients[bot.id] = client
         // 新版鉴权：先换 AccessToken（AppID+AppSecret），失败则直接报错不连接
         CoroutineScope(Dispatchers.IO).launch {
-            val at = api.getAccessToken(bot)
-            if (at.isNullOrBlank()) {
-                state.status = QqBotStatus.ERROR
-                state.lastError = "获取AccessToken失败（检查 AppID/AppSecret/沙箱开关）"
-                System.err.println("[QQBot] ${bot.appid} 获取AccessToken失败")
-                try { db.addQqLog(bot.appid, "", "", "bot_status", "❌ 登录失败：获取AccessToken失败（检查 AppID/AppSecret/沙箱开关）", 0) } catch (e: Exception) {}
-                return@launch
-            }
             client.start(at)
         }
     }

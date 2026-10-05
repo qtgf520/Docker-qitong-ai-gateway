@@ -184,7 +184,9 @@ class QqGatewayClient(
     }
 
     private fun scheduleReconnect() {
+        // ★ v91 修复：先取消旧的重连 Timer，再新建——避免 onClosed/onFailure/invalid 连续触发时叠加多个 Timer 导致反复连接/掉线抖动
         runCatching { heartbeatTimer?.cancel() }
+        runCatching { reconnectTimer?.cancel() }
         if (stopped.get()) return
         onStatusChange(QqBotStatus.OFFLINE, "${backoffMs / 1000}s 后重连")
         reconnectTimer = java.util.Timer("qq-reconnect-${bot.appid}", true).apply {

@@ -73,19 +73,41 @@ function qqLoadOverview(){
   el.innerHTML = stats + '<div class="grid grid-2">'+botsTable+
    '<div class="card" style="box-shadow:none;border:1px solid var(--border)"><h3>实时动态（每5秒刷新）</h3><div id="qqFeed">'+feed+'</div></div></div>';
  });
+ // ★ v91 修复：状态表格+启停按钮也动态刷新（5秒整块重载，像微信 v87 一样在线/离线/按钮文字实时变）
+ clearInterval(qqFeedTimer);
  qqFeedTimer = setInterval(function(){
   if(!$('qqOverview')){ clearInterval(qqFeedTimer); return; }
   api('/api/qq/overview').then(function(r){
-   var f=$('qqFeed'); if(!f) return;
-   var rec=(r.data&&r.data.recent)||[];
-   f.innerHTML = rec.map(function(l){
+   var el=$('qqOverview'); if(!el) return;
+   var d=r.data||{}; var ov=d.overview||{};
+   var stats = '<div class="grid grid-4" style="margin-bottom:14px">'+
+    '<div class="stat"><div class="num">'+(ov.todayMessages||0)+'</div><div class="lbl">今日消息</div></div>'+
+    '<div class="stat"><div class="num" style="color:var(--green)">'+(d.bots||[]).filter(function(b){return b.online}).length+'/'+(d.bots||[]).length+'</div><div class="lbl">在线机器人</div></div>'+
+    '<div class="stat"><div class="num">'+(ov.totalGroups||0)+'</div><div class="lbl">已登记群</div></div>'+
+    '<div class="stat"><div class="num">'+(ov.totalUsers||0)+'</div><div class="lbl">独立用户</div></div></div>';
+   var botRows=(d.bots||[]).map(function(b){
+    return '<tr><td><b>'+esc(b.name||'未命名')+'</b></td><td><code style="font-size:11px">'+esc(b.appid)+'</code></td>'+
+     '<td>'+(b.online?'<span class="badge green">在线</span>':'<span class="badge gray">离线</span>')+'</td>'+
+     '<td>'+(b.messagesHandled||0)+'</td><td style="font-size:11px;color:var(--red)">'+esc(b.lastError||'')+'</td>'+
+     '<td style="white-space:nowrap">'+
+     '<button class="btn-ghost btn-sm" onclick="qqOpenForm('+JSON.stringify(b).replace(/"/g,'"')+')">编辑</button> '+
+     '<button class="btn-ghost btn-sm" onclick="qqToggle('+b.id+')">'+(b.online?'停用':'启用')+'</button> '+
+     '<button class="btn-ghost btn-sm" onclick="qqRestart('+b.id+')">重连</button> '+
+     '<button class="btn-ghost btn-sm danger" onclick="qqDel('+b.id+')">删</button></td></tr>';
+   }).join('') || '<tr><td colspan="6" style="color:var(--muted)">还没有机器人，点上方「添加机器人」接入第一个。</td></tr>';
+   var botsTable='<div class="card" style="box-shadow:none;border:1px solid var(--border)"><div class="action-bar"><h3 style="margin:0">机器人状态</h3>'+
+    '<button class="btn" onclick="qqOpenForm()">+ 添加机器人</button></div>'+
+    '<div class="table-wrap"><table><thead><tr><th>名称</th><th>AppID</th><th>状态</th><th>已处理</th><th>异常</th><th>操作</th></tr></thead><tbody>'+botRows+'</tbody></table></div></div>';
+   var feed=(d.recent||[]).map(function(l){
     var color = l.type==='error'?'var(--red)':(l.type==='command'?'var(--amber)':'var(--green)');
     return '<div style="display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px">'+
      '<span class="badge" style="color:'+color+'">'+esc(l.type)+'</span>'+
      '<span style="flex:1;color:var(--text)">'+esc(l.content)+'</span>'+
      '<span style="color:var(--muted)">'+(l.latencyMs||0)+'ms</span>'+
      '<span style="color:var(--muted)">'+qqTime(l.createdAt)+'</span></div>';
-   }).join('');
+   }).join('') || '<div style="color:var(--muted);padding:16px">暂无动态</div>';
+   el.innerHTML = stats + '<div class="grid grid-2">'+botsTable+
+    '<div class="card" style="box-shadow:none;border:1px solid var(--border)"><h3>实时动态（每5秒刷新）</h3><div id="qqFeed">'+feed+'</div></div></div>';
   });
  },5000);
 }
