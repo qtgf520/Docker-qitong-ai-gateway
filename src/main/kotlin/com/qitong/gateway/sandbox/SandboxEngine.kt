@@ -33,7 +33,7 @@ object SandboxEngine {
         "weixin_bots_list", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop",
         "task_create", "task_list", "task_cancel",
         "account_info", "account_bind", "account_unbind",
-        "mail_send", "update_logs"
+        "mail_send", "update_logs", "code_run", "memory_search", "todo_add", "todo_list", "todo_done", "todo_del"
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -62,6 +62,12 @@ object SandboxEngine {
             .put(func("qq_points_rank", "查看积分排行（只读）", "user", "read", emptyList(), "积分排行"))
             .put(func("help", "查看沙盒可用能力清单", "user", "read", emptyList(), "全部函数名与说明"))
             .put(func("update_logs", "查看系统更新历史（最近发布了啥功能）", "user", "read", emptyList(), "版本号/更新标题/更新内容"))
+            .put(func("code_run", "执行代码（Python/Shell，管理员；沙盒运行，10秒超时）", "admin", "modify", listOf(param("code", true, "要执行的代码"), param("lang", false, "语言：python/shell，默认python")), "代码执行输出"))
+            .put(func("memory_search", "搜索我的历史记忆/对话（按关键词跨对话检索）", "user", "read", listOf(param("keyword", true, "搜索关键词")), "命中的记忆内容"))
+            .put(func("todo_add", "添加待办事项（如 明天买牛奶）", "user", "modify", listOf(param("content", true, "待办内容")), "创建结果/待办ID"))
+            .put(func("todo_list", "查看我的待办列表（未完成/已完成）", "user", "read", listOf(param("all", false, "true=含已完成，默认只看未完成")), "待办列表"))
+            .put(func("todo_done", "标记待办完成", "user", "modify", listOf(param("id", true, "待办ID")), "完成结果"))
+            .put(func("todo_del", "删除待办", "user", "modify", listOf(param("id", true, "待办ID")), "删除结果"))
             .put(func("mcp_list", "列出已配置 MCP 服务器及其可用工具（只读）", "admin", "read", emptyList(), "MCP服务器名/工具列表"))
             .put(func("mcp_call", "调用 MCP 服务器上的工具（只读/执行）", "admin", "modify", listOf(param("server", true, "MCP服务器名"), param("tool", true, "工具名"), param("args", false, "JSON参数")), "工具返回结果"))
             .put(func("web_search", "联网搜索信息（只读）", "user", "read", listOf(param("query", true, "搜索关键词")), "搜索结果摘要"))
@@ -317,11 +323,12 @@ $KNOWLEDGE_JSON
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
-            "heartbeat_get", "task_list", "update_logs" -> "user" to "read"
+            "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
             "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
-            "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send" -> "admin" to "modify"
+            "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
+            "code_run", "todo_add", "todo_done", "todo_del" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -339,6 +346,72 @@ $KNOWLEDGE_JSON
                     if (logs.isEmpty()) "📭 暂无更新记录"
                     else "📋 【网关更新历史】\n" + logs.joinToString("\n\n") { l ->
                         "【${l["version"]}】${l["title"]}\n${l["details"]}"
+                    }
+                }
+                "code_run" -> {
+                    // ★ v88 代码执行（Python/Shell 沙盒，10秒超时）
+                    val code = args["code"] ?: ""
+                    val lang = (args["lang"] ?: "python").lowercase()
+                    if (code.isBlank()) "⚠️ 语法：code_run(code=要执行的代码, lang=python/shell)"
+                    else {
+                        try {
+                            val proc = if (lang == "shell") {
+                                ProcessBuilder("/bin/sh", "-c", code).redirectErrorStream(true).start()
+                            } else {
+                                ProcessBuilder("python3", "-c", code).redirectErrorStream(true).start()
+                            }
+                            val out = proc.inputStream.bufferedReader().readText().take(2000)
+                            proc.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)
+                            if (out.isBlank()) "✅ 执行完成（无输出）" else "🖥 输出：\n$out"
+                        } catch (e: Exception) {
+                            "❌ 执行失败：${e.message}"
+                        }
+                    }
+                }
+                "memory_search" -> {
+                    // ★ v88 记忆搜索（跨对话检索历史记忆）
+                    val keyword = args["keyword"] ?: ""
+                    if (keyword.isBlank()) "⚠️ 语法：memory_search(keyword=搜索关键词)"
+                    else if (userId <= 0) "🔓 未绑定账号，先绑定后可用记忆搜索"
+                    else {
+                        val hits = db.searchMemories(userId, keyword, 8)
+                        if (hits.isEmpty()) "📭 没搜到与「$keyword」相关的历史记忆"
+                        else "🔍 搜索「$keyword」命中 ${hits.size} 条：\n" + hits.joinToString("\n") { h ->
+                            "· ${h["title"]}：${(h["content"] as? String ?: "").take(100)}"
+                        }
+                    }
+                }
+                "todo_add" -> {
+                    val content = args["content"] ?: ""
+                    if (content.isBlank()) "⚠️ 语法：todo_add(content=待办内容)"
+                    else {
+                        val id = db.addTodo(userId.toString(), channel, content)
+                        "✅ 待办已添加 #$id：$content（发 todo_list 查看）"
+                    }
+                }
+                "todo_list" -> {
+                    val all = (args["all"] ?: "") == "true"
+                    val todos = db.getTodos(userId.toString(), all)
+                    if (todos.isEmpty()) "📭 你没有待办事项${if (!all) "（发 todo_add 添加）" else ""}"
+                    else "📋 我的待办（${todos.count { (it["done"] as? Int) == 0 }} 未完成）：\n" + todos.joinToString("\n") { t ->
+                        val done = (t["done"] as? Int) == 1
+                        "· #${t["id"]} [${if (done) "✅" else "⬜"}] ${t["content"]}"
+                    }
+                }
+                "todo_done" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    if (id <= 0) "⚠️ 语法：todo_done(id=待办ID)"
+                    else {
+                        db.markTodoDone(id, userId.toString())
+                        "✅ 待办 #$id 已完成"
+                    }
+                }
+                "todo_del" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    if (id <= 0) "⚠️ 语法：todo_del(id=待办ID)"
+                    else {
+                        db.deleteTodo(id, userId.toString())
+                        "🗑 待办 #$id 已删除"
                     }
                 }
                 "model_batch_test" -> SkillExecutor.execute(db, "100002", "", userId)

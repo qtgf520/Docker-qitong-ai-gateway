@@ -579,6 +579,19 @@ class Database(private val dbPath: String) {
                     released_at INTEGER NOT NULL DEFAULT 0
                 )"""
             )
+
+            // ★ v88 待办任务表（对齐 todo_tool：QQ/微信/qtai-sj 都能建待办）
+            st.execute(
+                """CREATE TABLE IF NOT EXISTS todos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_openid TEXT NOT NULL DEFAULT '',
+                    channel TEXT NOT NULL DEFAULT 'qq',
+                    content TEXT NOT NULL DEFAULT '',
+                    done INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL DEFAULT 0,
+                    done_at INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
         }
     }
 
@@ -1341,7 +1354,7 @@ class Database(private val dbPath: String) {
     fun seedUpdateLogsIfEmpty() {
         if (queryOne("SELECT COUNT(*) FROM update_logs") ?: 0 > 0) return
         val logs = listOf(
-            Triple("v3.18.22-87", "循环任务 + 更新历史 + 并行执行完善", "新增固定间隔循环任务（task_create interval）；新增更新历史系统（前端关于页/QQ/微信/qtai-sj 可查）；Agent 并行批量执行；返回内容不截断；终端沙盒按用户隔离；技能/插件/工作流/提醒全通道打通"),
+            Triple("v3.18.22-88", "循环任务 + 更新历史 + 并行执行完善", "新增固定间隔循环任务（task_create interval）；新增更新历史系统（前端关于页/QQ/微信/qtai-sj 可查）；Agent 并行批量执行；返回内容不截断；终端沙盒按用户隔离；技能/插件/工作流/提醒全通道打通"),
             Triple("v3.18.22-84", "周期任务调度引擎", "新增标准 cron 周期任务：支持 分 时 日 月 周 表达式（如 0 8 * * * 每天8点、*/30 * * * * 每30分钟），到期自动执行并滚动到下一周期"),
             Triple("v3.18.22-83", "返回内容不截断", "工具执行结果/工作流/终端大输出完整推送，超长自动分多条不丢内容"),
             Triple("v3.18.22-82", "并行工具执行", "Agent 多工具并发执行，批量查询几秒全出"),
@@ -1385,6 +1398,57 @@ class Database(private val dbPath: String) {
     fun cancelScheduledTask(id: Long, userOpenid: String? = null) {
         if (userOpenid != null) stmt("UPDATE scheduled_tasks SET status='cancelled' WHERE id=? AND user_openid=?", id, userOpenid)
         else stmt("UPDATE scheduled_tasks SET status='cancelled' WHERE id=?", id)
+    }
+
+    // ============ 待办任务（v88：QQ/微信/qtai-sj 通用） ============
+
+    fun addTodo(userOpenid: String, channel: String, content: String): Long {
+        stmt(
+            "INSERT INTO todos (user_openid,channel,content,done,created_at) VALUES (?,?,?,0,?)",
+            userOpenid, channel, content, System.currentTimeMillis()
+        )
+        return lastInsertId()
+    }
+
+    fun getTodos(userOpenid: String, includeDone: Boolean = false): List<Map<String, Any?>> {
+        val cond = if (includeDone) "user_openid=?" else "user_openid=? AND done=0"
+        return query("SELECT * FROM todos WHERE $cond ORDER BY done ASC, id DESC LIMIT 100", userOpenid).map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "content" to (it["content"] as? String ?: ""),
+                "done" to ((it["done"] as? Number)?.toInt() ?: 0),
+                "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0),
+                "doneAt" to ((it["done_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    }
+
+    fun markTodoDone(id: Long, userOpenid: String): Boolean {
+        stmt("UPDATE todos SET done=1, done_at=? WHERE id=? AND user_openid=?", System.currentTimeMillis(), id, userOpenid)
+        return true
+    }
+
+    fun deleteTodo(id: Long, userOpenid: String) {
+        stmt("DELETE FROM todos WHERE id=? AND user_openid=?", id, userOpenid)
+    }
+
+    // ============ 会话搜索（v88：跨对话检索历史记忆，对齐 session_search） ============
+
+    /** ★ v88 简单记忆检索：按关键词在 brain_memory 里搜（LIKE 匹配 title/content），返回最近命中 */
+    fun searchMemories(userId: Long, keyword: String, limit: Int = 8): List<Map<String, Any?>> {
+        val kw = keyword.trim()
+        if (kw.isBlank()) return emptyList()
+        return query(
+            "SELECT * FROM brain_memory WHERE user_id=? AND (title LIKE ? OR content LIKE ?) ORDER BY timestamp DESC LIMIT $limit",
+            userId, "%$kw%", "%$kw%"
+        ).map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "title" to (it["title"] as? String ?: ""),
+                "content" to (it["content"] as? String ?: ""),
+                "timestamp" to ((it["timestamp"] as? Number)?.toLong() ?: 0)
+            )
+        }
     }
 
     // ============ 配置（替代 SharedPreferences） ============
