@@ -724,8 +724,23 @@ object QqBotManager {
             }
             if (hitSkill != null) {
                 val content = (hitSkill["content"] as? String) ?: ""
-                send(content.ifBlank { "✅ 技能执行完成" })
-                db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill_custom", "命中「${hitSkill["name"]}」", System.currentTimeMillis() - t0)
+                val action = (hitSkill["action"] as? String) ?: "reply"
+                val skillUserId = db.getQqBoundUser(userOpenid)?.id ?: 0L
+                // ★ v94 修复：按动作类型真执行——skill编码/沙盒函数名走执行器，reply直接发文本，其他走工作流引擎
+                val result = when (action) {
+                    "skill" -> {
+                        // 兼容：技能编码（600001）/ 沙盒函数名（sys_health/cache_stats/update_logs/todo_list等）
+                        if (content.matches(Regex("\\d{6}"))) {
+                            com.qitong.gateway.http.SkillExecutor.execute(db, content, "", skillUserId)
+                        } else {
+                            com.qitong.gateway.sandbox.SandboxEngine.execute(content, emptyMap(), true, skillUserId, db)
+                        }
+                    }
+                    "reply" -> content
+                    else -> com.qitong.gateway.http.WorkflowEngine.runStep(db, action, content)
+                }
+                send(if (result.isNullOrBlank()) "✅ 技能执行完成" else result)
+                db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill_custom", "命中「${hitSkill["name"]}」（$action）", System.currentTimeMillis() - t0)
                 return
             }
         }

@@ -276,8 +276,23 @@ object WeixinBotManager {
                 }
             }
             if (hitSkill != null) {
-                send(((hitSkill["content"] as? String) ?: "").ifBlank { "✅ 技能执行完成" })
-                d.addWeixinLog(bot.id, msg.from, "skill_custom", "命中「${hitSkill["name"]}」", System.currentTimeMillis() - t0)
+                val content = (hitSkill["content"] as? String) ?: ""
+                val action = (hitSkill["action"] as? String) ?: "reply"
+                val skillUserId = bound?.id ?: 0L
+                // ★ v94 修复：按动作类型真执行——skill编码/沙盒函数名走执行器，reply直接发文本，其他走工作流引擎（对齐 QQ）
+                val result = when (action) {
+                    "skill" -> {
+                        if (content.matches(Regex("\\d{6}"))) {
+                            kotlinx.coroutines.runBlocking { com.qitong.gateway.http.SkillExecutor.execute(d, content, "", skillUserId) }
+                        } else {
+                            com.qitong.gateway.sandbox.SandboxEngine.execute(content, emptyMap(), true, skillUserId, d)
+                        }
+                    }
+                    "reply" -> content
+                    else -> com.qitong.gateway.http.WorkflowEngine.runStep(d, action, content)
+                }
+                send((result ?: "").ifBlank { "✅ 技能执行完成" })
+                d.addWeixinLog(bot.id, msg.from, "skill_custom", "命中「${hitSkill["name"]}」（$action）", System.currentTimeMillis() - t0)
                 return
             }
         }

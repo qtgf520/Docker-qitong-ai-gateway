@@ -8,11 +8,39 @@ loaders.skills = function(){
  var box = $('view-skills');
  box.innerHTML = '<div class="action-bar">'+
   '<button class="btn" onclick="skillForm()">+ 新建技能</button>'+
+  '<button class="btn-ghost" onclick="skillMarket()">🎯 技能市场</button>'+
   '<button class="btn-ghost" onclick="loaders.skills()">刷新</button>'+
   '<span style="font-size:12px;color:var(--muted)">技能 = 可执行动作（网关技能编码/终端命令/HTTP/AI/回复），可被 QQ 机器人、工作流、qtai-sj 调用</span></div>'+
   '<div id="skillList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  skillLoad();
 };
+// ★ v94 技能市场：内置常用技能包，一键安装到技能库（触发词 -> 动作）
+function skillMarket(){
+ var pkgs=[
+  {name:'查网关状态', trigger:'网关状态', content:'600001', action:'skill', desc:'快捷查网关运行状态（模型/端口/故障转移）'},
+  {name:'查余额', trigger:'我的余额', content:'600009', action:'skill', desc:'查询绑定账号余额'},
+  {name:'测速排行', trigger:'测速排行', content:'600002', action:'skill', desc:'查看模型测速排行'},
+  {name:'活跃模型', trigger:'活跃模型', content:'600003', action:'skill', desc:'查看当前活跃模型'},
+  {name:'全部模型', trigger:'模型列表', content:'600008', action:'skill', desc:'查看全部模型与状态'},
+  {name:'网关体检', trigger:'体检', content:'sys_health', action:'skill', desc:'全功能一键体检'},
+  {name:'待办列表', trigger:'我的待办', content:'todo_list', action:'skill', desc:'查看我的待办'},
+  {name:'更新历史', trigger:'更新历史', content:'update_logs', action:'skill', desc:'查看最近更新了啥'},
+  {name:'缓存统计', trigger:'缓存统计', content:'cache_stats', action:'skill', desc:'查看响应缓存命中/清理'},
+  {name:'已学技能', trigger:'技能列表', content:'skill_list', action:'skill', desc:'查看已学习技能'}
+ ];
+ var rows=pkgs.map(function(p){
+  return '<tr><td><b>'+p.name+'</b></td><td><code>'+p.trigger+'</code></td><td style="font-size:11px;color:var(--muted)">'+p.desc+'</td>'+
+   '<td><button class="btn-ghost btn-sm" onclick="skillInstall(\''+p.name+'\',\''+p.trigger+'\',\''+p.content+'\',\''+p.action+'\')">一键安装</button></td></tr>';
+ }).join('');
+ openModal('🎯 技能市场（内置常用技能，一键安装）',
+  '<div class="table-wrap"><table><thead><tr><th>技能</th><th>触发词</th><th>说明</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+  '<small style="color:var(--muted)">安装后立即生效：QQ/微信发触发词即执行；也可在技能库编辑调整</small>', null);
+}
+function skillInstall(name, trigger, content, action){
+ api('/api/skills',{method:'POST',body:{id:null, name:name, trigger:trigger, matchType:'exact', action:action, content:content, enabled:true}}).then(function(r){
+  toast(r.msg||'已安装', r.code===0);
+ });
+}
 function skillLoad(){
  api('/api/skills').then(function(r){
   var el=$('skillList'); if(!el) return;
