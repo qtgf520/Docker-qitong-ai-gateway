@@ -516,6 +516,16 @@ object WeixinBotManager {
                 hist.add("user" to userText)
                 hist.add("assistant" to cleanFunctionTags(content))
                 while (hist.size > 20) hist.removeAt(0)
+                // ★ v92 微信记忆闭环增强：qtai-sj（sandboxOn）模式也沉淀记忆（对齐 QQ 长期记忆；受 memory_enabled 开关控制）
+                if (userId > 0 && d.getConfig("memory_enabled", "true") != "false") {
+                    runCatching {
+                        val memText = userText.trim()
+                        if (memText.length in 4..200 && !memText.startsWith("绑定") && !memText.startsWith("停止") &&
+                            !memText.startsWith("管理") && memText != "我的账号" && memText != "退出账号") {
+                            d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
+                        }
+                    }
+                }
             } else {
                 hist.add("user" to userText)
                 hist.add("assistant" to content)

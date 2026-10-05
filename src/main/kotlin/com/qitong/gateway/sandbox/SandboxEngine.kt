@@ -36,7 +36,7 @@ object SandboxEngine {
         "task_create", "task_list", "task_cancel",
         "account_info", "account_bind", "account_unbind",
         "mail_send", "update_logs", "code_run", "memory_search", "todo_add", "todo_list", "todo_done", "todo_del",
-        "file_read", "file_write", "file_search", "skill_learn", "skill_list", "image_gen"
+        "file_read", "file_write", "file_search", "skill_learn", "skill_list", "image_gen", "cache_stats", "skill_auto_learn"
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -76,6 +76,8 @@ object SandboxEngine {
             .put(func("file_search", "搜索沙盒内文件/目录（管理员）", "admin", "read", listOf(param("path", true, "目录路径"), param("name", false, "文件名关键词")), "匹配文件列表"))
             .put(func("skill_learn", "学习新技能：把完成任务的步骤沉淀为可复用技能（管理员）", "admin", "modify", listOf(param("name", true, "技能名称"), param("trigger", true, "触发词"), param("content", true, "执行步骤/内容")), "学习结果"))
             .put(func("skill_list", "查看已学习技能列表（只读）", "user", "read", emptyList(), "技能名称/触发词/内容"))
+            .put(func("cache_stats", "查看响应缓存统计或清理缓存（管理员；action=stats查看/clear清空）", "admin", "modify", listOf(param("action", false, "stats=查看统计(默认)，clear=清空全部")), "缓存条数/命中次数/清理结果"))
+            .put(func("skill_auto_learn", "自动提炼技能：完成可复用的任务后调用，把步骤沉淀为技能（管理员；name技能名 trigger触发词 content步骤）", "admin", "modify", listOf(param("name", true, "技能名称"), param("trigger", true, "触发词"), param("content", true, "执行步骤/内容")), "学习结果"))
             .put(func("image_gen", "生成图片（管理员；调用已配置的图像模型/MCP，返回图片地址）", "admin", "modify", listOf(param("prompt", true, "图片描述提示词"), param("size", false, "尺寸如 1024x1024")), "图片URL/生成结果"))
             .put(func("mcp_list", "列出已配置 MCP 服务器及其可用工具（只读）", "admin", "read", emptyList(), "MCP服务器名/工具列表"))
             .put(func("mcp_call", "调用 MCP 服务器上的工具（只读/执行）", "admin", "modify", listOf(param("server", true, "MCP服务器名"), param("tool", true, "工具名"), param("args", false, "JSON参数")), "工具返回结果"))
@@ -166,6 +168,12 @@ $KNOWLEDGE_JSON
 2. 网关运维/调度任务场景逻辑严谨，代码用 markdown 代码块。
 3. 长消息自动分段适配QQ消息限制。
 4. 任务执行失败如实完整返回错误信息，不隐藏报错。
+
+## 6. 自进化（v92：越用越聪明，像 OpenClaw 一样沉淀经验）
+1. 【记忆闭环】绑定账号的用户说过的话会自动存为长期记忆，下次对话我会带上——所以对话时尽量记住用户偏好（称呼/常用操作/上次结果），体现「记得你」。
+2. 【技能自提炼】当用户的任务完成且这个做法可以复用（比如「查状态顺便测速」「生成图片后发邮件」「建待办+提醒」这类多步套路），完成核心任务后主动输出 [[沙盒:skill_auto_learn(name=套路名, trigger=触发词, content=执行步骤)]] 把套路沉淀为技能；下次用户说触发词就能秒级直接执行，不用重新摸索。
+3. 【缓存意识】相同问题短时间内重复问（如反复查状态/排行），网关响应缓存会自动命中加速；用户问「缓存」相关 → [[沙盒:cache_stats(action=stats)]] 查看，管理员可 [[沙盒:cache_stats(action=clear)]] 清空。
+4. 【持续成长】每次任务后想想：这次学到了什么？有没有更优路径？下次同类任务直接走最优路径。
 """.trimIndent()
 
     /** 解析文本中的沙盒调用指令，兼容 4 种格式：
@@ -337,7 +345,7 @@ $KNOWLEDGE_JSON
             "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list", "file_read", "file_search" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
-            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen" -> "admin" to "modify"
+            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -485,6 +493,31 @@ $KNOWLEDGE_JSON
                     if (custom.isEmpty()) "📭 还没学到自定义技能（管理员可发「学习技能 xxx」沉淀复用能力）"
                     else "🧠 已学技能（${custom.size}个）：\n" + custom.joinToString("\n") { s ->
                         "· ${s["name"]}（触发：${s["trigger"]}）"
+                    }
+                }
+                "cache_stats" -> {
+                    // ★ v92 响应缓存统计/清理（管理员；stats 查看 / clear 清空）
+                    val action = (args["action"] ?: "stats").lowercase()
+                    if (action == "clear") {
+                        db.clearResponseCache()
+                        "🗑 响应缓存已清空"
+                    } else {
+                        val (total, hits) = db.getResponseCacheStats()
+                        "⚡ 响应缓存：共 $total 条，累计命中 $hits 次（同请求 5 分钟内直接返回，省 token 省延迟）\n发「缓存 清理」可清空"
+                    }
+                }
+                "skill_auto_learn" -> {
+                    // ★ v92 自动提炼技能：模型完成任务后主动调用，把可复用步骤沉淀为技能（对齐 Hermes 自进化）
+                    val name = args["name"]?.trim() ?: ""
+                    val trigger = args["trigger"]?.trim() ?: ""
+                    val content = args["content"]?.trim() ?: ""
+                    if (name.isBlank() || trigger.isBlank() || content.isBlank()) {
+                        "⚠️ 语法：skill_auto_learn(name=技能名, trigger=触发词, content=执行步骤)"
+                    } else {
+                        try {
+                            db.saveSkill(null, name, trigger, "contains", "skill", content, true, userId)
+                            "🧠 技能已自动提炼：#$name（触发词：$trigger）——下次用户说「$trigger」我会直接用，不再重新摸索"
+                        } catch (e: Exception) { "❌ 提炼失败：${e.message}" }
                     }
                 }
                 "image_gen" -> {

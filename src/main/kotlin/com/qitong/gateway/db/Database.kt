@@ -592,6 +592,17 @@ class Database(private val dbPath: String) {
                     done_at INTEGER NOT NULL DEFAULT 0
                 )"""
             )
+
+            // ★ v92 响应缓存表（同请求短时间命中直接返回，省 token 省延迟；key=model+messages哈希）
+            st.execute(
+                """CREATE TABLE IF NOT EXISTS response_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    response_body TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
+            // 旧库迁移：缓存表已存在则补列（无则忽略）
+            runCatching { st.executeUpdate("ALTER TABLE response_cache ADD COLUMN hit_count INTEGER NOT NULL DEFAULT 0") }
         }
     }
 
@@ -1277,7 +1288,6 @@ class Database(private val dbPath: String) {
         query("SELECT content FROM brain_memory WHERE user_id=? AND access_count>=? ORDER BY access_count DESC, importance DESC LIMIT $limit", userId, minHits)
             .map { (it["content"] as? String).orEmpty() }
             .filter { it.isNotBlank() }
-
     fun addMemory(userId: Long, title: String, content: String, type: String, emotion: String, importance: Int, source: String, tags: String, modelId: String): Long {
         val now = System.currentTimeMillis()
         stmt(
@@ -1285,6 +1295,36 @@ class Database(private val dbPath: String) {
             userId, title, content, type, emotion, importance, now, source, tags, modelId
         )
         return lastInsertId()
+    }
+
+    // ============ 响应缓存（v92：同请求短时间命中直接返回，省 token 省延迟） ============
+
+    fun getResponseCache(cacheKey: String, maxAgeMs: Long = 5 * 60 * 1000L): String? {
+        // queryOne 只返回 Long，这里用 query 取字符串
+        val rows = query("SELECT response_body FROM response_cache WHERE cache_key=? AND created_at>?", cacheKey, System.currentTimeMillis() - maxAgeMs)
+        val body = rows.firstOrNull()?.get("response_body") as? String
+        if (body.isNullOrBlank()) return null
+        // 命中则计数 +1（异步忽略失败）
+        runCatching { stmt("UPDATE response_cache SET hit_count=hit_count+1 WHERE cache_key=?", cacheKey) }
+        return body
+    }
+
+    fun putResponseCache(cacheKey: String, responseBody: String) {
+        stmt(
+            "INSERT INTO response_cache (cache_key,response_body,created_at,hit_count) VALUES (?,?,?,0) ON CONFLICT(cache_key) DO UPDATE SET response_body=excluded.response_body, created_at=excluded.created_at",
+            cacheKey, responseBody, System.currentTimeMillis()
+        )
+    }
+
+    fun clearResponseCache() {
+        stmt("DELETE FROM response_cache")
+    }
+
+    /** ★ v92 缓存统计（沙盒 cache_stats 用） */
+    fun getResponseCacheStats(): Pair<Long, Long> {
+        val total = queryOne("SELECT COUNT(*) FROM response_cache") ?: 0
+        val hits = queryOne("SELECT COALESCE(SUM(hit_count),0) FROM response_cache") ?: 0
+        return total to hits
     }
 
     fun deleteMemory(id: Long, userId: Long) {
@@ -1354,7 +1394,7 @@ class Database(private val dbPath: String) {
     fun seedUpdateLogsIfEmpty() {
         if (queryOne("SELECT COUNT(*) FROM update_logs") ?: 0 > 0) return
         val logs = listOf(
-            Triple("v3.18.22-91", "循环任务 + 更新历史 + 并行执行完善", "新增固定间隔循环任务（task_create interval）；新增更新历史系统（前端关于页/QQ/微信/qtai-sj 可查）；Agent 并行批量执行；返回内容不截断；终端沙盒按用户隔离；技能/插件/工作流/提醒全通道打通"),
+            Triple("v3.18.22-92", "循环任务 + 更新历史 + 并行执行完善", "新增固定间隔循环任务（task_create interval）；新增更新历史系统（前端关于页/QQ/微信/qtai-sj 可查）；Agent 并行批量执行；返回内容不截断；终端沙盒按用户隔离；技能/插件/工作流/提醒全通道打通"),
             Triple("v3.18.22-84", "周期任务调度引擎", "新增标准 cron 周期任务：支持 分 时 日 月 周 表达式（如 0 8 * * * 每天8点、*/30 * * * * 每30分钟），到期自动执行并滚动到下一周期"),
             Triple("v3.18.22-83", "返回内容不截断", "工具执行结果/工作流/终端大输出完整推送，超长自动分多条不丢内容"),
             Triple("v3.18.22-82", "并行工具执行", "Agent 多工具并发执行，批量查询几秒全出"),

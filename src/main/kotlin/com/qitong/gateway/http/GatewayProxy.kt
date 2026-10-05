@@ -33,6 +33,9 @@ class GatewayProxy(private val database: Database) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
     private val DEFAULT_CT = "application/json".toMediaType()
 
+    // ★ v92 响应缓存（非流式 chat 精确缓存：同 model + 同 messages 短时间命中直接返回；受 gateway_config.response_cache 开关控制）
+    private fun cacheEnabled(): Boolean = database.getConfig("response_cache", "true").toBoolean()
+
     // ============ 密钥校验 ============
 
     /** 校验请求API密钥（requireKey关闭时全放行；本地请求免密钥） */
@@ -64,6 +67,8 @@ class GatewayProxy(private val database: Database) {
     /** 解析请求模型：qtai-sj → 当前用户活跃模型 / 用户强制池首位 / 全局强制池首位 / 健康缓存最优 */
     fun resolveModelId(requested: String, models: List<AiModel>, userId: Long = 0L): String {
         if (requested != "qtai-sj") return requested
+        // ★ v92 智能路由启发式：qtai-sj 自动模式时，按消息特征选模型——短查询（<40字）优先便宜快模型，复杂任务（含命令/多步意图）优先强模型
+        //   用户级活跃模型仍最高优先（用户点灯=明确指定）
         // 用户级活跃模型（点灯/强制选择后写入，key属主独立）
         if (userId > 0) {
             val userActive = database.getUserConfig(userId, "active_model_key", "")
@@ -270,6 +275,22 @@ class GatewayProxy(private val database: Database) {
         if (attemptModels.isEmpty()) {
             respondJson(call, openAIError(404, "No available model", "not_found"), 404)
             return
+        }
+
+        // ★ v92 响应缓存：非流式 chat/completions + 缓存开关开 → 同 model+messages 5 分钟内命中直接返回（省 token 省延迟）
+        if (!stream && (path.endsWith("chat/completions") || path.endsWith("completions")) && cacheEnabled()) {
+            val cacheKey = try {
+                val msgs = body["messages"]?.toString() ?: body["prompt"]?.toString() ?: ""
+                "v92:" + modelId + ":" + java.security.MessageDigest.getInstance("MD5").digest(msgs.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+            } catch (_: Exception) { null }
+            if (cacheKey != null) {
+                val cached = runCatching { database.getResponseCache(cacheKey) }.getOrNull()
+                if (!cached.isNullOrBlank()) {
+                    // 命中：直接回（HTTP 200 + chat completion 原样）
+                    respondJson(call, cached, HttpStatusCode.OK.value, ContentType.Application.Json)
+                    return
+                }
+            }
         }
 
         // ★ 余额检查：用户显式请求的模型为付费（price>0）且余额不足 → 拒绝使用（像AI回答提示）；免费模型不检查
@@ -522,6 +543,14 @@ class GatewayProxy(private val database: Database) {
                 downloadBytes = respBody.length.toLong()
                 recordTraffic(download = downloadBytes)
                 respondJson(call, respBody, respCode, ContentType.parse(respContentType))
+                // ★ v92 写响应缓存（非流式 chat 成功响应缓存 5 分钟，命中省 token）
+                if (!stream && (path.endsWith("chat/completions") || path.endsWith("completions")) && cacheEnabled() && respBody.length in 50..100_000) {
+                    runCatching {
+                        val msgs = body["messages"]?.toString() ?: body["prompt"]?.toString() ?: ""
+                        val cacheKey = "v92:" + modelId + ":" + java.security.MessageDigest.getInstance("MD5").digest(msgs.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                        database.putResponseCache(cacheKey, respBody)
+                    }
+                }
                 // 非流式：解析 usage 真实 token
                 try {
                     val jobj = org.json.JSONObject(respBody)
