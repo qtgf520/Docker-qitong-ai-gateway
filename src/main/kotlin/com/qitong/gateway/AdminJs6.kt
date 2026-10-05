@@ -112,11 +112,44 @@ loaders.workflows = function(){
  var box = $('view-workflows');
  box.innerHTML = '<div class="action-bar">'+
   '<button class="btn" onclick="wfForm()">+ 新建工作流</button>'+
+  '<button class="btn-ghost" onclick="wfTemplates()">📦 模板市场</button>'+
   '<button class="btn-ghost" onclick="loaders.workflows()">刷新</button>'+
   '<span style="font-size:12px;color:var(--muted)">工作流 = 按顺序执行的自动化任务（可组合技能/终端/HTTP/AI），手动或触发词运行</span></div>'+
   '<div id="wfList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  wfLoad();
 };
+// ★ v95 工作流模板市场：内置常用自动化模板，一键创建
+function wfTemplates(){
+ var tmpls=[
+  {name:'每日网关体检', desc:'自动查状态+体检+更新历史，一条命令看全', triggerType:'manual', triggerText:'', steps:[
+   {type:'skill', content:'600001'},{type:'skill', content:'sys_health'},{type:'skill', content:'update_logs'}
+  ]},
+  {name:'余额+用量报告', desc:'查余额+流量+token，财务日报', triggerType:'trigger', triggerText:'我的报告', steps:[
+   {type:'skill', content:'600009'},{type:'skill', content:'600004'},{type:'skill', content:'600005'}
+  ]},
+  {name:'模型速查', desc:'测速排行+全部模型+活跃模型，模型状态一览', triggerType:'trigger', triggerText:'模型速查', steps:[
+   {type:'skill', content:'600002'},{type:'skill', content:'600008'},{type:'skill', content:'600003'}
+  ]}
+ ];
+ var rows=tmpls.map(function(t,i){
+  var stepTxt=t.steps.map(function(s){return s.type+':'+s.content;}).join(' → ');
+  return '<tr><td><b>'+t.name+'</b></td><td style="font-size:11px;color:var(--muted)">'+t.desc+'</td><td><code style="font-size:10px">'+stepTxt+'</code></td>'+
+   '<td><button class="btn-ghost btn-sm" onclick="wfInstall('+i+')">一键创建</button></td></tr>';
+ }).join('');
+ window._wfTmpls=tmpls;
+ openModal('📦 工作流模板（一键创建）',
+  '<div class="table-wrap"><table><thead><tr><th>模板</th><th>说明</th><th>步骤</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+  '<small style="color:var(--muted)">创建后可在工作流列表编辑/执行，也可在 QQ/微信发触发词运行</small>', null);
+}
+function wfInstall(idx){
+ var t=window._wfTmpls[idx]; if(!t) return;
+ api('/api/workflows',{method:'POST',body:{
+  id:null, name:t.name, description:t.desc, triggerType:t.triggerType, triggerText:t.triggerText,
+  steps:JSON.stringify(t.steps), enabled:true
+ }}).then(function(r){
+  if(r.code===0){ toast('工作流「'+t.name+'」已创建', true); closeModal(); loaders.workflows(); } else toast(r.msg,false);
+ });
+}
 function wfLoad(){
  api('/api/workflows').then(function(r){
   var el=$('wfList'); if(!el) return;

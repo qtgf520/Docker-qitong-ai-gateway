@@ -31,11 +31,16 @@ object WorkflowEngine {
     fun terminalOnce(cmd: String): String = TerminalManager.runOnce(cmd)
 
     private fun runSkill(database: Database, content: String): String {
-        // content 可以是 SkillExecutor 编码 或 技能名
+        // content 可以是 SkillExecutor 编码 或 技能名 或 沙盒函数名（sys_health/cache_stats/update_logs/todo_list等）
         val code = content.trim()
         return try {
-            kotlinx.coroutines.runBlocking {
-                SkillExecutor.execute(database, code, "", 0)
+            // ★ v95 兼容沙盒函数名：非纯数字编码时走沙盒执行（qtai-sj 能力），否则走 SkillExecutor
+            if (code.matches(Regex("\\d{6}"))) {
+                kotlinx.coroutines.runBlocking {
+                    SkillExecutor.execute(database, code, "", 0)
+                }
+            } else {
+                com.qitong.gateway.sandbox.SandboxEngine.execute(code, emptyMap(), true, 0, database)
             }
         } catch (e: Exception) { "❌ 技能执行失败: ${e.message}" }
     }
