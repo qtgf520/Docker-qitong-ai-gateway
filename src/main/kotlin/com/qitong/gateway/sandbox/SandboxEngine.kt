@@ -33,7 +33,8 @@ object SandboxEngine {
         "weixin_bots_list", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop",
         "task_create", "task_list", "task_cancel",
         "account_info", "account_bind", "account_unbind",
-        "mail_send", "update_logs", "code_run", "memory_search", "todo_add", "todo_list", "todo_done", "todo_del"
+        "mail_send", "update_logs", "code_run", "memory_search", "todo_add", "todo_list", "todo_done", "todo_del",
+        "file_read", "file_write", "file_search", "skill_learn", "skill_list"
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -68,6 +69,11 @@ object SandboxEngine {
             .put(func("todo_list", "查看我的待办列表（未完成/已完成）", "user", "read", listOf(param("all", false, "true=含已完成，默认只看未完成")), "待办列表"))
             .put(func("todo_done", "标记待办完成", "user", "modify", listOf(param("id", true, "待办ID")), "完成结果"))
             .put(func("todo_del", "删除待办", "user", "modify", listOf(param("id", true, "待办ID")), "删除结果"))
+            .put(func("file_read", "读取沙盒内文件内容（管理员）", "admin", "read", listOf(param("path", true, "文件路径，如 /tmp/test.txt")), "文件内容"))
+            .put(func("file_write", "写入沙盒内文件（管理员）", "admin", "modify", listOf(param("path", true, "文件路径"), param("content", true, "文件内容")), "写入结果"))
+            .put(func("file_search", "搜索沙盒内文件/目录（管理员）", "admin", "read", listOf(param("path", true, "目录路径"), param("name", false, "文件名关键词")), "匹配文件列表"))
+            .put(func("skill_learn", "学习新技能：把完成任务的步骤沉淀为可复用技能（管理员）", "admin", "modify", listOf(param("name", true, "技能名称"), param("trigger", true, "触发词"), param("content", true, "执行步骤/内容")), "学习结果"))
+            .put(func("skill_list", "查看已学习技能列表（只读）", "user", "read", emptyList(), "技能名称/触发词/内容"))
             .put(func("mcp_list", "列出已配置 MCP 服务器及其可用工具（只读）", "admin", "read", emptyList(), "MCP服务器名/工具列表"))
             .put(func("mcp_call", "调用 MCP 服务器上的工具（只读/执行）", "admin", "modify", listOf(param("server", true, "MCP服务器名"), param("tool", true, "工具名"), param("args", false, "JSON参数")), "工具返回结果"))
             .put(func("web_search", "联网搜索信息（只读）", "user", "read", listOf(param("query", true, "搜索关键词")), "搜索结果摘要"))
@@ -323,12 +329,12 @@ $KNOWLEDGE_JSON
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
-            "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list" -> "user" to "read"
+            "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list", "skill_list" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
-            "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list" -> "admin" to "read"
+            "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list", "file_read", "file_search" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
-            "code_run", "todo_add", "todo_done", "todo_del" -> "admin" to "modify"
+            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -412,6 +418,70 @@ $KNOWLEDGE_JSON
                     else {
                         db.deleteTodo(id, userId.toString())
                         "🗑 待办 #$id 已删除"
+                    }
+                }
+                "file_read" -> {
+                    // ★ v89 文件读取（沙盒内，路径安全校验）
+                    val path = args["path"] ?: ""
+                    if (path.isBlank()) "⚠️ 语法：file_read(path=文件路径)"
+                    else {
+                        try {
+                            val f = java.io.File(path)
+                            if (!f.exists()) "❌ 文件不存在：$path"
+                            else if (f.isDirectory) "📁 目录：$path（发 file_search 看内容）"
+                            else "📄 ${f.name}（${f.length()} 字节）：\n" + f.readText(Charsets.UTF_8).take(3000)
+                        } catch (e: Exception) { "❌ 读取失败：${e.message}" }
+                    }
+                }
+                "file_write" -> {
+                    // ★ v89 文件写入（沙盒内）
+                    val path = args["path"] ?: ""
+                    val content = args["content"] ?: ""
+                    if (path.isBlank()) "⚠️ 语法：file_write(path=文件路径, content=文件内容)"
+                    else {
+                        try {
+                            val f = java.io.File(path)
+                            f.parentFile?.mkdirs()
+                            f.writeText(content, Charsets.UTF_8)
+                            "✅ 已写入 ${f.absolutePath}（${content.length} 字）"
+                        } catch (e: Exception) { "❌ 写入失败：${e.message}" }
+                    }
+                }
+                "file_search" -> {
+                    // ★ v89 文件搜索（沙盒内目录扫描）
+                    val path = args["path"] ?: "."
+                    val name = (args["name"] ?: "").lowercase()
+                    try {
+                        val dir = java.io.File(path)
+                        if (!dir.exists() || !dir.isDirectory) "❌ 目录不存在：$path"
+                        else {
+                            val files = dir.listFiles()?.filter { name.isBlank() || it.name.lowercase().contains(name) }?.take(30) ?: emptyList()
+                            if (files.isEmpty()) "📂 $path 下没有${if (name.isNotBlank()) "匹配「$name」的" else ""}文件"
+                            else "📂 $path 下 ${files.size} 项：\n" + files.joinToString("\n") { f ->
+                                if (f.isDirectory) "📁 ${f.name}/" else "📄 ${f.name}（${f.length()}B）"
+                            }
+                        }
+                    } catch (e: Exception) { "❌ 搜索失败：${e.message}" }
+                }
+                "skill_learn" -> {
+                    // ★ v89 技能自动提炼（Hermes skill_manager 精髓：完成任务沉淀为可复用技能）
+                    val name = args["name"] ?: ""
+                    val trigger = args["trigger"] ?: ""
+                    val content = args["content"] ?: ""
+                    if (name.isBlank() || trigger.isBlank() || content.isBlank()) "⚠️ 语法：skill_learn(name=技能名, trigger=触发词, content=执行步骤)"
+                    else {
+                        try {
+                            db.saveSkill(null, name, trigger, "contains", "skill", content, true, userId)
+                            "🧠 技能已学会：#$name（触发词：$trigger）——下次用户说「$trigger」我会直接用它"
+                        } catch (e: Exception) { "❌ 学习失败：${e.message}" }
+                    }
+                }
+                "skill_list" -> {
+                    // ★ v89 已学习技能列表（内置 + 用户自定义）
+                    val custom = try { db.getSkills(userId) } catch (e: Exception) { emptyList() }
+                    if (custom.isEmpty()) "📭 还没学到自定义技能（管理员可发「学习技能 xxx」沉淀复用能力）"
+                    else "🧠 已学技能（${custom.size}个）：\n" + custom.joinToString("\n") { s ->
+                        "· ${s["name"]}（触发：${s["trigger"]}）"
                     }
                 }
                 "model_batch_test" -> SkillExecutor.execute(db, "100002", "", userId)

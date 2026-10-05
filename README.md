@@ -223,6 +223,10 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v3.18.22-89（2026-10-05）· 文件操作 + 技能自动提炼（能力补齐二波）
+- 📁 **文件操作**：file_read/file_write/file_search——沙盒内读/写/搜文件（管理员），qtai-sj 可「帮我读一下 /tmp/xx.txt / 写个文件 / 看看目录」
+- 🧠 **技能自动提炼**：skill_learn——完成复杂任务后把步骤沉淀为可复用技能（触发词→执行步骤），下次用户说触发词直接复用；skill_list 查看已学技能
+- 🎯 补齐 Hermes skill_manager 自进化精髓 + file_tools
 ### v3.18.22-88（2026-10-05）· 代码执行 + 记忆搜索 + 待办任务（能力补齐）
 - 🖥 **code_run 代码执行**：Python/Shell 沙盒跑代码（10秒超时，输出2000字）——qtai-sj 可直接「帮我算一下/跑个脚本/执行命令」
 - 🔍 **memory_search 记忆搜索**：按关键词跨对话检索历史记忆（对齐 session_search）——「我之前说过啥关于 xxx 的」
