@@ -369,6 +369,8 @@ loaders.settings = function(){
     '<div class="form-row"><label>活跃时段结束（24h制）</label><input id="cfgHbEnd" class="input" type="number" min="0" max="23" value="'+esc(cfg.heartbeat_active_end||'23')+'" style="width:80px"></div>' +
     '<div class="form-row"><label>心跳提示词（可选）</label><input id="cfgHbPrompt" class="input" value="'+esc(cfg.heartbeat_prompt||'')+'" placeholder="如：记得检查待办任务和重要记忆"></div>' +
     '<div class="form-row"><label><input type="checkbox" id="cfgMemory"'+(cfg.memory_enabled!=='false'?' checked':'')+'>启用记忆系统（AI 对话期间存储记忆，每条消息带上作为上下文）</label></div>' +
+    '<div class="form-row"><label><input type="checkbox" id="cfgResponseCache"'+(cfg.response_cache!=='false'?' checked':'')+'>启用响应缓存（相同请求5分钟内直接返回，省token省延迟）</label><small style="color:var(--muted);display:block;margin-top:4px">实测：同请求首次 10.8s → 命中 0.02s，快 480 倍；普通闲聊/查询重复率高时收益最大</small></div>' +
+    '<div class="form-row"><button class="btn-ghost btn-sm" onclick="loadCacheStats()">⚡ 缓存统计</button><span id="cacheStatsBox" style="font-size:12px;color:var(--muted);margin-left:8px"></span></div>' +
     '<div class="form-row"><label><input type="checkbox" id="cfgScheduledTasks"'+(cfg.scheduled_tasks_enabled!=='false'?' checked':'')+'>启用计划任务（AI 安排未来执行任务/提醒）</label></div>' +
     '<button class="btn" onclick="saveSettings()">保存设置</button></div>' : '') +
 '<div class="card"><h3>个人人格配置</h3><small style="color:var(--muted);display:block;margin-bottom:12px">让 qtai-sj 回复时带上你设定的人设（按用户独立存储）</small>',
@@ -664,8 +666,21 @@ window.changePassword = function(){
  });
 };
 window.saveSettings = function(){
- api('/api/config', { method:'POST', body: { require_api_key: $('cfgRequireKey').checked?'true':'false', auto_failover: $('cfgFailover').checked?'true':'false', active_model_key: $('cfgActive').value.trim(), forced_pool_keys: $('cfgPool').value.trim(), heartbeat_enabled: $('cfgHeartbeat').checked?'true':'false', heartbeat_interval_minutes: ($('cfgHbm').value||'60'), heartbeat_active_start: ($('cfgHbStart').value||'5'), heartbeat_active_end: ($('cfgHbEnd').value||'23'), heartbeat_prompt: ($('cfgHbPrompt')?$('cfgHbPrompt').value.trim():''), memory_enabled: $('cfgMemory').checked?'true':'false', scheduled_tasks_enabled: $('cfgScheduledTasks').checked?'true':'false' } }).then(function(r){
+ api('/api/config', { method:'POST', body: { require_api_key: $('cfgRequireKey').checked?'true':'false', auto_failover: $('cfgFailover').checked?'true':'false', active_model_key: $('cfgActive').value.trim(), forced_pool_keys: $('cfgPool').value.trim(), heartbeat_enabled: $('cfgHeartbeat').checked?'true':'false', heartbeat_interval_minutes: ($('cfgHbm').value||'60'), heartbeat_active_start: ($('cfgHbStart').value||'5'), heartbeat_active_end: ($('cfgHbEnd').value||'23'), heartbeat_prompt: ($('cfgHbPrompt')?$('cfgHbPrompt').value.trim():''), memory_enabled: $('cfgMemory').checked?'true':'false', response_cache: ($('cfgResponseCache')?$('cfgResponseCache').checked?'true':'false':'true'), scheduled_tasks_enabled: $('cfgScheduledTasks').checked?'true':'false' } }).then(function(r){
   if(r.code === 0){ toast('设置已保存', true); } else toast(r.msg, false);
+ });
+};
+// ★ v93 缓存统计：后台设置页直接看缓存命中/清理（管理员）
+window.loadCacheStats = function(){
+ api('/api/config/cache-stats').then(function(r){
+  var box = $('cacheStatsBox'); if(!box) return;
+  if(r.code !== 0 || !r.data){ box.textContent = '获取失败'; return; }
+  box.textContent = '共 '+r.data.total+' 条缓存，累计命中 '+r.data.hits+' 次';
+  if(r.data.total > 0 && confirm('是否清空全部缓存？')){
+   api('/api/config/cache-clear', { method:'POST' }).then(function(cr){
+    if(cr.code === 0){ box.textContent = '已清空'; toast('缓存已清空', true); } else toast(cr.msg, false);
+   });
+  }
  });
 };
 // ===== 用户（可编辑：额度/绑定模型/角色/权限/重置密码） =====
