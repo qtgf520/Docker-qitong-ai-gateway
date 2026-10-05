@@ -936,6 +936,34 @@ private fun providerToMap(p: Provider) = mapOf(
         // ★ v48 内置聊天沙盒：qtai-sj 模式解析函数调用并执行（不配 QQ 机器人也能用全部功能）
         if (effectiveModel.equals("qtai-sj", true) && lastResult != null) {
             val isAdmin = (user?.role == "admin" || user?.role == "agent")
+            // ★ v96 自定义技能自动触发（对齐 QQ/微信）：skills 表技能命中触发词直接执行
+            val customSkills = try { database.getSkills(userId) } catch (e: Exception) { emptyList() }
+            val hitSkill = customSkills.filter { (it["enabled"] as? Boolean) == true }.firstOrNull { s ->
+                val trig = (s["trigger"] as? String)?.trim() ?: ""
+                val mt = (s["matchType"] as? String) ?: "contains"
+                trig.isNotBlank() && when (mt) {
+                    "contains" -> userContent.contains(trig, true)
+                    "regex" -> runCatching { Regex(trig, RegexOption.IGNORE_CASE).containsMatchIn(userContent) }.getOrDefault(false)
+                    else -> userContent.equals(trig, true)
+                }
+            }
+            if (hitSkill != null) {
+                val content = (hitSkill["content"] as? String) ?: ""
+                val action = (hitSkill["action"] as? String) ?: "reply"
+                val result = when (action) {
+                    "skill" -> {
+                        if (content.matches(Regex("\\d{6}"))) {
+                            kotlinx.coroutines.runBlocking { SkillExecutor.execute(database, content, "", userId) }
+                        } else {
+                            com.qitong.gateway.sandbox.SandboxEngine.execute(content, emptyMap(), true, userId, database)
+                        }
+                    }
+                    "reply" -> content
+                    else -> com.qitong.gateway.http.WorkflowEngine.runStep(database, action, content)
+                }
+                skillResults.add(mapOf("code" to (hitSkill["name"] as? String ?: "skill"), "name" to (hitSkill["name"] as? String ?: ""), "result" to (result ?: "")))
+                lastResult = "🧠 技能「${hitSkill["name"]}」已执行：\n" + (result ?: "✅ 技能执行完成")
+            }
             val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(lastResult!!)
             if (calls.isNotEmpty()) {
                 val sb = StringBuilder()
