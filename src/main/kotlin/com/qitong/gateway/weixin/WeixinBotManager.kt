@@ -263,7 +263,25 @@ object WeixinBotManager {
             d.addWeixinLog(bot.id, msg.from, "skill", "[$code] $t", System.currentTimeMillis() - t0)
             return
         }
-        // 2) 文字游戏（猜数字/成语接龙/骰子/抽卡，复用 QQ 游戏状态）
+        // 2) ★ v90 自定义技能自动触发（skill_learn 学会的技能：命中触发词直接执行）
+        runCatching {
+            val customSkills = d.getSkills(bound?.id ?: 0L)
+            val hitSkill = customSkills.filter { (it["enabled"] as? Boolean) == true }.firstOrNull { s ->
+                val trig = (s["trigger"] as? String)?.trim() ?: ""
+                val mt = (s["matchType"] as? String) ?: "contains"
+                trig.isNotBlank() && when (mt) {
+                    "contains" -> t.contains(trig, true)
+                    "regex" -> runCatching { Regex(trig, RegexOption.IGNORE_CASE).containsMatchIn(t) }.getOrDefault(false)
+                    else -> t.equals(trig, true)
+                }
+            }
+            if (hitSkill != null) {
+                send(((hitSkill["content"] as? String) ?: "").ifBlank { "✅ 技能执行完成" })
+                d.addWeixinLog(bot.id, msg.from, "skill_custom", "命中「${hitSkill["name"]}」", System.currentTimeMillis() - t0)
+                return
+            }
+        }
+        // 3) 文字游戏（猜数字/成语接龙/骰子/抽卡，复用 QQ 游戏状态）
         val gameR = com.qitong.gateway.qq.QqBotManager.handleGamePublic(msg.from, t)
         if (gameR != null) { send(gameR); return }
         // 3) 插件（QQ 插件包：菜单 + 命令脚本，微信直接可用）

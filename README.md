@@ -223,6 +223,10 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v3.18.22-90（2026-10-05）· 技能自动触发 + 图像生成封装
+- ⚡ **技能自动触发**：skill_learn 学会的技能 dispatch 自动匹配——用户说触发词（contains/regex/exact）直接执行技能内容，QQ/微信全通道生效
+- 🖼 **image_gen 图像生成**：沙盒函数自动扫描已配置 MCP 找图像工具（image/draw/生成图片），找到引导用 mcp_call 调用；找不到提示接入 gpt-image/flux/吉利屋
+- 🎯 技能从「学会」到「自动用」闭环打通（Hermes 自进化精髓）
 ### v3.18.22-89（2026-10-05）· 文件操作 + 技能自动提炼（能力补齐二波）
 - 📁 **文件操作**：file_read/file_write/file_search——沙盒内读/写/搜文件（管理员），qtai-sj 可「帮我读一下 /tmp/xx.txt / 写个文件 / 看看目录」
 - 🧠 **技能自动提炼**：skill_learn——完成复杂任务后把步骤沉淀为可复用技能（触发词→执行步骤），下次用户说触发词直接复用；skill_list 查看已学技能

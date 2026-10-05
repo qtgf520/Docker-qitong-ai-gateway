@@ -34,7 +34,7 @@ object SandboxEngine {
         "task_create", "task_list", "task_cancel",
         "account_info", "account_bind", "account_unbind",
         "mail_send", "update_logs", "code_run", "memory_search", "todo_add", "todo_list", "todo_done", "todo_del",
-        "file_read", "file_write", "file_search", "skill_learn", "skill_list"
+        "file_read", "file_write", "file_search", "skill_learn", "skill_list", "image_gen"
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -74,6 +74,7 @@ object SandboxEngine {
             .put(func("file_search", "搜索沙盒内文件/目录（管理员）", "admin", "read", listOf(param("path", true, "目录路径"), param("name", false, "文件名关键词")), "匹配文件列表"))
             .put(func("skill_learn", "学习新技能：把完成任务的步骤沉淀为可复用技能（管理员）", "admin", "modify", listOf(param("name", true, "技能名称"), param("trigger", true, "触发词"), param("content", true, "执行步骤/内容")), "学习结果"))
             .put(func("skill_list", "查看已学习技能列表（只读）", "user", "read", emptyList(), "技能名称/触发词/内容"))
+            .put(func("image_gen", "生成图片（管理员；调用已配置的图像模型/MCP，返回图片地址）", "admin", "modify", listOf(param("prompt", true, "图片描述提示词"), param("size", false, "尺寸如 1024x1024")), "图片URL/生成结果"))
             .put(func("mcp_list", "列出已配置 MCP 服务器及其可用工具（只读）", "admin", "read", emptyList(), "MCP服务器名/工具列表"))
             .put(func("mcp_call", "调用 MCP 服务器上的工具（只读/执行）", "admin", "modify", listOf(param("server", true, "MCP服务器名"), param("tool", true, "工具名"), param("args", false, "JSON参数")), "工具返回结果"))
             .put(func("web_search", "联网搜索信息（只读）", "user", "read", listOf(param("query", true, "搜索关键词")), "搜索结果摘要"))
@@ -334,7 +335,7 @@ $KNOWLEDGE_JSON
             "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list", "file_read", "file_search" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
-            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn" -> "admin" to "modify"
+            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -482,6 +483,26 @@ $KNOWLEDGE_JSON
                     if (custom.isEmpty()) "📭 还没学到自定义技能（管理员可发「学习技能 xxx」沉淀复用能力）"
                     else "🧠 已学技能（${custom.size}个）：\n" + custom.joinToString("\n") { s ->
                         "· ${s["name"]}（触发：${s["trigger"]}）"
+                    }
+                }
+                "image_gen" -> {
+                    // ★ v90 图像生成：先找已配置 MCP 里的图像工具（如吉利屋/gpt-image），找不到引导配置
+                    val prompt = args["prompt"] ?: ""
+                    val size = (args["size"] ?: "1024x1024")
+                    if (prompt.isBlank()) "⚠️ 语法：image_gen(prompt=图片描述, size=尺寸如 1024x1024)"
+                    else {
+                        // 1) 扫 MCP 工具找图像能力
+                        val mcpServers = try { com.qitong.gateway.sandbox.McpClient.listEnabled(db) } catch (e: Exception) { emptyList() }
+                        var done = ""
+                        for (srv in mcpServers) {
+                            val toolsTxt = runCatching { com.qitong.gateway.sandbox.McpClient.listTools(srv) }.getOrDefault("")
+                            if (toolsTxt.contains("image", true) || toolsTxt.contains("draw", true) || toolsTxt.contains("生成图片", true)) {
+                                done = "🖼 已找到图像工具（${srv.name}），用 mcp_call 调用：\n$toolsTxt"
+                                break
+                            }
+                        }
+                        if (done.isNotBlank()) done
+                        else "❌ 未找到已配置的图像生成工具。\n请先在后台 MCP 管理页接入带图像能力的服务器（如 gpt-image/flux/吉利屋），然后发「用 xx 生成 描述」"
                     }
                 }
                 "model_batch_test" -> SkillExecutor.execute(db, "100002", "", userId)

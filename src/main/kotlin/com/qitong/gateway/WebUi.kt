@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v3.18.22-89"
+    private const val VER = "v3.18.22-90"
 
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">

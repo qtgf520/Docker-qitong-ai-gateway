@@ -706,6 +706,25 @@ object QqBotManager {
             return
         }
         } // ★ v59 关闭技能硬编码（qtai-sj 交给大模型）
+        // ★ v90 自定义技能自动触发（skill_learn 学会的技能：命中触发词直接执行，非 qtai 模式硬匹配）
+        if (!qtaiFree) {
+            val customSkills = try { db.getSkills(db.getQqBoundUser(userOpenid)?.id ?: 0L) } catch (e: Exception) { emptyList() }
+            val hitSkill = customSkills.filter { (it["enabled"] as? Boolean) == true }.firstOrNull { s ->
+                val trig = (s["trigger"] as? String)?.trim() ?: ""
+                val mt = (s["matchType"] as? String) ?: "contains"
+                trig.isNotBlank() && when (mt) {
+                    "contains" -> text.contains(trig, true)
+                    "regex" -> runCatching { Regex(trig, RegexOption.IGNORE_CASE).containsMatchIn(text) }.getOrDefault(false)
+                    else -> text.equals(trig, true)
+                }
+            }
+            if (hitSkill != null) {
+                val content = (hitSkill["content"] as? String) ?: ""
+                send(content.ifBlank { "✅ 技能执行完成" })
+                db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill_custom", "命中「${hitSkill["name"]}」", System.currentTimeMillis() - t0)
+                return
+            }
+        }
         // 0.6) 文字游戏（每用户独立，无需权限门槛，娱乐）
         if (!qtaiFree) {
         val game = handleGame(userOpenid, text)
