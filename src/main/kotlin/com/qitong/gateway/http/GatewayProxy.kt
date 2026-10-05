@@ -64,12 +64,48 @@ class GatewayProxy(private val database: Database) {
 
     // ============ 模型选择 ============
 
-    /** 解析请求模型：qtai-sj → 当前用户活跃模型 / 用户强制池首位 / 全局强制池首位 / 健康缓存最优 */
-    fun resolveModelId(requested: String, models: List<AiModel>, userId: Long = 0L): String {
+    /** ★ v97 智能路由分档：根据消息内容判复杂程度 → 简单走便宜快模型，复杂走强模型 */
+    private fun messageComplexity(msg: String): Int {
+        if (msg.isBlank()) return 0
+        // 复杂任务关键词（含命令/多步/分析/代码/生成等）
+        val complexKeywords = listOf(
+            "帮我", "执行", "运行", "创建", "生成", "分析", "对比", "写一", "写个", "代码", "脚本",
+            "部署", "配置", "安装", "修复", "调试", "总结", "规划", "设计", "翻译", "解释一下", "怎么",
+            "体检", "终端", "工作流", "技能", "任务", "监控", "报告", "计算", "推理"
+        )
+        val hit = complexKeywords.count { msg.contains(it, true) }
+        // 消息长度分档
+        val lenScore = when {
+            msg.length >= 300 -> 3
+            msg.length >= 100 -> 2
+            msg.length >= 40 -> 1
+            else -> 0
+        }
+        return hit + lenScore
+    }
+
+    /** 判断模型是否"轻快模型"（便宜/快速） */
+    private fun isLightModel(modelId: String): Boolean {
+        val id = modelId.lowercase()
+        return id.contains("mini") || id.contains("flash") || id.contains("lite") || id.contains("turbo") ||
+            id.contains("fast") || id.contains("small") || id.contains("nano") || id.contains("1.5") ||
+            id.contains("8b") || id.contains("7b") || id.contains("3b") || id.contains("1b")
+    }
+
+    /** 判断模型是否"强模型"（高性能/大参数） */
+    private fun isStrongModel(modelId: String): Boolean {
+        val id = modelId.lowercase()
+        return id.contains("pro") || id.contains("max") || id.contains("plus") || id.contains("sonnet") ||
+            id.contains("opus") || id.contains("reasoning") || id.contains("thinking") || id.contains("think") ||
+            id.contains("vision") || id.contains("2.5") || id.contains("4o") || id.contains("v4") || id.contains("gpt-4") ||
+            id.contains("deepseek-r1") || id.contains("deepseek-v3") || id.contains("claude-3") || id.contains("claude-4") ||
+            id.contains("gemini-2") || id.contains("gemini-3") || id.contains("qwen-max") || id.contains("qwen2.5")
+    }
+
+    /** 解析请求模型：qtai-sj → 当前用户活跃模型 / 用户强制池首位 / 全局强制池首位 / 健康缓存最优 / ★v97 智能路由 */
+    fun resolveModelId(requested: String, models: List<AiModel>, userId: Long = 0L, userMessage: String = ""): String {
         if (requested != "qtai-sj") return requested
-        // ★ v92 智能路由启发式：qtai-sj 自动模式时，按消息特征选模型——短查询（<40字）优先便宜快模型，复杂任务（含命令/多步意图）优先强模型
-        //   用户级活跃模型仍最高优先（用户点灯=明确指定）
-        // 用户级活跃模型（点灯/强制选择后写入，key属主独立）
+        // 用户级活跃模型（点灯/强制选择后写入，key属主独立）——用户明确指定最高优先
         if (userId > 0) {
             val userActive = database.getUserConfig(userId, "active_model_key", "")
             if (userActive.isNotBlank()) return userActive.substringAfter("::", userActive)
@@ -79,6 +115,37 @@ class GatewayProxy(private val database: Database) {
         }
         val active = database.getConfig("active_model_key", "")
         if (active.isNotBlank()) return active.substringAfter("::", active)
+
+        // ★ v97 智能路由（RouteLLM 思路落地）：无用户指定时按消息复杂度自动选模型
+        val complexity = messageComplexity(userMessage)
+        val enabledHealthy = models.filter { it.isEnabled }
+            .mapNotNull { m -> GatewayScheduler.healthCache[GatewayScheduler.routeKey(m.providerId, m.modelId)]?.let { h -> m to h } }
+            .filter { it.second.isHealthy }
+            .map { it.first }
+
+        if (enabledHealthy.isNotEmpty()) {
+            // 简单/中等问题（0-1）：优先轻快模型（便宜快速）——按延迟排序挑轻模型
+            if (complexity <= 1) {
+                val light = enabledHealthy.filter { isLightModel(it.modelId) }
+                    .sortedBy { GatewayScheduler.healthCache[GatewayScheduler.routeKey(it.providerId, it.modelId)]?.latencyMs ?: Long.MAX_VALUE }
+                if (light.isNotEmpty()) return light.first().modelId
+                // 无轻模型 → 用健康最低延迟
+                val fastest = enabledHealthy.sortedBy { GatewayScheduler.healthCache[GatewayScheduler.routeKey(it.providerId, it.modelId)]?.latencyMs ?: Long.MAX_VALUE }
+                return fastest.first().modelId
+            }
+            // 复杂任务（2+）：优先强模型（高性能）——按上下文/延迟综合挑强模型
+            if (complexity >= 2) {
+                val strong = enabledHealthy.filter { isStrongModel(it.modelId) }
+                    .sortedByDescending { it.contextWindow }
+                    .sortedBy { GatewayScheduler.healthCache[GatewayScheduler.routeKey(it.providerId, it.modelId)]?.latencyMs ?: Long.MAX_VALUE }
+                if (strong.isNotEmpty()) return strong.first().modelId
+                // 无强模型 → 用上下文最大的健康模型
+                val biggest = enabledHealthy.sortedByDescending { it.contextWindow }
+                return biggest.first().modelId
+            }
+        }
+
+        // 兜底：健康缓存最优 / 排序第一
         val best = GatewayScheduler.getBestModel()
         if (best != null) return best.substringAfter("::", best)
         val sorted = GatewayScheduler.getSortedModels(models)
@@ -265,8 +332,11 @@ class GatewayProxy(private val database: Database) {
             if (rule.targetModelKey.isNotBlank()) targetModelOverride = rule.targetModelKey
         }
 
-        // qtai-sj 解析（传入 ownerId 实现用户级活跃模型/强制池隔离）
-        val resolvedModelId = targetModelOverride ?: resolveModelId(modelId, models, ownerId)
+        // qtai-sj 解析（传入 ownerId 实现用户级活跃模型/强制池隔离；★v97 传入用户消息做智能路由分档）
+        val userMsg = runCatching {
+            body["messages"]?.jsonArray?.lastOrNull()?.jsonObject?.get("content")?.jsonPrimitive?.content ?: ""
+        }.getOrDefault("")
+        val resolvedModelId = targetModelOverride ?: resolveModelId(modelId, models, ownerId, userMsg)
         modelId = resolvedModelId
 
         // 构建尝试列表（用户级池优先）

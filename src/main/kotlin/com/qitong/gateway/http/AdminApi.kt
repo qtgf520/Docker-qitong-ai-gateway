@@ -862,7 +862,8 @@ private fun providerToMap(p: Provider) = mapOf(
             val brainModels = visibleModels.filter { "${it.providerId}::${it.modelId}" == brainKey || it.modelId == brainKey }
             if (brainModels.isNotEmpty()) brainModels else proxy.buildAttemptModels(visibleModels, effectiveModel, null, userId)
         } else {
-            proxy.buildAttemptModels(visibleModels, proxy.resolveModelId(effectiveModel, visibleModels), null, userId)
+            // ★ v97 智能路由：传入用户消息按复杂度自动选模型（简单走轻快、复杂走强模型）
+            proxy.buildAttemptModels(visibleModels, proxy.resolveModelId(effectiveModel, visibleModels, userId, userContent), null, userId)
         }
         if (attemptModels.isEmpty()) return mapOf("conversationId" to conversationId, "error" to "No available model", "reply" to "没有可用模型，请先测速或添加服务商")
 
