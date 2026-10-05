@@ -3,6 +3,8 @@ package com.qitong.gateway.sandbox
 import com.qitong.gateway.db.Database
 import com.qitong.gateway.http.SkillExecutor
 import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -486,23 +488,43 @@ $KNOWLEDGE_JSON
                     }
                 }
                 "image_gen" -> {
-                    // ★ v90 图像生成：先找已配置 MCP 里的图像工具（如吉利屋/gpt-image），找不到引导配置
+                    // ★ v90 图像生成：真出图——优先调网关本地画图通道 /v1/images/generations（复用已配置画图模型），失败再提示 MCP
                     val prompt = args["prompt"] ?: ""
                     val size = (args["size"] ?: "1024x1024")
                     if (prompt.isBlank()) "⚠️ 语法：image_gen(prompt=图片描述, size=尺寸如 1024x1024)"
                     else {
-                        // 1) 扫 MCP 工具找图像能力
-                        val mcpServers = try { com.qitong.gateway.sandbox.McpClient.listEnabled(db) } catch (e: Exception) { emptyList() }
-                        var done = ""
-                        for (srv in mcpServers) {
-                            val toolsTxt = runCatching { com.qitong.gateway.sandbox.McpClient.listTools(srv) }.getOrDefault("")
-                            if (toolsTxt.contains("image", true) || toolsTxt.contains("draw", true) || toolsTxt.contains("生成图片", true)) {
-                                done = "🖼 已找到图像工具（${srv.name}），用 mcp_call 调用：\n$toolsTxt"
-                                break
+                        val imgBody = "{\"model\":\"\",\"prompt\":${org.json.JSONObject.quote(prompt)},\"n\":1,\"size\":${org.json.JSONObject.quote(size)}}"
+                        val imgResult = runCatching {
+                            okhttp3.OkHttpClient().newCall(
+                                okhttp3.Request.Builder()
+                                    .url("http://127.0.0.1:${System.getenv("GATEWAY_PORT") ?: "18889"}/v1/images/generations")
+                                    .addHeader("Content-Type", "application/json")
+                                    .post(imgBody.toRequestBody("application/json".toMediaType()))
+                                    .build()
+                            ).execute().use { resp ->
+                                val body = resp.body?.string().orEmpty()
+                                if (!resp.isSuccessful) "🎨 画图失败（HTTP ${resp.code}）"
+                                else {
+                                    val b64 = org.json.JSONObject(body).optJSONArray("data")?.optJSONObject(0)?.optString("b64_json")
+                                    if (b64.isNullOrBlank()) "🎨 画图完成，但未返回图片（模型可能不支持）"
+                                    else "🎨 画图成功（${size}，b64 图片 ${b64.length / 1024}KB，可在管理后台查看）"
+                                }
                             }
+                        }.getOrElse { e -> "❌ 画图失败：${e.message}" }
+                        // 本地通道失败且存在 MCP 图像工具时，给出 MCP 兜底指引
+                        if (imgResult.startsWith("🎨 画图成功")) imgResult
+                        else {
+                            val mcpServers = try { com.qitong.gateway.sandbox.McpClient.listEnabled(db) } catch (e: Exception) { emptyList() }
+                            var mcpHint = ""
+                            for (srv in mcpServers) {
+                                val toolsTxt = runCatching { com.qitong.gateway.sandbox.McpClient.listTools(srv) }.getOrDefault("")
+                                if (toolsTxt.contains("image", true) || toolsTxt.contains("draw", true) || toolsTxt.contains("生成图片", true)) {
+                                    mcpHint = "\n🖼 已找到 MCP 图像工具（${srv.name}），可改发「用 ${srv.name} 的 ${toolsTxt.lineSequence().firstOrNull()?.trim().orEmpty()} 生成 描述」"
+                                    break
+                                }
+                            }
+                            imgResult + mcpHint
                         }
-                        if (done.isNotBlank()) done
-                        else "❌ 未找到已配置的图像生成工具。\n请先在后台 MCP 管理页接入带图像能力的服务器（如 gpt-image/flux/吉利屋），然后发「用 xx 生成 描述」"
                     }
                 }
                 "model_batch_test" -> SkillExecutor.execute(db, "100002", "", userId)
