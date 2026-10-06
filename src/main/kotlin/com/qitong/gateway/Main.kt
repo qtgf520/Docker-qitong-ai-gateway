@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.99
+ * 綦桐AI网关 · Docker 服务器版 v1.100
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.99    ║
+        ║   綦桐AI网关 · Docker Server v1.100    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -189,7 +189,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.99"))
+                put("version", JsonPrimitive("1.100"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1025,6 +1025,94 @@ fun Application.moduleWeb(database: Database) {
                 else com.qitong.gateway.http.TerminalManager.close(id)
             AdminApi.ok(call, null, if (closed) "终端已关闭" else "会话不存在")
         }
+        // ===== ★ v1.100 终端文件管理（真实服务器目录，即容器挂载卷） =====
+        get("/api/terminal/files") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val path = call.request.queryParameters["path"] ?: "/data/qitong"
+            AdminApi.ok(call, mapOf("path" to path, "output" to com.qitong.gateway.http.TerminalManager.listDir(path).second), "ok")
+        }
+        post("/api/terminal/file/read") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val path = body["path"]?.jsonPrimitive?.content.orEmpty()
+            if (path.isBlank()) { AdminApi.fail(call, "路径为空", 400); return@post }
+            val (ok, out) = com.qitong.gateway.http.TerminalManager.readFile(path)
+            if (!ok) { AdminApi.fail(call, out, 400); return@post }
+            AdminApi.ok(call, mapOf("path" to path, "content" to out), "ok")
+        }
+        post("/api/terminal/file/write") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val path = body["path"]?.jsonPrimitive?.content.orEmpty()
+            val content = body["content"]?.jsonPrimitive?.content.orEmpty()
+            if (path.isBlank()) { AdminApi.fail(call, "路径为空", 400); return@post }
+            val (ok, out) = com.qitong.gateway.http.TerminalManager.writeFile(path, content)
+            if (!ok) { AdminApi.fail(call, out, 400); return@post }
+            database.addOpLog(u.id, u.username, "终端文件", "写入 $path", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("path" to path), out)
+        }
+        post("/api/terminal/file/glob") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val path = body["path"]?.jsonPrimitive?.content ?: "/data/qitong"
+            val kw = body["keyword"]?.jsonPrimitive?.content.orEmpty()
+            val (ok, out) = com.qitong.gateway.http.TerminalManager.globFiles(path, kw)
+            if (!ok) { AdminApi.fail(call, out, 400); return@post }
+            AdminApi.ok(call, mapOf("output" to out), "ok")
+        }
+        // ===== ★ v1.100 SSH 远程终端（对齐 Agora：本地沙盒 + 远程SSH 多后端） =====
+        get("/api/terminal/ssh/list") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, com.qitong.gateway.http.TerminalManager.listSshConfigs(), "ok")
+        }
+        post("/api/terminal/ssh/save") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val cfg = com.qitong.gateway.http.TerminalManager.SshConfig(
+                name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty(),
+                host = body["host"]?.jsonPrimitive?.content?.trim().orEmpty(),
+                port = body["port"]?.jsonPrimitive?.content?.toIntOrNull() ?: 22,
+                username = body["username"]?.jsonPrimitive?.content?.trim().orEmpty(),
+                password = body["password"]?.jsonPrimitive?.content ?: ""
+            )
+            if (!com.qitong.gateway.http.TerminalManager.saveSshConfig(cfg)) { AdminApi.fail(call, "名称/主机/用户名不能为空", 400); return@post }
+            database.addOpLog(u.id, u.username, "SSH配置", "保存 ${cfg.name} -> ${cfg.host}", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "SSH 配置已保存")
+        }
+        post("/api/terminal/ssh/delete") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val name = body["name"]?.jsonPrimitive?.content.orEmpty()
+            AdminApi.ok(call, null, if (com.qitong.gateway.http.TerminalManager.deleteSshConfig(name)) "已删除" else "配置不存在")
+        }
+        post("/api/terminal/ssh/test") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val name = body["name"]?.jsonPrimitive?.content.orEmpty()
+            val (ok, out) = com.qitong.gateway.http.TerminalManager.sshTest(name)
+            if (!ok) { AdminApi.fail(call, out, 400); return@post }
+            AdminApi.ok(call, mapOf("output" to out), "ok")
+        }
+        post("/api/terminal/ssh/exec") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val name = body["name"]?.jsonPrimitive?.content.orEmpty()
+            val cmd = body["cmd"]?.jsonPrimitive?.content.orEmpty()
+            val workdir = body["workdir"]?.jsonPrimitive?.content.orEmpty()
+            val (ok, out) = com.qitong.gateway.http.TerminalManager.sshExec(name, cmd, workdir)
+            if (!ok) { AdminApi.fail(call, out, 400); return@post }
+            database.addOpLog(u.id, u.username, "SSH执行", "$name: $cmd", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("output" to out), "ok")
+        }
         // ===== 技能库（独立管理界面：触发器 -> 动作） =====
         get("/api/skills") {
             val u = call.requireAuth(database) ?: return@get
@@ -1705,7 +1793,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.99"))
+                put("version", JsonPrimitive("1.100"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2457,7 +2545,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.99"))
+                    put("version", JsonPrimitive("1.100"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

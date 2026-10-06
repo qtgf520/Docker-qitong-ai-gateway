@@ -555,12 +555,144 @@ loaders.terminal = function(){
  box.innerHTML = '<div class="action-bar">'+
   '<button class="btn" onclick="termCreate()">+ 创建终端</button>'+
   '<button class="btn" onclick="termAiHelp()">🤖 AI 智能操作</button>'+
+  '<button class="btn-ghost" onclick="termFiles()">📁 文件管理</button>'+
+  '<button class="btn-ghost" onclick="termSsh()">🔌 SSH 远程</button>'+
   '<button class="btn-ghost" onclick="loaders.terminal()">刷新</button>'+
   '<button class="btn-ghost danger" onclick="termCloseAll()">关闭全部</button>'+
   '<span style="font-size:12px;color:var(--muted)">临时会话：默认30分钟无操作自动清理；可设永久（ttl=0）</span></div>'+
   '<div id="termList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  termLoad();
 };
+// ★ v1.100 终端文件管理（真实服务器目录 = 容器挂载卷，像文件管理器一样浏览/预览/编辑）
+function termFiles(){
+ var cur = '/data/qitong';
+ openModal('📁 终端文件管理器', '<div class="form-row"><label>当前路径</label><div style="display:flex;gap:6px"><input class="input" id="fmPath" value="'+cur+'" style="flex:1;font-family:monospace" onkeydown="if(event.key===\'Enter\')fmLoad()"><button class="btn" onclick="fmLoad()">打开</button><button class="btn-ghost" onclick="fmHome()">🏠</button></div></div>'+
+  '<div style="display:flex;gap:6px;margin-bottom:6px"><input class="input" id="fmGlob" placeholder="搜索文件名关键词" style="flex:1"><button class="btn-ghost" onclick="fmGlob()">🔍 搜索</button><button class="btn-ghost" onclick="fmNewFile()">📄 新建文件</button></div>'+
+  '<div id="fmOut" style="font-family:monospace;background:#0b1120;color:#e2e8f0;border-radius:6px;padding:10px;height:240px;overflow-y:auto;white-space:pre-wrap;font-size:12px">加载中…</div>', function(){});
+ fmLoad();
+}
+function fmHome(){ var p=$('fmPath'); if(p){ p.value='/data/qitong'; } fmLoad(); }
+function fmLoad(){
+ var p=$('fmPath'); if(!p) return;
+ var path=p.value.trim()||'/data/qitong';
+ api('/api/terminal/files?path='+encodeURIComponent(path)).then(function(r){
+  var el=$('fmOut'); if(!el) return;
+  if(r.code!==0){ el.textContent=r.msg||'失败'; return; }
+  // 渲染成可点击列表（目录可进、文件可预览）
+  var lines=(r.data.output||'').split('\n').filter(function(l){return l.trim();});
+  if(!lines.length){ el.textContent='（空目录）'; return; }
+  el.innerHTML=lines.map(function(l){
+   var isDir=l.startsWith('📁');
+   var name=l.substring(2).split('\t')[0];
+   if(isDir) return '<div style="color:#67e8f9;cursor:pointer" onclick="fmGo(\''+esc(name.replace(/\'/g,"\\'"))+'\')">'+esc(l)+'</div>';
+   return '<div style="cursor:pointer" onclick="fmRead(\''+esc(name.replace(/\'/g,"\\'"))+'\')" title="点击预览">'+esc(l)+'</div>';
+  }).join('');
+ });
+}
+function fmGo(name){
+ var p=$('fmPath'); if(!p) return;
+ var cur=p.value.trim(); if(!cur.endsWith('/')) cur+='/';
+ p.value=cur+name; fmLoad();
+}
+function fmRead(name){
+ var p=$('fmPath'); if(!p) return;
+ var cur=p.value.trim(); if(!cur.endsWith('/')) cur+='/';
+ var path=cur+name;
+ api('/api/terminal/file/read',{method:'POST',body:{path:path}}).then(function(r){
+  if(r.code!==0){ toast(r.msg||'读取失败',false); return; }
+  openModal('📄 '+esc(name)+' <code style="font-size:10px">'+esc(path)+'</code>',
+   '<textarea class="input" id="fmEditContent" rows="10" style="font-family:monospace;font-size:12px;white-space:pre-wrap">'+esc(r.data.content||'')+'</textarea>'+
+   '<div class="form-row" style="margin-top:8px"><button class="btn" onclick="fmSave(\''+esc(path.replace(/\'/g,"\\'"))+'\')">💾 保存</button></div>');
+ });
+}
+function fmSave(path){
+ var c=$('fmEditContent'); if(!c) return;
+ api('/api/terminal/file/write',{method:'POST',body:{path:path,content:c.value}}).then(function(r){
+  toast(r.msg||(r.code===0?'已保存':'保存失败'), r.code===0);
+ });
+}
+function fmNewFile(){
+ var p=$('fmPath'); if(!p) return;
+ var cur=p.value.trim(); if(!cur.endsWith('/')) cur+='/';
+ openModal('📄 新建文件', '<div class="form-row"><label>文件名</label><input class="input" id="fmNewName" placeholder="如 test.txt"></div><div class="form-row"><label>内容</label><textarea class="input" id="fmNewContent" rows="6"></textarea></div>', function(){
+  var name=$('fmNewName').value.trim(); if(!name){ toast('文件名不能为空',false); return; }
+  api('/api/terminal/file/write',{method:'POST',body:{path:cur+name,content:$('fmNewContent').value}}).then(function(r){
+   toast(r.msg||(r.code===0?'已创建':'创建失败'), r.code===0); if(r.code===0) fmLoad();
+  });
+ });
+}
+function fmGlob(){
+ var p=$('fmPath'); var g=$('fmGlob'); if(!p||!g) return;
+ api('/api/terminal/file/glob',{method:'POST',body:{path:p.value.trim()||'/data/qitong',keyword:g.value.trim()}}).then(function(r){
+  var el=$('fmOut'); if(!el) return;
+  if(r.code===0){ el.innerHTML='<div style="color:#67e8f9">'+esc(r.data.output||'')+'</div>'; } else { el.textContent=r.msg; }
+ });
+}
+// ★ v1.100 SSH 远程终端管理（对齐 Agora 多后端）
+function termSsh(){
+ openModal('🔌 SSH 远程终端', '<div class="form-row"><label>保存的连接</label><select class="input" id="sshSel" onchange="sshSelect()"><option value="">--- 选择已保存的连接 ---</option></select></div>'+
+  '<div style="display:flex;gap:6px;margin:8px 0"><input class="input" id="sshName" placeholder="连接名（如 我的服务器）" style="flex:1;font-size:12px"><input class="input" id="sshHost" placeholder="主机 IP" style="width:130px;font-size:12px"><input class="input" id="sshPort" value="22" style="width:60px;font-size:12px"></div>'+
+  '<div style="display:flex;gap:6px;margin-bottom:8px"><input class="input" id="sshUser" placeholder="用户名" style="flex:1;font-size:12px"><input class="input" id="sshPass" type="password" placeholder="密码" style="flex:1;font-size:12px"><button class="btn" onclick="sshSave()">保存</button><button class="btn-ghost" onclick="sshTest()">测试</button><button class="btn-ghost danger" onclick="sshDelete()">删除</button></div>'+
+  '<div class="form-row"><label>选择连接执行远程命令</label><select class="input" id="sshExecSel"><option value="">--- 先保存/选择连接 ---</option></select></div>'+
+  '<div class="form-row"><label>工作目录（可空，默认家目录；可把终端挂载到真实服务器任何目录）</label><input class="input" id="sshWorkdir" placeholder="如 /var/www /opt 等真实服务器目录" style="font-family:monospace"></div>'+
+  '<div class="form-row"><input class="input" id="sshCmd" placeholder="输入远程命令，Enter 执行" style="font-family:monospace" onkeydown="if(event.key===\'Enter\')sshExec()"></div>'+
+  '<button class="btn" onclick="sshExec()">执行</button>'+
+  '<div id="sshOut" style="font-family:monospace;background:#0b1120;color:#e2e8f0;border-radius:6px;padding:10px;height:180px;overflow-y:auto;white-space:pre-wrap;font-size:12px;margin-top:8px">SSH 输出区…</div>', function(){});
+ sshLoad();
+}
+function sshLoad(){
+ api('/api/terminal/ssh/list').then(function(r){
+  var list=(r&&r.data)||[];
+  var opts1='<option value="">--- 选择已保存的连接 ---</option>';
+  var opts2='<option value="">--- 选择连接执行远程命令 ---</option>';
+  list.forEach(function(s){ opts1+='<option value="'+esc(s.name)+'">'+esc(s.name)+' ('+esc(s.host)+')</option>'; opts2+='<option value="'+esc(s.name)+'">'+esc(s.name)+' ('+esc(s.host)+')</option>'; });
+  var sel1=$('sshSel'); var sel2=$('sshExecSel');
+  if(sel1) sel1.innerHTML=opts1;
+  if(sel2) sel2.innerHTML=opts2;
+ });
+}
+function sshSelect(){
+ var sel=$('sshSel'); if(!sel||!sel.value) return;
+ var name=sel.value;
+ api('/api/terminal/ssh/list').then(function(r){
+  var list=(r&&r.data)||[];
+  var s=list.filter(function(x){return x.name===name;})[0];
+  if(!s) return;
+  var nm=$('sshName'); var h=$('sshHost'); var pt=$('sshPort'); var us=$('sshUser');
+  if(nm) nm.value=s.name; if(h) h.value=s.host; if(pt) pt.value=s.port; if(us) us.value=s.username;
+  var es=$('sshExecSel'); if(es) es.value=name;
+ });
+}
+function sshSave(){
+ var name=$('sshName').value.trim(); var host=$('sshHost').value.trim(); var port=$('sshPort').value.trim()||'22';
+ var user=$('sshUser').value.trim(); var pass=$('sshPass').value;
+ if(!name||!host||!user){ toast('连接名/主机/用户名必填',false); return; }
+ api('/api/terminal/ssh/save',{method:'POST',body:{name:name,host:host,port:parseInt(port)||22,username:user,password:pass}}).then(function(r){
+  toast(r.msg||'',r.code===0); if(r.code===0) sshLoad();
+ });
+}
+function sshTest(){
+ var sel=$('sshSel'); if(!sel||!sel.value){ toast('先选择或保存连接',false); return; }
+ api('/api/terminal/ssh/test',{method:'POST',body:{name:sel.value}}).then(function(r){
+  var el=$('sshOut'); if(el) el.textContent=r.code===0?(r.data&&r.data.output||''):(r.msg||'连接失败');
+  if(r.code!==0) toast(r.msg||'连接失败',false);
+ });
+}
+function sshDelete(){
+ var sel=$('sshSel'); if(!sel||!sel.value){ toast('先选择要删除的连接',false); return; }
+ if(!confirm('删除 SSH 连接「'+sel.value+'」？')) return;
+ api('/api/terminal/ssh/delete',{method:'POST',body:{name:sel.value}}).then(function(r){
+  toast(r.msg||'',r.code===0); if(r.code===0) sshLoad();
+ });
+}
+function sshExec(){
+ var sel=$('sshExecSel'); var cmd=$('sshCmd'); if(!sel||!sel.value){ toast('先选择连接',false); return; }
+ if(!cmd||!cmd.value.trim()) return;
+ var workdir=$('sshWorkdir')?$('sshWorkdir').value.trim():'';
+ api('/api/terminal/ssh/exec',{method:'POST',body:{name:sel.value,cmd:cmd.value.trim(),workdir:workdir}}).then(function(r){
+  var el=$('sshOut'); if(el) el.textContent=r.code===0?(r.data&&r.data.output||''):(r.msg||'执行失败');
+  cmd.value='';
+ });
 function termLoad(){
  api('/api/terminal/sessions').then(function(r){
   var el=$('termList'); if(!el) return;
@@ -598,13 +730,15 @@ function termAiHelp(){
    } else toast(r.msg||'执行失败', false);
   });
  });
- });
 }
 function termSetTtl(id){
  openModal('设置会话时长', '<div class="form-row"><label>无操作保留时长</label><select class="input" id="ttlSel">'+
   '<option value="0">永久（不自动清理）</option><option value="30" selected>30分钟</option><option value="60">1小时</option>'+
   '<option value="180">3小时</option><option value="720">12小时</option><option value="1440">24小时</option></select></div>', function(){
-  api('/api/terminal/set-ttl',{method:'POST',body:{id:id, ttlMinutes:parseInt($('ttlSel').value)||30}}).then(function(r){
+  // ★ v1.100 修复：0(永久) 被 `parseInt||30` 误转成 30——用 isNaN 判断
+  var ttlVal = parseInt($('ttlSel').value, 10);
+  ttlVal = isNaN(ttlVal) ? 30 : ttlVal;
+  api('/api/terminal/set-ttl',{method:'POST',body:{id:id, ttlMinutes: ttlVal}}).then(function(r){
    toast(r.msg||'', r.code===0); if(r.code===0) loaders.terminal();
   });
  });
@@ -614,7 +748,10 @@ function termCreate(){
   '<div class="form-row"><label>保留时长</label><select class="input" id="termTtl">'+
   '<option value="30" selected>30分钟（默认）</option><option value="0">永久（不清理）</option><option value="60">1小时</option>'+
   '<option value="180">3小时</option><option value="720">12小时</option><option value="1440">24小时</option></select></div>', function(){
-  api('/api/terminal/create',{method:'POST',body:{label:$('termLabel').value.trim(), ttlMinutes:parseInt($('termTtl').value)||30}}).then(function(r){
+  // ★ v1.100 修复：0(永久) 被 `parseInt||30` 误转成 30——用 isNaN 判断
+  var ttlVal = parseInt($('termTtl').value, 10);
+  ttlVal = isNaN(ttlVal) ? 30 : ttlVal;
+  api('/api/terminal/create',{method:'POST',body:{label:$('termLabel').value.trim(), ttlMinutes: ttlVal}}).then(function(r){
    if(r.code===0){ toast(r.msg,true); closeModal(); loaders.terminal(); } else toast(r.msg,false);
   });
  });

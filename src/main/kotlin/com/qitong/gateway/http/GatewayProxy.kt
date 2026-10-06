@@ -240,7 +240,7 @@ class GatewayProxy(private val database: Database) {
             var sb = bodyStr
             sb = sb.replace(Regex("\"temperature\"\\s*:\\s*([\\d.]+)")) { m ->
                 val v = m.groupValues[1].toDoubleOrNull()
-                if (v != null && v != v.coerceIn(0.0, 1.999)) "\"temperature\":${v.coerceIn(0.0, 1.999)}" else m.value
+                if (v != null && v != v.coerceIn(0.0, 1.1009)) "\"temperature\":${v.coerceIn(0.0, 1.1009)}" else m.value
             }
             sb = sb.replace(Regex("\"top_p\"\\s*:\\s*([\\d.]+)")) { m ->
                 val v = m.groupValues[1].toDoubleOrNull()

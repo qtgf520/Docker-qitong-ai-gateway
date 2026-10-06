@@ -194,4 +194,151 @@ object TerminalManager {
             s.ttlMinutes > 0 && now - s.lastActiveAt > s.ttlMinutes.toLong() * 60 * 1000L
         }
     }
+
+    // ============ ★ v1.100 文件管理（对齐 Agora 文件工具：读/写/列目录/搜索） ============
+
+    /** 列出目录内容（真实服务器目录，即容器挂载卷），返回 名称/类型/大小/修改时间 */
+    fun listDir(path: String): Pair<Boolean, String> {
+        return try {
+            val base = java.io.File(path)
+            if (!base.exists() || !base.isDirectory) return false to "目录不存在：$path"
+            val sb = StringBuilder()
+            val items = base.listFiles()?.sortedWith(compareBy({ it.isFile }, { it.name.lowercase() })) ?: emptyList()
+            if (items.isEmpty()) return true to "（空目录）$path"
+            items.forEach { f ->
+                val name = f.name
+                val type = if (f.isDirectory) "📁" else "📄"
+                val size = if (f.isFile) {
+                    when {
+                        f.length() >= 1024 * 1024 * 1024L -> "%.1fG".format(f.length() / 1024.0 / 1024 / 1024)
+                        f.length() >= 1024 * 1024L -> "%.1fM".format(f.length() / 1024.0 / 1024)
+                        f.length() >= 1024 -> "%.1fK".format(f.length() / 1024.0)
+                        else -> "${f.length()}B"
+                    }
+                } else "-"
+                val mod = java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date(f.lastModified()))
+                sb.append("$type $name\t$size\t$mod\n")
+            }
+            true to sb.toString().ifBlank { "（空目录）$path" }
+        } catch (e: Exception) {
+            false to "列出目录失败：${e.message}"
+        }
+    }
+
+    /** 读取文件内容（限 200KB 防内存爆） */
+    fun readFile(path: String): Pair<Boolean, String> {
+        return try {
+            val f = java.io.File(path)
+            if (!f.exists()) return false to "文件不存在：$path"
+            if (f.isDirectory) return false to "这是目录，用文件管理器浏览：$path"
+            if (f.length() > 200 * 1024) return false to "文件过大（${f.length() / 1024}KB），仅支持预览 200KB 以内文本"
+            val text = f.readText(Charsets.UTF_8).take(100_000)
+            true to text.ifBlank { "（空文件）" }
+        } catch (e: Exception) {
+            false to "读取失败：${e.message}"
+        }
+    }
+
+    /** 写文件（自动创建父目录） */
+    fun writeFile(path: String, content: String): Pair<Boolean, String> {
+        return try {
+            val f = java.io.File(path)
+            f.parentFile?.mkdirs()
+            f.writeText(content, Charsets.UTF_8)
+            true to "✅ 已写入 ${f.absolutePath}（${content.length} 字符）"
+        } catch (e: Exception) {
+            false to "写入失败：${e.message}"
+        }
+    }
+
+    /** 搜索文件名（对齐 Agora fileGlob） */
+    fun globFiles(basePath: String, pattern: String, depth: Int = 3): Pair<Boolean, String> {
+        return try {
+            val base = java.io.File(basePath)
+            if (!base.exists() || !base.isDirectory) return false to "目录不存在：$basePath"
+            val kw = pattern.trim().lowercase()
+            val results = mutableListOf<String>()
+            fun walk(dir: java.io.File, d: Int) {
+                if (d > depth || results.size >= 100) return
+                dir.listFiles()?.forEach { f ->
+                    if (f.name.lowercase().contains(kw)) results.add(f.absolutePath)
+                    if (f.isDirectory) walk(f, d + 1)
+                }
+            }
+            walk(base, 0)
+            if (results.isEmpty()) true to "未找到含「$pattern」的文件（深度${depth}）"
+            else true to "🔍 找到 ${results.size} 个（深度${depth}）：\n" + results.joinToString("\n")
+        } catch (e: Exception) {
+            false to "搜索失败：${e.message}"
+        }
+    }
+
+    // ============ ★ v1.100 SSH 远程连接（对齐 Agora Shell 多后端：本地沙盒 + 远程SSH） ============
+
+    data class SshConfig(
+        val name: String,
+        val host: String,
+        val port: Int = 22,
+        val username: String,
+        val password: String = "",
+        val privateKey: String = ""
+    )
+
+    private val sshConfigs = ConcurrentHashMap<String, SshConfig>()
+
+    /** 保存 SSH 配置（name 唯一，重复覆盖） */
+    fun saveSshConfig(cfg: SshConfig): Boolean {
+        if (cfg.name.isBlank() || cfg.host.isBlank() || cfg.username.isBlank()) return false
+        sshConfigs[cfg.name] = cfg
+        return true
+    }
+
+    fun listSshConfigs(): List<Map<String, Any?>> = sshConfigs.values.map {
+        mapOf("name" to it.name, "host" to it.host, "port" to it.port, "username" to it.username, "hasPassword" to it.password.isNotBlank())
+    }
+
+    fun deleteSshConfig(name: String): Boolean = sshConfigs.remove(name) != null
+
+    /** 通过 SSH 执行远程命令（复用 sshpass；工作目录可指定，0=默认家目录） */
+    fun sshExec(cfgName: String, cmd: String, workdir: String = ""): Pair<Boolean, String> {
+        val cfg = sshConfigs[cfgName] ?: return false to "SSH 配置不存在：$cfgName"
+        if (cmd.isBlank()) return true to "(无输出)"
+        if (dangerous.any { cmd.contains(it) }) return true to "⛔ 危险命令已拦截"
+        return try {
+            val fullCmd = if (workdir.isNotBlank()) "cd $workdir && $cmd" else cmd
+            val pb = ProcessBuilder(
+                "sshpass", "-p", cfg.password,
+                "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+                "-p", cfg.port.toString(),
+                "${cfg.username}@${cfg.host}", fullCmd
+            ).redirectErrorStream(true)
+            val proc = pb.start()
+            val out = proc.inputStream.bufferedReader().readText()
+            if (!proc.waitFor(15, TimeUnit.SECONDS)) { proc.destroyForcibly(); false to "⚠️ SSH 命令超时（15秒）已终止\n$out" }
+            else true to out.ifBlank { "(无输出)" }.take(3000)
+        } catch (e: Exception) {
+            false to "SSH 执行失败：${e.message}"
+        }
+    }
+
+    /** SSH 测连接 */
+    fun sshTest(cfgName: String): Pair<Boolean, String> {
+        val cfg = sshConfigs[cfgName] ?: return false to "SSH 配置不存在：$cfgName"
+        return try {
+            val proc = ProcessBuilder(
+                "sshpass", "-p", cfg.password,
+                "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=8",
+                "-p", cfg.port.toString(),
+                "${cfg.username}@${cfg.host}", "echo __SSH_OK__ && pwd && whoami"
+            ).redirectErrorStream(true).start()
+            val out: String = proc.inputStream.bufferedReader().readText()
+            val waitedOk: Boolean = proc.waitFor(15, TimeUnit.SECONDS)
+            val okFlag: Boolean = waitedOk && out.contains("__SSH_OK__")
+            if (proc.isAlive) proc.destroyForcibly()
+            if (okFlag) true to "✅ SSH 连接成功（${cfg.host}:${cfg.port}）\n$out"
+            else false to "❌ SSH 连接失败：$out"
+        } catch (e: Exception) {
+            false to "SSH 连接异常：${e.message}"
+        }
+    }
 }

@@ -1377,11 +1377,18 @@ class Database(private val dbPath: String) {
 
     // ============ 更新历史（v85：前端/QQ/微信/qtai-sj 可查更新了啥） ============
 
+    /** ★ v1.100 幂等写入：同版本已存在则不重复插入（每次发版启动时同步最新条目到「关于页」） */
     fun addUpdateLog(version: String, title: String, details: String, releasedAt: Long = System.currentTimeMillis()) {
-        stmt(
-            "INSERT INTO update_logs (version,title,details,released_at) VALUES (?,?,?,?)",
-            version, title, details, releasedAt
-        )
+        val exists = queryOne("SELECT COUNT(*) FROM update_logs WHERE version=?", version) ?: 0
+        if (exists > 0) {
+            // 已存在 → 更新内容（保证与 README 一致）
+            stmt("UPDATE update_logs SET title=?, details=?, released_at=? WHERE version=?", title, details, releasedAt, version)
+        } else {
+            stmt(
+                "INSERT INTO update_logs (version,title,details,released_at) VALUES (?,?,?,?)",
+                version, title, details, releasedAt
+            )
+        }
     }
 
     fun getUpdateLogs(limit: Int = 50): List<Map<String, Any?>> =
@@ -1395,10 +1402,15 @@ class Database(private val dbPath: String) {
             )
         }
 
+    /** ★ v1.100 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
-        if (queryOne("SELECT COUNT(*) FROM update_logs") ?: 0 > 0) return
         val logs = listOf(
-            Triple("v1.99", "工作流模板市场 + 沙盒函数兼容", "后台工作流页新增模板市场（每日网关体检/余额报告/模型速查）一键创建；工作流/技能里的 skill 步骤支持沙盒函数名（sys_health/cache_stats/update_logs 等）"),
+            Triple("v1.100", "UI修复 + 终端增强 + 指南同步", "修复移动端侧边栏「关于我们」被底部导航遮挡、终端「永久」时长被误存30分钟；关于页更新日志与 README 同步全量展示；终端新增文件管理/共享存储挂载增强"),
+            Triple("v1.99", "待办列表显示提醒时间", "todo_list 每条待办显示提醒时间（⏰ MM-dd HH:mm 提醒 / 已提醒），配合 v1.98 待办到点提醒闭环"),
+            Triple("v1.98", "待办到点提醒闭环", "todo_add 支持 remind_minutes（多少分钟后提醒），到点自动推送 QQ 群 + 微信（todos 表加 remind_at/remind_sent 列 + 每 5 秒调度器扫到期，防重复推送）"),
+            Triple("v1.97", "智能路由", "简单问题自动走便宜快模型（mini/flash/lite 按延迟排序），复杂任务自动选强模型（pro/max/sonnet/deepseek-r1 按上下文+延迟）；用户点灯/强制池仍最高优先"),
+            Triple("v1.96", "内置聊天页自定义技能自动触发", "skills 表技能命中触发词直接执行（对齐 QQ/微信）——skill 编码走网关技能执行器、沙盒函数名走沙盒、固定回复直接发文本、其他走工作流引擎"),
+            Triple("v1.95", "工作流模板市场 + 沙盒函数兼容", "后台工作流页新增模板市场（每日网关体检/余额报告/模型速查）一键创建；工作流/技能里的 skill 步骤支持沙盒函数名（sys_health/cache_stats/update_logs 等）"),
             Triple("v1.94", "技能市场 + 自定义技能真执行", "后台技能页新增技能市场（10个常用技能包一键安装）；修复自定义技能命中只发文本不执行的bug——按动作类型真执行（技能编码/沙盒函数/固定回复/工作流）"),
             Triple("v1.93", "响应缓存后台管理", "设置页新增启用响应缓存开关+缓存统计按钮（实时看条数/命中次数/一键清空），新增缓存统计与清理接口"),
             Triple("v1.92", "网关增强：响应缓存+记忆闭环+技能自进化", "相同请求5分钟缓存命中直接返回（实测快480倍）；微信qtai-sj模式也沉淀长期记忆；skill_auto_learn模型完成任务主动沉淀可复用技能；SYSTEM_PROMPT新增自进化引导"),
