@@ -195,7 +195,7 @@ object TerminalManager {
         }
     }
 
-    // ============ ★ v1.100 文件管理（对齐 Agora 文件工具：读/写/列目录/搜索） ============
+    // ============ ★ v1.101 文件管理（对齐 Agora 文件工具：读/写/列目录/搜索） ============
 
     /** 列出目录内容（真实服务器目录，即容器挂载卷），返回 名称/类型/大小/修改时间 */
     fun listDir(path: String): Pair<Boolean, String> {
@@ -273,7 +273,7 @@ object TerminalManager {
         }
     }
 
-    // ============ ★ v1.100 SSH 远程连接（对齐 Agora Shell 多后端：本地沙盒 + 远程SSH） ============
+    // ============ ★ v1.101 SSH 远程连接（对齐 Agora Shell 多后端：本地沙盒 + 远程SSH） ============
 
     data class SshConfig(
         val name: String,

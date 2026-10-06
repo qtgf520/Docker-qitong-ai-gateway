@@ -563,7 +563,7 @@ loaders.terminal = function(){
   '<div id="termList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  termLoad();
 };
-// ★ v1.100 终端文件管理（真实服务器目录 = 容器挂载卷，像文件管理器一样浏览/预览/编辑）
+// ★ v1.101 终端文件管理（真实服务器目录 = 容器挂载卷，像文件管理器一样浏览/预览/编辑）
 function termFiles(){
  var cur = '/data/qitong';
  openModal('📁 终端文件管理器', '<div class="form-row"><label>当前路径</label><div style="display:flex;gap:6px"><input class="input" id="fmPath" value="'+cur+'" style="flex:1;font-family:monospace" onkeydown="if(event.key===\'Enter\')fmLoad()"><button class="btn" onclick="fmLoad()">打开</button><button class="btn-ghost" onclick="fmHome()">🏠</button></div></div>'+
@@ -628,7 +628,7 @@ function fmGlob(){
   if(r.code===0){ el.innerHTML='<div style="color:#67e8f9">'+esc(r.data.output||'')+'</div>'; } else { el.textContent=r.msg; }
  });
 }
-// ★ v1.100 SSH 远程终端管理（对齐 Agora 多后端）
+// ★ v1.101 SSH 远程终端管理（对齐 Agora 多后端）
 function termSsh(){
  openModal('🔌 SSH 远程终端', '<div class="form-row"><label>保存的连接</label><select class="input" id="sshSel" onchange="sshSelect()"><option value="">--- 选择已保存的连接 ---</option></select></div>'+
   '<div style="display:flex;gap:6px;margin:8px 0"><input class="input" id="sshName" placeholder="连接名（如 我的服务器）" style="flex:1;font-size:12px"><input class="input" id="sshHost" placeholder="主机 IP" style="width:130px;font-size:12px"><input class="input" id="sshPort" value="22" style="width:60px;font-size:12px"></div>'+
@@ -735,7 +735,7 @@ function termSetTtl(id){
  openModal('设置会话时长', '<div class="form-row"><label>无操作保留时长</label><select class="input" id="ttlSel">'+
   '<option value="0">永久（不自动清理）</option><option value="30" selected>30分钟</option><option value="60">1小时</option>'+
   '<option value="180">3小时</option><option value="720">12小时</option><option value="1440">24小时</option></select></div>', function(){
-  // ★ v1.100 修复：0(永久) 被 `parseInt||30` 误转成 30——用 isNaN 判断
+  // ★ v1.101 修复：0(永久) 被 `parseInt||30` 误转成 30——用 isNaN 判断
   var ttlVal = parseInt($('ttlSel').value, 10);
   ttlVal = isNaN(ttlVal) ? 30 : ttlVal;
   api('/api/terminal/set-ttl',{method:'POST',body:{id:id, ttlMinutes: ttlVal}}).then(function(r){
@@ -748,7 +748,7 @@ function termCreate(){
   '<div class="form-row"><label>保留时长</label><select class="input" id="termTtl">'+
   '<option value="30" selected>30分钟（默认）</option><option value="0">永久（不清理）</option><option value="60">1小时</option>'+
   '<option value="180">3小时</option><option value="720">12小时</option><option value="1440">24小时</option></select></div>', function(){
-  // ★ v1.100 修复：0(永久) 被 `parseInt||30` 误转成 30——用 isNaN 判断
+  // ★ v1.101 修复：0(永久) 被 `parseInt||30` 误转成 30——用 isNaN 判断
   var ttlVal = parseInt($('termTtl').value, 10);
   ttlVal = isNaN(ttlVal) ? 30 : ttlVal;
   api('/api/terminal/create',{method:'POST',body:{label:$('termLabel').value.trim(), ttlMinutes: ttlVal}}).then(function(r){

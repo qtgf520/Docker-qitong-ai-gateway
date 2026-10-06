@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v1.100"
+    private const val VER = "v1.101"
 
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -434,7 +434,7 @@ input[type=range]{accent-color:var(--primary)}
   .burger{display:block}
   .sidebar{transform:translateX(-100%)}
   .sidebar.open{transform:translateX(0)}
-  /* ★ v1.100 修复：底部导航(约52px)遮挡侧边栏最后一项「关于我们」——底部留出空间 */
+  /* ★ v1.101 修复：底部导航(约52px)遮挡侧边栏最后一项「关于我们」——底部留出空间 */
   .sidebar{padding-bottom:58px}
   .sidebar nav{padding-bottom:80px}
   .content{margin-left:0;padding:64px 14px 76px;max-width:100%}
