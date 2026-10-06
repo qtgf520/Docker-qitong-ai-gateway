@@ -1398,7 +1398,7 @@ class Database(private val dbPath: String) {
     fun seedUpdateLogsIfEmpty() {
         if (queryOne("SELECT COUNT(*) FROM update_logs") ?: 0 > 0) return
         val logs = listOf(
-            Triple("v3.18.22-98", "工作流模板市场 + 沙盒函数兼容", "后台工作流页新增模板市场（每日网关体检/余额报告/模型速查）一键创建；工作流/技能里的 skill 步骤支持沙盒函数名（sys_health/cache_stats/update_logs 等）"),
+            Triple("v3.18.22-99", "工作流模板市场 + 沙盒函数兼容", "后台工作流页新增模板市场（每日网关体检/余额报告/模型速查）一键创建；工作流/技能里的 skill 步骤支持沙盒函数名（sys_health/cache_stats/update_logs 等）"),
             Triple("v3.18.22-94", "技能市场 + 自定义技能真执行", "后台技能页新增技能市场（10个常用技能包一键安装）；修复自定义技能命中只发文本不执行的bug——按动作类型真执行（技能编码/沙盒函数/固定回复/工作流）"),
             Triple("v3.18.22-93", "响应缓存后台管理", "设置页新增启用响应缓存开关+缓存统计按钮（实时看条数/命中次数/一键清空），新增缓存统计与清理接口"),
             Triple("v3.18.22-92", "网关增强：响应缓存+记忆闭环+技能自进化", "相同请求5分钟缓存命中直接返回（实测快480倍）；微信qtai-sj模式也沉淀长期记忆；skill_auto_learn模型完成任务主动沉淀可复用技能；SYSTEM_PROMPT新增自进化引导"),
@@ -1483,7 +1483,9 @@ class Database(private val dbPath: String) {
                 "content" to (it["content"] as? String ?: ""),
                 "done" to ((it["done"] as? Number)?.toInt() ?: 0),
                 "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0),
-                "doneAt" to ((it["done_at"] as? Number)?.toLong() ?: 0)
+                "doneAt" to ((it["done_at"] as? Number)?.toLong() ?: 0),
+                "remindAt" to ((it["remind_at"] as? Number)?.toLong() ?: 0),
+                "remindSent" to ((it["remind_sent"] as? Number)?.toInt() ?: 0)
             )
         }
     }

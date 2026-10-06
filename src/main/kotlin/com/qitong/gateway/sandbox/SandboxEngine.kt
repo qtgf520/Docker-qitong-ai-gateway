@@ -421,7 +421,12 @@ $KNOWLEDGE_JSON
                     if (todos.isEmpty()) "📭 你没有待办事项${if (!all) "（发 todo_add 添加）" else ""}"
                     else "📋 我的待办（${todos.count { (it["done"] as? Int) == 0 }} 未完成）：\n" + todos.joinToString("\n") { t ->
                         val done = (t["done"] as? Int) == 1
-                        "· #${t["id"]} [${if (done) "✅" else "⬜"}] ${t["content"]}"
+                        val remindAt = (t["remindAt"] as? Long) ?: 0
+                        val remindTxt = if (remindAt > 0) {
+                            val fmt = java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date(remindAt))
+                            if ((t["remindSent"] as? Int) == 1) "（已提醒 $fmt）" else "（⏰ $fmt 提醒）"
+                        } else ""
+                        "· #${t["id"]} [${if (done) "✅" else "⬜"}] ${t["content"]}$remindTxt"
                     }
                 }
                 "todo_done" -> {
