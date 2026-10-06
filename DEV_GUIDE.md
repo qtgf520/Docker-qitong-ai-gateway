@@ -68,7 +68,16 @@
   ⚠️ 会连 `.bak`/备份文件一起改，无妨，最后清理备份即可。
   ⚠️ **注意**：批量替换必须用「精确旧版本号」替换（如 1.99 → 1.100），不要用通配/前缀模糊替换，避免误改历史版本号（如把 v1.9 改成 v1.100）。
 - CHANGELOG 条目格式：`### v1.N（日期）· 一句话主题` + 每条改动一行 `- xxx`
-- **发布版规则**：每个版本部署验证通过后，Git 提交推送时同步打 tag：`git tag v1.N` + `git push origin v1.N`（GitHub Release 用同名 tag）
+- **发布版规则（每次发版必做，用户靠它收更新通知）**：
+  1. 部署验证通过后先推代码：`git push origin master`
+  2. 打 tag 推送：`git tag v1.N` + `git push origin v1.N`
+  3. **同步创建 GitHub Release**（API 自动建，无需附文件）：POST https://api.github.com/repos/qtgf520/Docker-qitong-ai-gateway/releases
+     ```json
+     {"tag_name":"v1.N","name":"v1.N","body":"綦桐AI网关 Docker 版 v1.N\n\n<版本一句话说明>","draft":false,"prerelease":false}
+     ```
+     认证：`Authorization: Bearer <remote中的token>`（remote URL 里 `用户名:token@`，取冒号后到 @ 前的部分）
+     ⚠️ tag 统一带 `v` 前缀（v1.N），不要建无前缀的 `1.N`（踩过坑：无前缀会重复+难管理）
+  4. 这样 GitHub Releases 页会全版本可见，Watch 用户收到更新通知
 
 ---
 
