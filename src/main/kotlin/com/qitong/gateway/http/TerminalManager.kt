@@ -195,7 +195,7 @@ object TerminalManager {
         }
     }
 
-    // ============ ★ v1.103 文件管理（对齐 Agora 文件工具：读/写/列目录/搜索） ============
+    // ============ ★ v1.104 文件管理（对齐 Agora 文件工具：读/写/列目录/搜索） ============
 
     /** 列出目录内容（真实服务器目录，即容器挂载卷），返回 名称/类型/大小/修改时间 */
     fun listDir(path: String): Pair<Boolean, String> {
@@ -251,7 +251,7 @@ object TerminalManager {
         }
     }
 
-    /** ★ v1.103 重命名文件/目录 */
+    /** ★ v1.104 重命名文件/目录 */
     fun renameFile(path: String, newName: String): Pair<Boolean, String> {
         return try {
             val f = java.io.File(path)
@@ -267,7 +267,7 @@ object TerminalManager {
         }
     }
 
-    /** ★ v1.103 删除文件/空目录（危险拦截：禁止删 / 根、/data 根、工作区根） */
+    /** ★ v1.104 删除文件/空目录（危险拦截：禁止删 / 根、/data 根、工作区根） */
     fun deleteFile(path: String): Pair<Boolean, String> {
         return try {
             val f = java.io.File(path)
@@ -310,8 +310,8 @@ object TerminalManager {
         }
     }
 
-    // ============ ★ v1.103 SSH 远程连接（对齐 Agora Shell 多后端：本地沙盒 + 远程SSH） ============
-    // ★ v1.103 配置持久化到数据库（重启不丢）：内存作读缓存，读写都走 DB
+    // ============ ★ v1.104 SSH 远程连接（对齐 Agora Shell 多后端：本地沙盒 + 远程SSH） ============
+    // ★ v1.104 配置持久化到数据库（重启不丢）：内存作读缓存，读写都走 DB
 
     data class SshConfig(
         val name: String,

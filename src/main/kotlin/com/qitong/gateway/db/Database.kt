@@ -606,7 +606,7 @@ class Database(private val dbPath: String) {
                 )"""
             )
 
-            // ★ v1.103 SSH 配置持久化表（重启不丢；对齐 Agora Shell 多后端）
+            // ★ v1.104 SSH 配置持久化表（重启不丢；对齐 Agora Shell 多后端）
             st.execute(
                 """CREATE TABLE IF NOT EXISTS ssh_configs (
                     name TEXT PRIMARY KEY,
@@ -1390,7 +1390,7 @@ class Database(private val dbPath: String) {
 
     // ============ 更新历史（v85：前端/QQ/微信/qtai-sj 可查更新了啥） ============
 
-    /** ★ v1.103 幂等写入：同版本已存在则不重复插入（每次发版启动时同步最新条目到「关于页」） */
+    /** ★ v1.104 幂等写入：同版本已存在则不重复插入（每次发版启动时同步最新条目到「关于页」） */
     fun addUpdateLog(version: String, title: String, details: String, releasedAt: Long = System.currentTimeMillis()) {
         val exists = queryOne("SELECT COUNT(*) FROM update_logs WHERE version=?", version) ?: 0
         if (exists > 0) {
@@ -1415,9 +1415,10 @@ class Database(private val dbPath: String) {
             )
         }
 
-    /** ★ v1.103 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
+    /** ★ v1.104 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.104", "admin 页面 JS 语法错误修复", "修复 admin 页 SyntaxError（missing ) after argument list）：文件管理器重命名/删除按钮传文件名由引号转义改为 encodeURIComponent 传参、函数内 decodeURIComponent 还原；修复 fmLoad/fmGlob/fmRename/fmDelete 函数闭合结构错乱"),
             Triple("v1.103", "SSH持久化 + 文件管理增强 + Agent进度 + 每日体检", "SSH配置存数据库重启不丢；文件管理器新增重命名/删除（安全护栏）；QQ/微信多步执行显示第N步/共M步进度；启动预置每天8点 sys_health 体检任务（幂等）"),
             Triple("v1.102", "计划任务到期执行真动作", "定时任务 content 支持前缀分派——cmd:命令跑终端 / wf:工作流名触发工作流 / mail:收件人|主题|内容发邮件 / 默认纯提醒；到点自动执行并随心跳推送结果"),
             Triple("v1.101", "Agent 卡顿修复（说执行必返回）", "模型调用加总超时兜底（QQ 45s/微信 40s）——上游模型慢或挂起时快速返回处理超时提示，不再让用户干等，Agent 循环不会无限卡住"),
@@ -1527,7 +1528,7 @@ class Database(private val dbPath: String) {
         stmt("DELETE FROM todos WHERE id=? AND user_openid=?", id, userOpenid)
     }
 
-    // ============ SSH 配置持久化（v1.103：重启不丢，对齐 Agora 多后端） ============
+    // ============ SSH 配置持久化（v1.104：重启不丢，对齐 Agora 多后端） ============
 
     fun saveSshConfig(name: String, host: String, port: Int, username: String, password: String, privateKey: String = ""): Boolean {
         if (name.isBlank() || host.isBlank() || username.isBlank()) return false

@@ -33,7 +33,7 @@ object WeixinBotManager {
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(40, TimeUnit.SECONDS)
-        // ★ v1.103 总超时 40s：模型调用超时快速返回提示，防"说执行不返回"卡顿
+        // ★ v1.104 总超时 40s：模型调用超时快速返回提示，防"说执行不返回"卡顿
         .callTimeout(40, TimeUnit.SECONDS)
         .build()
     private val jsonCt = "application/json; charset=utf-8".toMediaType()
@@ -463,7 +463,7 @@ object WeixinBotManager {
                     }
                     val results = StringBuilder()
                     // ★ v82 并行工具执行（Hermes PARALLEL 理念落地）：独立调用并发跑，结果按序汇总
-                    // ★ v1.103 进度增强：显示「第 N 步/共 M 步」让用户看到整体进度
+                    // ★ v1.104 进度增强：显示「第 N 步/共 M 步」让用户看到整体进度
                     val totalSteps = calls.size
                     if (calls.size <= 1) {
                         // 单调用直接执行

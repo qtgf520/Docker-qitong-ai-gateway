@@ -223,6 +223,9 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v1.104（2026-10-06）· admin 页面 JS 语法错误修复
+- 🐛 **修复 admin 页面 SyntaxError**（`missing ) after argument list`）：文件管理器重命名/删除按钮 onclick 传文件名用引号转义嵌套破裂——全部改用 encodeURIComponent 传参、函数内 decodeURIComponent 还原，彻底告别引号地狱
+- 🔧 修复 fmLoad/fmGlob/fmRename/fmDelete 函数闭合结构错乱问题
 ### v1.103（2026-10-06）· SSH持久化 + 文件管理增强 + Agent进度 + 每日体检
 - 🔌 **SSH 配置持久化**：保存的连接写入数据库（ssh_configs 表），重启不丢
 - 📁 **文件管理器增强**：新增重命名/删除（带安全护栏，禁删关键目录）
