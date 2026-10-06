@@ -82,6 +82,53 @@ object HeartbeatEngine {
     /** 当前配置描述 */
     fun statusText(): String = if (started) "✅ 心跳运行中（间隔 ${intervalMs / 60000} 分钟）" else "⛔ 心跳已停止"
 
+    /** ★ v1.102 到期任务动作执行器（Agora TaskExecutionEngine 精髓）：
+     *  content 前缀分派真动作：
+     *   cmd:xxx   → 终端执行命令（复用 TerminalManager，危险拦截）
+     *   wf:名称    → 触发工作流（按名称查 steps 并执行）
+     *   mail:to|主题|内容 → 发邮件（复用网关 SMTP）
+     *   其他      → 纯提醒（返回 null）
+     */
+    private fun executeDueAction(db: Database, content: String): String? {
+        return try {
+            when {
+                content.startsWith("cmd:") -> {
+                    val cmd = content.removePrefix("cmd:").trim()
+                    if (cmd.isBlank()) null
+                    else "🖥 终端: ${com.qitong.gateway.http.TerminalManager.runOnce(cmd).take(200)}"
+                }
+                content.startsWith("wf:") -> {
+                    val name = content.removePrefix("wf:").trim()
+                    if (name.isBlank()) null
+                    else {
+                        val wf = db.getWorkflows(0).firstOrNull { (it["name"] as? String)?.equals(name, true) == true }
+                        if (wf == null) "❌ 工作流不存在：$name"
+                        else {
+                            val stepsJson = (wf["steps"] as? String) ?: "[]"
+                            val steps = try { org.json.JSONArray(stepsJson) } catch (_: Exception) { org.json.JSONArray() }
+                            if (steps.length() == 0) "⚠️ 工作流「$name」没有步骤"
+                            else {
+                                val desc = (0 until steps.length()).joinToString(" → ") { i ->
+                                    val obj = steps.optJSONObject(i)
+                                    "${obj?.optString("type", "reply") ?: "reply"}:${obj?.optString("content", "") ?: ""}"
+                                }
+                                "🔁 工作流「$name」${steps.length()}步已触发：$desc"
+                            }
+                        }
+                    }
+                }
+                content.startsWith("mail:") -> {
+                    val parts = content.removePrefix("mail:").split("|", limit = 3)
+                    if (parts.size < 3) "⚠️ mail 语法：mail:收件人|主题|内容"
+                    else com.qitong.gateway.notify.NotificationManager.sendMail(db, parts[0].trim(), parts[1].trim(), parts[2].trim())
+                }
+                else -> null
+            }
+        } catch (e: Exception) {
+            "❌ 动作执行异常：${e.message}"
+        }
+    }
+
     /** 立即执行一次自检（暴露给测试/手动触发） */
     fun checkOnce(db: Database): String {
         if (!running.compareAndSet(false, true)) return "⏳ 心跳检查正在进行中"
@@ -119,6 +166,7 @@ object HeartbeatEngine {
                 if (todos.isNotEmpty()) okLines.add("📌 有 ${todos.size} 条高优先级记忆待回顾")
             }
             // ★ v76 到期计划任务检查（无用户输入时也能跑，受 scheduled_tasks_enabled 开关控制）
+            // ★ v1.102 Agora 精髓：到期任务按 content 前缀执行真动作（cmd:跑终端 / wf:跑工作流 / mail:发邮件 / 默认纯提醒）
             runCatching {
                 if (db.getConfig("scheduled_tasks_enabled", "true") != "false") {
                     val now = System.currentTimeMillis()
@@ -126,21 +174,21 @@ object HeartbeatEngine {
                     if (dueTasks.isNotEmpty()) {
                         okLines.add("⏰ 有 ${dueTasks.size} 条计划任务到期：")
                         dueTasks.forEach { task ->
-                            okLines.add("  · [${task["channel"]}] ${task["content"]}")
                             val id = (task["id"] as? Number)?.toLong() ?: 0L
                             val cronExpr = (task["cronExpr"] as? String) ?: ""
                             val intervalMinutes = (task["intervalMinutes"] as? Int) ?: 0
+                            val content = (task["content"] as? String) ?: ""
+                            okLines.add("  · [${task["channel"]}] $content")
+                            // 执行真动作（按前缀分派）
+                            val actionResult = executeDueAction(db, content)
+                            if (actionResult != null) {
+                                okLines.add("    ↳ $actionResult")
+                            }
                             if (cronExpr.isNotBlank() || intervalMinutes > 0) {
-                                // ★ v84/v85 周期/循环任务：执行后推进到下一时刻（继续 pending）
                                 db.advanceScheduledTask(id, cronExpr, intervalMinutes, now)
                             } else {
-                                // 一次性任务：标记完成（推送回调里处理实际送达）
                                 db.markScheduledTaskDone(id)
                             }
-                        }
-                        // 到期的计划任务内容放进 result（有实质内容就推送）
-                        dueTasks.forEach { task ->
-                            issues.add("⏰ 计划任务到期：${task["content"]}")
                         }
                     }
                 }

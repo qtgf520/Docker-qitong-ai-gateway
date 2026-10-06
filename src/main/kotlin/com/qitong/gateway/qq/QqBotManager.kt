@@ -31,7 +31,7 @@ object QqBotManager {
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
-        // ★ v1.101 总超时 45s：模型调用超时后快速返回「处理超时」提示，不再让用户干等（防"说执行不返回"）
+        // ★ v1.102 总超时 45s：模型调用超时后快速返回「处理超时」提示，不再让用户干等（防"说执行不返回"）
         .callTimeout(45, TimeUnit.SECONDS)
         .build()
 
@@ -118,7 +118,7 @@ object QqBotManager {
                     val num = (1..100).random()
                     st["guess"] = num
                     st["guessTries"] = 0
-                    return "🎮 猜数字开始！已想好 1.101 的数，回复「猜 50」试猜～"
+                    return "🎮 猜数字开始！已想好 1.102 的数，回复「猜 50」试猜～"
                 }
                 if (t.startsWith("猜", true)) {
                     val n = t.substringAfter("猜").trim().toIntOrNull() ?: return "⚠️ 请输入数字，如「猜 50」"

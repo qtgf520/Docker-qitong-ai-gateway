@@ -33,7 +33,7 @@ object WeixinBotManager {
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(40, TimeUnit.SECONDS)
-        // ★ v1.101 总超时 40s：模型调用超时快速返回提示，防"说执行不返回"卡顿
+        // ★ v1.102 总超时 40s：模型调用超时快速返回提示，防"说执行不返回"卡顿
         .callTimeout(40, TimeUnit.SECONDS)
         .build()
     private val jsonCt = "application/json; charset=utf-8".toMediaType()
