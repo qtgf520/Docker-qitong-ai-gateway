@@ -34,11 +34,11 @@
 | 源码位置 | `src/main/kotlin/com/qitong/gateway/` |
 | 前端 | Kotlin 内联 HTML/JS（WebUi.kt 页面+CSS，AdminJs1~6.kt 前端逻辑） |
 | 构建工具 | 系统 gradle（9.1.0，**工作区没有 gradlew**，用 `gradle` 命令） |
-| 产物 | `build/libs/qitong-gateway-3.18.22-all.jar`（fatJar） |
+| 产物 | `build/libs/qitong-gateway-all.jar`（fatJar） |
 | 端口 | 18080 Web 后台 / 18889 网关 API |
 | 服务器 | 103.23.149.10，部署目录 `/opt/qitong-gateway/` |
 | GitHub | qtgf520/Docker-qitong-ai-gateway（本地 remote 已嵌 token，直接 push） |
-| 版本号格式 | `v3.18.22-N`（N 每次开发 +1，绝不重复） |
+| 版本号格式 | `v1.N`（N 从 1 开始每次开发 +1，绝不重复；2026-10-06 起弃用旧 3.18.22-N，全部迁移为 1.N） |
 
 ---
 
@@ -47,21 +47,28 @@
 ### 硬规则
 - **每次功能改动/修复/文档调整，必须先升版本号再部署**。顺序：升号 → 改码 → 编译 → 验证 → 部署
 - 当前基准版本见 `src/main/kotlin/com/qitong/gateway/model/Models.kt` 的 `val version`
+- **版本号格式（2026-10-06 起强制）**：`1.N`（N 从 1 开始递增：1.1、1.2、…、1.99、1.100…）
+  - 旧格式 `3.18.22-N` 已全部迁移为 `1.N`（3.18.22-1→1.1、3.18.22-2→1.2、…、3.18.22-99→1.99）
+  - **3.18.22 前缀已彻底移除**，现在版本号就是 `1.N`（如 v1.99）
+  - 以后每次升版本号：`1.99` → `1.100`（即 N 部分 +1）
 - 版本号分散在 **7 处**，全部要同步改：
-  1. `model/Models.kt:187` — `val version`
-  2. `Main.kt:102` — 文件头注释
-  3. `Main.kt:114` — 启动横幅
-  4. `Main.kt:186` — /health 接口
-  5. `Main.kt:1312` — 其他版本输出
-  6. `Main.kt:1913` — 其他版本输出
+  1. `model/Models.kt:188` — `val version`
+  2. `Main.kt:103` — 文件头注释
+  3. `Main.kt:115` — 启动横幅
+  4. `Main.kt:192` — /health 接口
+  5. `Main.kt:1708` — 其他版本输出
+  6. `Main.kt:2460` — 其他版本输出
   7. `WebUi.kt:12` — `private const val VER`
-  - 外加 `README.md` 更新日志（CHANGELOG 顶部插新条目）
-- **批量升级命令**：
+  - 外加 `README.md` 更新日志（CHANGELOG 顶部插新条目）+ `build.gradle.kts:10` `version`（jar 产物名）
+- **批量升级命令（新格式）**：
   ```bash
-  grep -rl '3.18.22-N' src/main/kotlin/ README.md | xargs sed -i 's/3.18.22-N/3.18.22-N+1/g'
+  # 从 1.99 升到 1.100：
+  grep -rl '1.99' src/main/kotlin/ README.md build.gradle.kts | xargs sed -i 's/1.99/1.100/g'
   ```
   ⚠️ 会连 `.bak`/备份文件一起改，无妨，最后清理备份即可。
-- CHANGELOG 条目格式：`### v3.18.22-N（日期）· 一句话主题` + 每条改动一行 `- xxx`
+  ⚠️ **注意**：批量替换必须用「精确旧版本号」替换（如 1.99 → 1.100），不要用通配/前缀模糊替换，避免误改历史版本号（如把 v1.9 改成 v1.100）。
+- CHANGELOG 条目格式：`### v1.N（日期）· 一句话主题` + 每条改动一行 `- xxx`
+- **发布版规则**：每个版本部署验证通过后，Git 提交推送时同步打 tag：`git tag v1.N` + `git push origin v1.N`（GitHub Release 用同名 tag）
 
 ---
 
@@ -91,7 +98,7 @@ gradle fatJar --rerun-tasks   # ★ 必须 --rerun-tasks！
 ### 血泪教训
 - **`--rerun-tasks` 必加**：不加的话 gradle 缓存会导致 AdminJs/WebUi 前端改动**不进 jar**，线上还是旧 UI，用户会炸
 - 编译成功标志：`BUILD SUCCESSFUL`
-- 产物：`build/libs/qitong-gateway-3.18.22-all.jar`
+- 产物：`build/libs/qitong-gateway-all.jar`
 - 编译前确认 `version` 已升、无 `git status` 未提交的临时测试文件
 
 ---
@@ -128,8 +135,8 @@ docker compose up -d --build    # ★ 必须 --build，否则不 COPY 新 jar！
 ### ① 后端接口验证（服务器上）
 ```bash
 curl -s http://localhost:18889/health
-# 期望 {"status":"ok","version":"3.18.22-N",...}
-curl -s http://localhost:18080/ | grep -o '3.18.22-N' | head -1
+# 期望 {"status":"ok","version":"N",...}
+curl -s http://localhost:18080/ | grep -o 'N' | head -1
 docker ps --filter name=qitong-ai-gateway --format '{{.Status}}'   # 要 (healthy)
 ```
 
@@ -137,7 +144,7 @@ docker ps --filter name=qitong-ai-gateway --format '{{.Status}}'   # 要 (health
 ```bash
 # admin 页面是内联 JS，直接抓下来 grep 关键字符串即可验证前端改动是否进 jar
 curl -s -m 30 http://103.23.149.10:18080/admin -o /tmp/check.html
-grep -o '3.18.22-N' /tmp/check.html | head -1          # 版本号
+grep -o 'N' /tmp/check.html | head -1          # 版本号
 grep -c '要删除的类名' /tmp/check.html                  # 应为 0（清理验证）
 grep -c '要新增的类名' /tmp/check.html                  # 应 >0（新增验证）
 grep -c 'data-page="skills"' /tmp/check.html           # 菜单入口应 =1
@@ -241,5 +248,5 @@ git push origin master
 - [ ] 测试脚本/备份已清理（7天旧备份自动清）
 - [ ] 记忆已存档（extended_memory_tools:create_memory）
 
-> 文档版本：v1（2026-09-29 建立，v3.18.22-29 之后）
+> 文档版本：v1（2026-09-29 建立，v1.29 之后）
 > 更新规则：每次踩新坑、改流程，第一时间补进本文件并 git 提交。
