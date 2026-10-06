@@ -725,6 +725,7 @@ function sshExec(){
   var el=$('sshOut'); if(el) el.textContent=r.code===0?(r.data&&r.data.output||''):(r.msg||'执行失败');
   cmd.value='';
  });
+}
 function termLoad(){
  api('/api/terminal/sessions').then(function(r){
   var el=$('termList'); if(!el) return;
@@ -761,6 +762,7 @@ function termAiHelp(){
      '<div style="font-size:12px;color:var(--muted);margin-top:8px">会话：'+esc(r.data.sessionId)+'（可在下方终端列表打开继续操作）</div>');
    } else toast(r.msg||'执行失败', false);
   });
+ });
  });
 }
 function termSetTtl(id){
