@@ -31,7 +31,7 @@ object QqBotManager {
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
-        // ★ v1.102 总超时 45s：模型调用超时后快速返回「处理超时」提示，不再让用户干等（防"说执行不返回"）
+        // ★ v1.103 总超时 45s：模型调用超时后快速返回「处理超时」提示，不再让用户干等（防"说执行不返回"）
         .callTimeout(45, TimeUnit.SECONDS)
         .build()
 
@@ -118,7 +118,7 @@ object QqBotManager {
                     val num = (1..100).random()
                     st["guess"] = num
                     st["guessTries"] = 0
-                    return "🎮 猜数字开始！已想好 1.102 的数，回复「猜 50」试猜～"
+                    return "🎮 猜数字开始！已想好 1.103 的数，回复「猜 50」试猜～"
                 }
                 if (t.startsWith("猜", true)) {
                     val n = t.substringAfter("猜").trim().toIntOrNull() ?: return "⚠️ 请输入数字，如「猜 50」"
@@ -183,6 +183,14 @@ object QqBotManager {
         this.gatewayPort = gatewayPort
         // 启动提醒调度器（定时触发到点提醒）
         ensureReminderScheduler()
+        // ★ v1.103 预置每日自动体检任务（幂等：不存在才创建；每天8点跑 sys_health 并推送 QQ群+微信）
+        runCatching {
+            val existing = database.getScheduledTasks(channel = "qq", status = "pending")
+            if (existing.none { (it["content"] as? String)?.startsWith("cmd:sys_health") == true }) {
+                database.addScheduledTask("qq", "system", "action", "cmd:sys_health", 0, cronExpr = "0 8 * * *")
+                println("[QQBot] 已预置每日自动体检任务（每天8点 cmd:sys_health）")
+            }
+        }.onFailure { e -> System.err.println("[QQBot] 预置体检任务失败: ${e.message}") }
         // 记忆自动过期：每 6 小时清理一次 30 天前的 QQ 记忆
         scope.launch(Dispatchers.IO) {
             runCatching { db.cleanOldQqMemories(30) }
@@ -1383,20 +1391,22 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     if (calls.isEmpty()) break
                     val results = StringBuilder()
                     // ★ v82 并行工具执行（Hermes 理念落地）：独立调用并发跑，结果按序汇总
+                    // ★ v1.103 进度增强：显示「第 N 步/共 M 步」让用户看到整体进度
+                    val totalSteps = calls.size
                     if (calls.size <= 1) {
                         val (fn, args) = calls[0]
                         val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
-                        smartSend("💭 qtai-sj 正在调用：${fn}(${argTxt}) …", false)
+                        smartSend("💭 qtai-sj 正在调用（第 $loopGuard 步/共 ${(loopGuard + totalSteps).coerceAtMost(8)} 步）：${fn}(${argTxt}) …", false)
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
                         results.append("【$fn 执行结果】\n$r")
                         // ★ v83 不截断：完整结果交给 smartSend 内置分段（超长自动多条）
                         smartSend("✅ ${fn}：\n$r", false)
                         db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args", 0)
                     } else {
-                        // 多调用并行
+                        // 多调用并行（一批内多个独立调用并发跑）
                         calls.forEach { (fn, args) ->
                             val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
-                            smartSend("💭 qtai-sj 并行处理：${fn}(${argTxt}) …", false)
+                            smartSend("💭 qtai-sj 并行批处理（第 $loopGuard 轮，共 ${calls.size} 个）：${fn}(${argTxt}) …", false)
                         }
                         val executor = java.util.concurrent.Executors.newFixedThreadPool(calls.size.coerceAtMost(5))
                         try {

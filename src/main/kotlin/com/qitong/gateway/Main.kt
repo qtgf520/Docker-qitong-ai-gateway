@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.102
+ * 綦桐AI网关 · Docker 服务器版 v1.103
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.102    ║
+        ║   綦桐AI网关 · Docker Server v1.103    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -122,6 +122,8 @@ fun main(args: Array<String>) {
     val database = Database(dbPath)
     // ★ v85 播种更新历史（首次启动写入，前端/QQ/微信/qtai-sj 可查）
     runCatching { database.seedUpdateLogsIfEmpty() }
+    // ★ v1.103 SSH 配置持久化：启动时绑定 DB（加载已保存的 SSH 连接，重启不丢）
+    runCatching { com.qitong.gateway.http.TerminalManager.bindSshDb(database) }
 
     val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
     if (database.getConfig("auto_failover", "true").toBoolean()) {
@@ -189,7 +191,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.102"))
+                put("version", JsonPrimitive("1.103"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1025,7 +1027,7 @@ fun Application.moduleWeb(database: Database) {
                 else com.qitong.gateway.http.TerminalManager.close(id)
             AdminApi.ok(call, null, if (closed) "终端已关闭" else "会话不存在")
         }
-        // ===== ★ v1.102 终端文件管理（真实服务器目录，即容器挂载卷） =====
+        // ===== ★ v1.103 终端文件管理（真实服务器目录，即容器挂载卷） =====
         get("/api/terminal/files") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
@@ -1064,7 +1066,31 @@ fun Application.moduleWeb(database: Database) {
             if (!ok) { AdminApi.fail(call, out, 400); return@post }
             AdminApi.ok(call, mapOf("output" to out), "ok")
         }
-        // ===== ★ v1.102 SSH 远程终端（对齐 Agora：本地沙盒 + 远程SSH 多后端） =====
+        // ★ v1.103 文件重命名/删除（文件管理器增强）
+        post("/api/terminal/file/rename") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val path = body["path"]?.jsonPrimitive?.content.orEmpty()
+            val newName = body["newName"]?.jsonPrimitive?.content.orEmpty()
+            if (path.isBlank() || newName.isBlank()) { AdminApi.fail(call, "路径/新名称不能为空", 400); return@post }
+            val (ok, out) = com.qitong.gateway.http.TerminalManager.renameFile(path, newName)
+            if (!ok) { AdminApi.fail(call, out, 400); return@post }
+            database.addOpLog(u.id, u.username, "终端文件", "重命名 $path → $newName", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("output" to out), out)
+        }
+        post("/api/terminal/file/delete") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val path = body["path"]?.jsonPrimitive?.content.orEmpty()
+            if (path.isBlank()) { AdminApi.fail(call, "路径为空", 400); return@post }
+            val (ok, out) = com.qitong.gateway.http.TerminalManager.deleteFile(path)
+            if (!ok) { AdminApi.fail(call, out, 400); return@post }
+            database.addOpLog(u.id, u.username, "终端文件", "删除 $path", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("output" to out), out)
+        }
+        // ===== ★ v1.103 SSH 远程终端（对齐 Agora：本地沙盒 + 远程SSH 多后端） =====
         get("/api/terminal/ssh/list") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
@@ -1793,7 +1819,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.102"))
+                put("version", JsonPrimitive("1.103"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2545,7 +2571,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.102"))
+                    put("version", JsonPrimitive("1.103"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

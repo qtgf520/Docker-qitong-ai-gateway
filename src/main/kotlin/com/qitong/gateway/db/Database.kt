@@ -605,6 +605,19 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL DEFAULT 0
                 )"""
             )
+
+            // ★ v1.103 SSH 配置持久化表（重启不丢；对齐 Agora Shell 多后端）
+            st.execute(
+                """CREATE TABLE IF NOT EXISTS ssh_configs (
+                    name TEXT PRIMARY KEY,
+                    host TEXT NOT NULL DEFAULT '',
+                    port INTEGER NOT NULL DEFAULT 22,
+                    username TEXT NOT NULL DEFAULT '',
+                    password TEXT NOT NULL DEFAULT '',
+                    private_key TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
             // 旧库迁移：缓存表已存在则补列（无则忽略）
             runCatching { st.executeUpdate("ALTER TABLE response_cache ADD COLUMN hit_count INTEGER NOT NULL DEFAULT 0") }
         }
@@ -1377,7 +1390,7 @@ class Database(private val dbPath: String) {
 
     // ============ 更新历史（v85：前端/QQ/微信/qtai-sj 可查更新了啥） ============
 
-    /** ★ v1.102 幂等写入：同版本已存在则不重复插入（每次发版启动时同步最新条目到「关于页」） */
+    /** ★ v1.103 幂等写入：同版本已存在则不重复插入（每次发版启动时同步最新条目到「关于页」） */
     fun addUpdateLog(version: String, title: String, details: String, releasedAt: Long = System.currentTimeMillis()) {
         val exists = queryOne("SELECT COUNT(*) FROM update_logs WHERE version=?", version) ?: 0
         if (exists > 0) {
@@ -1402,9 +1415,10 @@ class Database(private val dbPath: String) {
             )
         }
 
-    /** ★ v1.102 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
+    /** ★ v1.103 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.103", "SSH持久化 + 文件管理增强 + Agent进度 + 每日体检", "SSH配置存数据库重启不丢；文件管理器新增重命名/删除（安全护栏）；QQ/微信多步执行显示第N步/共M步进度；启动预置每天8点 sys_health 体检任务（幂等）"),
             Triple("v1.102", "计划任务到期执行真动作", "定时任务 content 支持前缀分派——cmd:命令跑终端 / wf:工作流名触发工作流 / mail:收件人|主题|内容发邮件 / 默认纯提醒；到点自动执行并随心跳推送结果"),
             Triple("v1.101", "Agent 卡顿修复（说执行必返回）", "模型调用加总超时兜底（QQ 45s/微信 40s）——上游模型慢或挂起时快速返回处理超时提示，不再让用户干等，Agent 循环不会无限卡住"),
             Triple("v1.100", "UI修复 + 终端增强 + 指南同步", "修复移动端侧边栏「关于我们」被底部导航遮挡、终端「永久」时长被误存30分钟；关于页更新日志与 README 同步全量展示；终端新增文件管理/共享存储挂载增强"),
@@ -1511,6 +1525,47 @@ class Database(private val dbPath: String) {
 
     fun deleteTodo(id: Long, userOpenid: String) {
         stmt("DELETE FROM todos WHERE id=? AND user_openid=?", id, userOpenid)
+    }
+
+    // ============ SSH 配置持久化（v1.103：重启不丢，对齐 Agora 多后端） ============
+
+    fun saveSshConfig(name: String, host: String, port: Int, username: String, password: String, privateKey: String = ""): Boolean {
+        if (name.isBlank() || host.isBlank() || username.isBlank()) return false
+        stmt(
+            """INSERT INTO ssh_configs (name,host,port,username,password,private_key,created_at) VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(name) DO UPDATE SET host=excluded.host, port=excluded.port, username=excluded.username,
+               password=excluded.password, private_key=excluded.private_key""",
+            name, host, port, username, password, privateKey, System.currentTimeMillis()
+        )
+        return true
+    }
+
+    fun listSshConfigs(): List<Map<String, Any?>> =
+        query("SELECT * FROM ssh_configs ORDER BY created_at DESC").map {
+            mapOf(
+                "name" to (it["name"] as? String ?: ""),
+                "host" to (it["host"] as? String ?: ""),
+                "port" to ((it["port"] as? Number)?.toInt() ?: 22),
+                "username" to (it["username"] as? String ?: ""),
+                "hasPassword" to ((it["password"] as? String ?: "").isNotBlank())
+            )
+        }
+
+    fun getSshConfig(name: String): Map<String, Any?>? =
+        query("SELECT * FROM ssh_configs WHERE name=?", name).firstOrNull()?.let {
+            mapOf(
+                "name" to (it["name"] as? String ?: ""),
+                "host" to (it["host"] as? String ?: ""),
+                "port" to ((it["port"] as? Number)?.toInt() ?: 22),
+                "username" to (it["username"] as? String ?: ""),
+                "password" to (it["password"] as? String ?: ""),
+                "privateKey" to (it["private_key"] as? String ?: "")
+            )
+        }
+
+    fun deleteSshConfig(name: String): Boolean {
+        stmt("DELETE FROM ssh_configs WHERE name=?", name)
+        return true
     }
 
     // ============ 会话搜索（v88：跨对话检索历史记忆，对齐 session_search） ============

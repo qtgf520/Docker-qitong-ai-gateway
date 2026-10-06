@@ -33,7 +33,7 @@ object WeixinBotManager {
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(40, TimeUnit.SECONDS)
-        // ★ v1.102 总超时 40s：模型调用超时快速返回提示，防"说执行不返回"卡顿
+        // ★ v1.103 总超时 40s：模型调用超时快速返回提示，防"说执行不返回"卡顿
         .callTimeout(40, TimeUnit.SECONDS)
         .build()
     private val jsonCt = "application/json; charset=utf-8".toMediaType()
@@ -463,11 +463,13 @@ object WeixinBotManager {
                     }
                     val results = StringBuilder()
                     // ★ v82 并行工具执行（Hermes PARALLEL 理念落地）：独立调用并发跑，结果按序汇总
+                    // ★ v1.103 进度增强：显示「第 N 步/共 M 步」让用户看到整体进度
+                    val totalSteps = calls.size
                     if (calls.size <= 1) {
                         // 单调用直接执行
                         val (fn, args) = calls[0]
                         val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
-                        send("💭 我在帮你处理，正在调用 ${fn}(${argTxt})…")
+                        send("💭 我在帮你处理（第 $loop 步/共 ${(loop + totalSteps).coerceAtMost(8)} 步），正在调用 ${fn}(${argTxt})…")
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
                         results.append("【$fn 执行结果】\n$r\n")
                         // ★ v83 不截断：完整结果交给 send 内置分段（超长自动多条）
@@ -477,7 +479,7 @@ object WeixinBotManager {
                         // 多调用并行：先统一推送思考（用户看到一次批次），再并发执行，结果按序推送
                         calls.forEach { (fn, args) ->
                             val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
-                            send("💭 我在并行处理：${fn}(${argTxt})…")
+                            send("💭 我在并行批处理（第 $loop 轮，共 ${calls.size} 个）：${fn}(${argTxt})…")
                         }
                         val executor = java.util.concurrent.Executors.newFixedThreadPool(calls.size.coerceAtMost(5))
                         try {

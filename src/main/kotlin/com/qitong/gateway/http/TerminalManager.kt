@@ -195,7 +195,7 @@ object TerminalManager {
         }
     }
 
-    // ============ ★ v1.102 文件管理（对齐 Agora 文件工具：读/写/列目录/搜索） ============
+    // ============ ★ v1.103 文件管理（对齐 Agora 文件工具：读/写/列目录/搜索） ============
 
     /** 列出目录内容（真实服务器目录，即容器挂载卷），返回 名称/类型/大小/修改时间 */
     fun listDir(path: String): Pair<Boolean, String> {
@@ -251,6 +251,43 @@ object TerminalManager {
         }
     }
 
+    /** ★ v1.103 重命名文件/目录 */
+    fun renameFile(path: String, newName: String): Pair<Boolean, String> {
+        return try {
+            val f = java.io.File(path)
+            if (!f.exists()) return false to "路径不存在：$path"
+            if (newName.isBlank()) return false to "新名称不能为空"
+            val parent = f.parentFile ?: return false to "无法定位父目录"
+            val dest = java.io.File(parent, newName)
+            if (dest.exists()) return false to "目标已存在：$newName"
+            if (f.renameTo(dest)) true to "✅ 已重命名：${f.name} → $newName"
+            else false to "重命名失败（可能是权限或跨设备）"
+        } catch (e: Exception) {
+            false to "重命名失败：${e.message}"
+        }
+    }
+
+    /** ★ v1.103 删除文件/空目录（危险拦截：禁止删 / 根、/data 根、工作区根） */
+    fun deleteFile(path: String): Pair<Boolean, String> {
+        return try {
+            val f = java.io.File(path)
+            if (!f.exists()) return false to "路径不存在：$path"
+            // 安全护栏：禁止删除关键根目录
+            val abs = f.absolutePath
+            if (abs == "/" || abs == "/data" || abs == "/opt" || abs.startsWith("/data/qitong")) {
+                return false to "⛔ 出于安全考虑，禁止删除该路径：$abs"
+            }
+            if (f.isDirectory) {
+                val children = f.listFiles()?.size ?: 0
+                if (children > 0) return false to "目录非空（${children}项），请先清空或用终端 rm"
+            }
+            if (f.delete()) true to "🗑 已删除：${f.name}"
+            else false to "删除失败（权限不足或文件占用）"
+        } catch (e: Exception) {
+            false to "删除失败：${e.message}"
+        }
+    }
+
     /** 搜索文件名（对齐 Agora fileGlob） */
     fun globFiles(basePath: String, pattern: String, depth: Int = 3): Pair<Boolean, String> {
         return try {
@@ -273,7 +310,8 @@ object TerminalManager {
         }
     }
 
-    // ============ ★ v1.102 SSH 远程连接（对齐 Agora Shell 多后端：本地沙盒 + 远程SSH） ============
+    // ============ ★ v1.103 SSH 远程连接（对齐 Agora Shell 多后端：本地沙盒 + 远程SSH） ============
+    // ★ v1.103 配置持久化到数据库（重启不丢）：内存作读缓存，读写都走 DB
 
     data class SshConfig(
         val name: String,
@@ -284,12 +322,35 @@ object TerminalManager {
         val privateKey: String = ""
     )
 
+    @Volatile
+    private var sshDb: com.qitong.gateway.db.Database? = null
     private val sshConfigs = ConcurrentHashMap<String, SshConfig>()
 
-    /** 保存 SSH 配置（name 唯一，重复覆盖） */
+    /** 绑定数据库（Main 启动时调用，用于持久化 SSH 配置） */
+    fun bindSshDb(db: com.qitong.gateway.db.Database) {
+        sshDb = db
+        // 启动时从 DB 加载已保存的 SSH 配置到内存缓存
+        runCatching {
+            db.listSshConfigs().forEach { m ->
+                val name = (m["name"] as? String) ?: return@forEach
+                sshConfigs[name] = SshConfig(
+                    name = name,
+                    host = (m["host"] as? String) ?: "",
+                    port = (m["port"] as? Number)?.toInt() ?: 22,
+                    username = (m["username"] as? String) ?: "",
+                    password = if ((m["hasPassword"] as? Boolean) == true) (db.getSshConfig(name)?.get("password") as? String ?: "") else ""
+                )
+            }
+            println("[Terminal] SSH 配置已从数据库加载 ${sshConfigs.size} 条")
+        }.onFailure { e -> System.err.println("[Terminal] SSH 配置加载失败: ${e.message}") }
+    }
+
+    /** 保存 SSH 配置（name 唯一，重复覆盖；写内存 + 写 DB 持久化） */
     fun saveSshConfig(cfg: SshConfig): Boolean {
         if (cfg.name.isBlank() || cfg.host.isBlank() || cfg.username.isBlank()) return false
         sshConfigs[cfg.name] = cfg
+        // 持久化到 DB（重启不丢）
+        runCatching { sshDb?.saveSshConfig(cfg.name, cfg.host, cfg.port, cfg.username, cfg.password, cfg.privateKey) }
         return true
     }
 
@@ -297,7 +358,15 @@ object TerminalManager {
         mapOf("name" to it.name, "host" to it.host, "port" to it.port, "username" to it.username, "hasPassword" to it.password.isNotBlank())
     }
 
-    fun deleteSshConfig(name: String): Boolean = sshConfigs.remove(name) != null
+    /** 删除 SSH 配置（内存 + DB） */
+    fun deleteSshConfig(name: String): Boolean {
+        sshConfigs.remove(name)
+        runCatching { sshDb?.deleteSshConfig(name) }
+        return true
+    }
+
+    /** 获取完整配置（含密码，供执行用） */
+    private fun getSshConfig(name: String): SshConfig? = sshConfigs[name]
 
     /** 通过 SSH 执行远程命令（复用 sshpass；工作目录可指定，0=默认家目录） */
     fun sshExec(cfgName: String, cmd: String, workdir: String = ""): Pair<Boolean, String> {

@@ -563,7 +563,7 @@ loaders.terminal = function(){
   '<div id="termList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  termLoad();
 };
-// ★ v1.102 终端文件管理（真实服务器目录 = 容器挂载卷，像文件管理器一样浏览/预览/编辑）
+// ★ v1.103 终端文件管理（真实服务器目录 = 容器挂载卷，像文件管理器一样浏览/预览/编辑）
 function termFiles(){
  var cur = '/data/qitong';
  openModal('📁 终端文件管理器', '<div class="form-row"><label>当前路径</label><div style="display:flex;gap:6px"><input class="input" id="fmPath" value="'+cur+'" style="flex:1;font-family:monospace" onkeydown="if(event.key===\'Enter\')fmLoad()"><button class="btn" onclick="fmLoad()">打开</button><button class="btn-ghost" onclick="fmHome()">🏠</button></div></div>'+
@@ -584,8 +584,12 @@ function fmLoad(){
   el.innerHTML=lines.map(function(l){
    var isDir=l.startsWith('📁');
    var name=l.substring(2).split('\t')[0];
+   var ops = isDir
+    ? '<span style="color:var(--muted);font-size:10px;margin-left:6px">[文件夹]</span>'
+    : '<button class="btn-ghost" style="padding:0 4px;font-size:10px;margin-left:6px" onclick="fmRename(\''+esc(name.replace(/\'/g,"\\'"))+'\')">✏️重命名</button>'+
+      '<button class="btn-ghost danger" style="padding:0 4px;font-size:10px" onclick="fmDelete(\''+esc(name.replace(/\'/g,"\\'"))+'\')">🗑删除</button>';
    if(isDir) return '<div style="color:#67e8f9;cursor:pointer" onclick="fmGo(\''+esc(name.replace(/\'/g,"\\'"))+'\')">'+esc(l)+'</div>';
-   return '<div style="cursor:pointer" onclick="fmRead(\''+esc(name.replace(/\'/g,"\\'"))+'\')" title="点击预览">'+esc(l)+'</div>';
+   return '<div style="cursor:pointer" onclick="fmRead(\''+esc(name.replace(/\'/g,"\\'"))+'\')" title="点击预览">'+esc(l)+ops+'</div>';
   }).join('');
  });
 }
@@ -628,7 +632,28 @@ function fmGlob(){
   if(r.code===0){ el.innerHTML='<div style="color:#67e8f9">'+esc(r.data.output||'')+'</div>'; } else { el.textContent=r.msg; }
  });
 }
-// ★ v1.102 SSH 远程终端管理（对齐 Agora 多后端）
+// ★ v1.103 文件重命名
+function fmRename(name){
+ var p=$('fmPath'); if(!p) return;
+ var cur=p.value.trim(); if(!cur.endsWith('/')) cur+='/';
+ var oldName=cur+name;
+ openModal('✏️ 重命名 '+esc(name), '<div class="form-row"><label>新名称</label><input class="input" id="fmRenameNew" value="'+esc(name)+'"></div>', function(){
+  var nn=$('fmRenameNew').value.trim(); if(!nn){ toast('新名称不能为空',false); return; }
+  api('/api/terminal/file/rename',{method:'POST',body:{path:oldName,newName:nn}}).then(function(r){
+   toast(r.msg||(r.code===0?'已重命名':'重命名失败'), r.code===0); if(r.code===0) fmLoad();
+  });
+ });
+}
+// ★ v1.103 文件删除（确认后）
+function fmDelete(name){
+ var p=$('fmPath'); if(!p) return;
+ var cur=p.value.trim(); if(!cur.endsWith('/')) cur+='/';
+ if(!confirm('确定删除文件「'+name+'」？此操作不可撤销！')) return;
+ api('/api/terminal/file/delete',{method:'POST',body:{path:cur+name}}).then(function(r){
+  toast(r.msg||(r.code===0?'已删除':'删除失败'), r.code===0); if(r.code===0) fmLoad();
+ });
+}
+// ★ v1.103 SSH 远程终端管理（对齐 Agora 多后端）
 function termSsh(){
  openModal('🔌 SSH 远程终端', '<div class="form-row"><label>保存的连接</label><select class="input" id="sshSel" onchange="sshSelect()"><option value="">--- 选择已保存的连接 ---</option></select></div>'+
   '<div style="display:flex;gap:6px;margin:8px 0"><input class="input" id="sshName" placeholder="连接名（如 我的服务器）" style="flex:1;font-size:12px"><input class="input" id="sshHost" placeholder="主机 IP" style="width:130px;font-size:12px"><input class="input" id="sshPort" value="22" style="width:60px;font-size:12px"></div>'+
@@ -735,7 +760,7 @@ function termSetTtl(id){
  openModal('设置会话时长', '<div class="form-row"><label>无操作保留时长</label><select class="input" id="ttlSel">'+
   '<option value="0">永久（不自动清理）</option><option value="30" selected>30分钟</option><option value="60">1小时</option>'+
   '<option value="180">3小时</option><option value="720">12小时</option><option value="1440">24小时</option></select></div>', function(){
-  // ★ v1.102 修复：0(永久) 被 `parseInt||30` 误转成 30——用 isNaN 判断
+  // ★ v1.103 修复：0(永久) 被 `parseInt||30` 误转成 30——用 isNaN 判断
   var ttlVal = parseInt($('ttlSel').value, 10);
   ttlVal = isNaN(ttlVal) ? 30 : ttlVal;
   api('/api/terminal/set-ttl',{method:'POST',body:{id:id, ttlMinutes: ttlVal}}).then(function(r){
@@ -748,7 +773,7 @@ function termCreate(){
   '<div class="form-row"><label>保留时长</label><select class="input" id="termTtl">'+
   '<option value="30" selected>30分钟（默认）</option><option value="0">永久（不清理）</option><option value="60">1小时</option>'+
   '<option value="180">3小时</option><option value="720">12小时</option><option value="1440">24小时</option></select></div>', function(){
-  // ★ v1.102 修复：0(永久) 被 `parseInt||30` 误转成 30——用 isNaN 判断
+  // ★ v1.103 修复：0(永久) 被 `parseInt||30` 误转成 30——用 isNaN 判断
   var ttlVal = parseInt($('termTtl').value, 10);
   ttlVal = isNaN(ttlVal) ? 30 : ttlVal;
   api('/api/terminal/create',{method:'POST',body:{label:$('termLabel').value.trim(), ttlMinutes: ttlVal}}).then(function(r){
