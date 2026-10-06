@@ -239,6 +239,42 @@ object QqBotManager {
             }
             com.qitong.gateway.sandbox.HeartbeatEngine.start(database)
         }
+        // ★ v98 待办提醒调度器：每 5 秒扫到期待办，主动推送 QQ 群 + 微信（用户设置了 remind_minutes 的待办到点提醒，对齐心跳双通道）
+        scope.launch(Dispatchers.IO) {
+            while (true) {
+                kotlinx.coroutines.delay(5000)
+                runCatching {
+                    val due = database.getDueTodoReminders(System.currentTimeMillis())
+                    if (due.isNotEmpty()) {
+                        val sb = StringBuilder("⏰ 待办提醒：\n")
+                        due.forEach { t ->
+                            val content = (t["content"] as? String) ?: ""
+                            val tid = (t["id"] as? Number)?.toLong() ?: 0L
+                            if (content.isNotBlank()) sb.append("· #$tid $content\n")
+                            database.markTodoReminded(tid)
+                        }
+                        val msg = sb.toString().trim()
+                        if (msg.isNotBlank()) {
+                            // QQ 群推送
+                            val bots = database.getQqBots().filter { (it["enabled"] as? Boolean) == true }
+                            if (bots.isNotEmpty()) {
+                                val b = botFromRow(bots.first())
+                                val at = api.getAccessToken(b)
+                                if (!at.isNullOrBlank()) {
+                                    val groups = database.getQqGroups()
+                                    if (groups.isNotEmpty()) {
+                                        val gid = (groups.first()["groupOpenid"] as? String).orEmpty()
+                                        if (gid.isNotBlank()) api.sendGroupMessage(b, at, gid, msg, null)
+                                    }
+                                }
+                            }
+                            // 微信双通道推送
+                            com.qitong.gateway.weixin.WeixinBotManager.broadcastAll(msg)
+                        }
+                    }
+                }.onFailure { e -> System.err.println("[QQBot] 待办提醒检查异常: ${e.message}") }
+            }
+        }
     }
 
     private fun botFromRow(row: Map<String, Any?>): QqBot = QqBot(

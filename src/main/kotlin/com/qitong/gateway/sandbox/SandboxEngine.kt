@@ -400,10 +400,19 @@ $KNOWLEDGE_JSON
                 }
                 "todo_add" -> {
                     val content = args["content"] ?: ""
-                    if (content.isBlank()) "⚠️ 语法：todo_add(content=待办内容)"
+                    // ★ v98 待办提醒：可选 remind_minutes（多少分钟后提醒）/ remind_at 时间戳
+                    val remindAt = (args["remind_at"]?.toLongOrNull() ?: 0).let { ts ->
+                        if (ts > 0) ts
+                        else {
+                            val minutes = args["remind_minutes"]?.toLongOrNull() ?: 0
+                            if (minutes > 0) System.currentTimeMillis() + minutes * 60_000L else 0L
+                        }
+                    }
+                    if (content.isBlank()) "⚠️ 语法：todo_add(content=待办内容, remind_minutes=可选多少分钟后提醒)"
                     else {
-                        val id = db.addTodo(userId.toString(), channel, content)
-                        "✅ 待办已添加 #$id：$content（发 todo_list 查看）"
+                        val id = db.addTodo(userId.toString(), channel, content, remindAt)
+                        if (remindAt > 0) "✅ 待办已添加 #$id：$content\n⏰ ${args["remind_minutes"] ?: "到点"}后我会提醒你（发 todo_list 查看）"
+                        else "✅ 待办已添加 #$id：$content（发 todo_list 查看）"
                     }
                 }
                 "todo_list" -> {

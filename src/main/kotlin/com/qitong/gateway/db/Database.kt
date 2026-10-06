@@ -592,6 +592,10 @@ class Database(private val dbPath: String) {
                     done_at INTEGER NOT NULL DEFAULT 0
                 )"""
             )
+            // ★ v98 旧库迁移：补 remind_at 列（待办到点提醒，0=不提醒）
+            runCatching { st.executeUpdate("ALTER TABLE todos ADD COLUMN remind_at INTEGER NOT NULL DEFAULT 0") }
+            // 补 remind_sent 列（已推送标记，避免重复推）
+            runCatching { st.executeUpdate("ALTER TABLE todos ADD COLUMN remind_sent INTEGER NOT NULL DEFAULT 0") }
 
             // ★ v92 响应缓存表（同请求短时间命中直接返回，省 token 省延迟；key=model+messages哈希）
             st.execute(
@@ -1394,7 +1398,7 @@ class Database(private val dbPath: String) {
     fun seedUpdateLogsIfEmpty() {
         if (queryOne("SELECT COUNT(*) FROM update_logs") ?: 0 > 0) return
         val logs = listOf(
-            Triple("v3.18.22-97", "工作流模板市场 + 沙盒函数兼容", "后台工作流页新增模板市场（每日网关体检/余额报告/模型速查）一键创建；工作流/技能里的 skill 步骤支持沙盒函数名（sys_health/cache_stats/update_logs 等）"),
+            Triple("v3.18.22-98", "工作流模板市场 + 沙盒函数兼容", "后台工作流页新增模板市场（每日网关体检/余额报告/模型速查）一键创建；工作流/技能里的 skill 步骤支持沙盒函数名（sys_health/cache_stats/update_logs 等）"),
             Triple("v3.18.22-94", "技能市场 + 自定义技能真执行", "后台技能页新增技能市场（10个常用技能包一键安装）；修复自定义技能命中只发文本不执行的bug——按动作类型真执行（技能编码/沙盒函数/固定回复/工作流）"),
             Triple("v3.18.22-93", "响应缓存后台管理", "设置页新增启用响应缓存开关+缓存统计按钮（实时看条数/命中次数/一键清空），新增缓存统计与清理接口"),
             Triple("v3.18.22-92", "网关增强：响应缓存+记忆闭环+技能自进化", "相同请求5分钟缓存命中直接返回（实测快480倍）；微信qtai-sj模式也沉淀长期记忆；skill_auto_learn模型完成任务主动沉淀可复用技能；SYSTEM_PROMPT新增自进化引导"),
@@ -1445,14 +1449,30 @@ class Database(private val dbPath: String) {
         else stmt("UPDATE scheduled_tasks SET status='cancelled' WHERE id=?", id)
     }
 
-    // ============ 待办任务（v88：QQ/微信/qtai-sj 通用） ============
+    // ============ 待办任务（v88：QQ/微信/qtai-sj 通用；v98 加到点提醒） ============
 
-    fun addTodo(userOpenid: String, channel: String, content: String): Long {
+    fun addTodo(userOpenid: String, channel: String, content: String, remindAt: Long = 0): Long {
         stmt(
-            "INSERT INTO todos (user_openid,channel,content,done,created_at) VALUES (?,?,?,0,?)",
-            userOpenid, channel, content, System.currentTimeMillis()
+            "INSERT INTO todos (user_openid,channel,content,done,created_at,remind_at) VALUES (?,?,?,0,?,?)",
+            userOpenid, channel, content, System.currentTimeMillis(), remindAt
         )
         return lastInsertId()
+    }
+
+    /** ★ v98 到期待办提醒：remind_at<=now 且未推送 且未完成 */
+    fun getDueTodoReminders(now: Long): List<Map<String, Any?>> =
+        query("SELECT * FROM todos WHERE done=0 AND remind_at>0 AND remind_sent=0 AND remind_at<=?", now).map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "userOpenid" to (it["user_openid"] as? String ?: ""),
+                "channel" to (it["channel"] as? String ?: "qq"),
+                "content" to (it["content"] as? String ?: "")
+            )
+        }
+
+    /** ★ v98 标记待办提醒已推送 */
+    fun markTodoReminded(id: Long) {
+        stmt("UPDATE todos SET remind_sent=1 WHERE id=?", id)
     }
 
     fun getTodos(userOpenid: String, includeDone: Boolean = false): List<Map<String, Any?>> {
