@@ -9,7 +9,7 @@ loaders.models = function(){
  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
  Promise.all([api('/api/models'), api('/api/providers')]).then(function(res){
   state.models = res[0].data || []; state.providers = res[1].data || [];
-  var pmap = {}; state.providers.forEach(function(p){ pmap[p.id] = p.name; });
+  var pmap = {}; state.providers.forEach(function(p){ var pLabel = (p.customId||'') ? p.customId : ('P'+p.id); pmap[p.id] = pLabel + ' ' + p.name; });
   var rows = state.models.map(function(m){
    var enBtn = '<button class="btn-ghost ' + (m.isEnabled ? '' : 'danger') + '" style="padding:2px 8px;font-size:12px" onclick="toggleModel(' + m.id + ')">' + (m.isEnabled ? '停用' : '启用') + '</button>';
    var pubTxt = m.isPublic ? '<span class="badge green">公用</span>' : (m.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
@@ -321,7 +321,7 @@ loaders.chat = function(){
      '<button class="btn-ghost btn-sm danger" title="删除" onclick="event.stopPropagation();deleteConv('+c.id+')">🗑</button>'+
     '</div></div>';
   }).join('') || '<div style="color:var(--muted);font-size:12px;padding:14px">暂无会话，点「+ 新」开始</div>';
-  var modelOpts = state.models.map(function(m){ return '<option value="'+esc(m.modelId)+'"'+(state.chatModel===m.modelId?' selected':'')+'>'+esc(m.displayName)+'</option>'; }).join('');
+  var modelOpts = state.models.map(function(m){ return '<option value="'+esc(m.modelId)+'"'+(state.chatModel===m.modelId?' selected':'')+'>'+esc((m.providerLabel? m.providerLabel+' · ':'')+m.displayName)+'</option>'; }).join('');
   if(!modelOpts) modelOpts = '<option value="qtai-sj" selected>🔄 自动化切换</option>';
   box.innerHTML = [
    '<div class="chat-layout" id="chatLayout">',

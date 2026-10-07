@@ -31,7 +31,7 @@ window.addKey = function(){
  // ★ v1.105 动态拉取当前用户可见模型（用户隔离：管理员=全部，普通用户=公用+自己的+被授权的），不再用全局缓存
  api('/api/models').then(function(mr){
   var mlist = (mr && mr.data) || [];
-  var modelOpts = mlist.map(function(m){ return '<option value="'+esc(m.modelId)+'">'+esc(m.displayName)+'</option>'; }).join('');
+  var modelOpts = mlist.map(function(m){ return '<option value="'+esc(m.modelId)+'">'+esc((m.providerLabel? m.providerLabel+' · ':'')+m.displayName)+'</option>'; }).join('');
   var html = [
    '<div class="form-row"><label>密钥（留空自动生成）</label><input id="kKey" class="input"></div>',
    '<div class="form-row"><label>标签</label><input id="kLabel" class="input"></div>',

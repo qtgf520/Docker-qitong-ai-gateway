@@ -1425,6 +1425,7 @@ class Database(private val dbPath: String) {
     /** ★ v1.104 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.106", "对外模型展示服务商 P 标识", "对外 /v1/models 每个模型显示「P几·模型名」（服务商自定义ID或P+ID），新增 provider_label/provider_name 字段；后台模型页/聊天下拉/密钥选择器同步显示 P 标识，前后台一一对应"),
             Triple("v1.105", "密钥页模型用户隔离 + 模型可授权用户", "密钥添加/编辑可选模型动态按当前用户隔离（管理员=全部，普通用户=公用+自己的+被授权）；模型可授权给指定用户/代理单独使用（授权用户+属主可见，配合自定义单价独立收费）；网关API与/v1/models按API Key属主隔离模型列表"),
             Triple("v1.104", "admin 页面 JS 语法错误修复", "修复 admin 页 SyntaxError（missing ) after argument list）：文件管理器重命名/删除按钮传文件名由引号转义改为 encodeURIComponent 传参、函数内 decodeURIComponent 还原；修复 fmLoad/fmGlob/fmRename/fmDelete 函数闭合结构错乱"),
             Triple("v1.103", "SSH持久化 + 文件管理增强 + Agent进度 + 每日体检", "SSH配置存数据库重启不丢；文件管理器新增重命名/删除（安全护栏）；QQ/微信多步执行显示第N步/共M步进度；启动预置每天8点 sys_health 体检任务（幂等）"),

@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.105
+ * 綦桐AI网关 · Docker 服务器版 v1.106
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.105    ║
+        ║   綦桐AI网关 · Docker Server v1.106    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -191,7 +191,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.105"))
+                put("version", JsonPrimitive("1.106"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -220,13 +220,21 @@ fun Application.moduleGateway(database: Database) {
                 allModels.filter { m -> m.isPublic || m.ownerId == ownerId || m.authorizedUsers.contains(ownerId) }
             else allModels
             val modelList = models.map { m ->
+                // ★ v1.106 对外展示带服务商 P 标识：让对接方知道模型挂在后台哪个服务商下
+                val provider = database.getProviderById(m.providerId)
+                val pLabel = if (provider != null && provider.customId.isNotBlank()) provider.customId
+                    else "P${m.providerId}"
+                val pName = provider?.name ?: ""
                 buildJsonObject {
                     put("id", JsonPrimitive(m.modelId))
                     put("object", JsonPrimitive("model"))
                     put("owned_by", JsonPrimitive("custom"))
                     put("model_id", JsonPrimitive(m.modelId))
-                    put("display_name", JsonPrimitive(if (m.customAlias.isNotBlank()) m.customAlias else m.displayName))
+                    // 显示名带上 P 标识（如 P1 · gpt-4o 或 自定义别名）
+                    put("display_name", JsonPrimitive("$pLabel · ${if (m.customAlias.isNotBlank()) m.customAlias else m.displayName}"))
                     put("provider_id", JsonPrimitive(m.providerId))
+                    put("provider_label", JsonPrimitive(pLabel))   // ★ v1.106 P几标识
+                    put("provider_name", JsonPrimitive(pName))     // ★ v1.106 服务商名
                 }
             }
             val finalList = modelList + buildJsonObject {
@@ -1825,7 +1833,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.105"))
+                put("version", JsonPrimitive("1.106"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2577,7 +2585,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.105"))
+                    put("version", JsonPrimitive("1.106"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

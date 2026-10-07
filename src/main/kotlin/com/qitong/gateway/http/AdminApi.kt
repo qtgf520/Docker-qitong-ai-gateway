@@ -277,6 +277,9 @@ private fun providerToMap(p: Provider) = mapOf(
                 modelToMap(m).toMutableMap().apply {
                     val owner = if (m.ownerId > 0) database.getUserById(m.ownerId) else null
                     this["ownerName"] = owner?.username ?: (if (m.ownerId == 0L) "系统" else "未知")
+                    // ★ v1.106 服务商 P 标识（对外对接看得到挂在哪个服务商）
+                    val prov = database.getProviderById(m.providerId)
+                    this["providerLabel"] = if (prov != null && prov.customId.isNotBlank()) prov.customId else "P${m.providerId}"
                 }
             }.toMutableList()
             list.add(qtaiVirtual)
@@ -296,6 +299,9 @@ private fun providerToMap(p: Provider) = mapOf(
                     this["ownerName"] = owner?.username ?: (if (m.ownerId == 0L) "系统" else "未知")
                     // ★ v1.105 授权用户显示为可读用户名列表
                     this["authorizedNames"] = m.authorizedUsers.mapNotNull { uid -> database.getUserById(uid)?.username }.joinToString(",")
+                    // ★ v1.106 服务商 P 标识（对外对接看得到挂在哪个服务商）
+                    val prov = database.getProviderById(m.providerId)
+                    this["providerLabel"] = if (prov != null && prov.customId.isNotBlank()) prov.customId else "P${m.providerId}"
                 }
             }.toMutableList()
         list.add(qtaiVirtual)
