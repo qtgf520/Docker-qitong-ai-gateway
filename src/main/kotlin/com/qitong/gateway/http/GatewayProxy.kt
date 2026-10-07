@@ -316,12 +316,12 @@ class GatewayProxy(private val database: Database) {
         var modelId = body["model"]?.jsonPrimitive?.content ?: body["prompt"]?.let { "text-completion" } ?: ""
         val stream = body["stream"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
 
-        // 模型列表：管理员=全部；普通用户=公用+自己的（qtai-sj 用户独立，不跑全部）
+        // 模型列表：管理员=全部；普通用户=公用+自己的+被授权给自己的（★v1.105 定制模型授权）
         val allEnabled = database.getEnabledModels()
         val models = if (ownerId > 0) {
             val owner = database.getUserById(ownerId)
             if (owner?.role == "admin") allEnabled
-            else allEnabled.filter { m -> m.isPublic || m.ownerId == ownerId }
+            else allEnabled.filter { m -> m.isPublic || m.ownerId == ownerId || m.authorizedUsers.contains(ownerId) }
         } else allEnabled
 
         // 路由规则转发目标

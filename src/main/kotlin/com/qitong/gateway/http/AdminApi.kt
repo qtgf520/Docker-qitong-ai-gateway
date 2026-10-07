@@ -134,7 +134,8 @@ private fun providerToMap(p: Provider) = mapOf(
         "syncStatus" to m.syncStatus, "isEnabled" to m.isEnabled,
         "customAlias" to m.customAlias, "useProxy" to m.useProxy,
         "contextWindow" to m.contextWindow, "ownerId" to m.ownerId,
-        "isPublic" to m.isPublic, "price" to m.price
+        "isPublic" to m.isPublic, "price" to m.price,
+        "authorizedUsers" to m.authorizedUsers
     )
 
     private fun apiKeyToMap(k: ApiKeyEntry) = mapOf(
@@ -285,11 +286,16 @@ private fun providerToMap(p: Provider) = mapOf(
             .filter { it.isPublic || it.ownerId == user.id || it.ownerId == 0L && hasPerm(user, Perm.P_MANAGE) }
             .map { it.id }
         val list = database.getVisibleModels(user.id)
-            .filter { m -> m.ownerId == user.id || m.isPublic || m.ownerId == 0L && m.isPublic || m.providerId in providerIds }
+            .filter { m ->
+                m.ownerId == user.id || m.isPublic || (m.ownerId == 0L && m.isPublic) ||
+                m.providerId in providerIds || m.authorizedUsers.contains(user.id)   // ★ v1.105 授权用户可见
+            }
             .map { m ->
                 modelToMap(m).toMutableMap().apply {
                     val owner = if (m.ownerId > 0) database.getUserById(m.ownerId) else null
                     this["ownerName"] = owner?.username ?: (if (m.ownerId == 0L) "系统" else "未知")
+                    // ★ v1.105 授权用户显示为可读用户名列表
+                    this["authorizedNames"] = m.authorizedUsers.mapNotNull { uid -> database.getUserById(uid)?.username }.joinToString(",")
                 }
             }.toMutableList()
         list.add(qtaiVirtual)
@@ -323,7 +329,13 @@ private fun providerToMap(p: Provider) = mapOf(
             contextWindow = body["contextWindow"]?.jsonPrimitive?.content?.toIntOrNull() ?: 4096,
             ownerId = ownerId,
             isPublic = body["isPublic"]?.let { parseBool(it) } ?: false,
-            price = price
+            price = price,
+            // ★ v1.105 授权用户列表（JSON数组，解析user ID列表）
+            authorizedUsers = runCatching {
+                body["authorizedUsers"]?.jsonPrimitive?.content?.let { s ->
+                    kotlinx.serialization.json.Json.decodeFromString<List<Long>>(s)
+                } ?: emptyList()
+            }.getOrElse { emptyList() }
         )
         return if (id > 0) {
             database.updateModel(m); id

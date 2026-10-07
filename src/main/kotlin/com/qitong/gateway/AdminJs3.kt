@@ -28,18 +28,22 @@ window.copyKey = function(k){
  copyText(txt, '已复制密钥');
 };
 window.addKey = function(){
- var modelOpts = state.models.map(function(m){ return '<option value="'+esc(m.modelId)+'">'+esc(m.displayName)+'</option>'; }).join('');
- var html = [
-  '<div class="form-row"><label>密钥（留空自动生成）</label><input id="kKey" class="input"></div>',
-  '<div class="form-row"><label>标签</label><input id="kLabel" class="input"></div>',
-  '<div class="form-row"><label>允许的模型（Ctrl多选，留空=全部）</label><select id="kModels" class="input" multiple size="4">'+modelOpts+'</select></div>',
-  '<div class="form-row"><label><input type="checkbox" id="kQtai" checked>允许访问 qtai-sj</label></div>'
- ].join('');
- openModal('添加密钥', html, function(){
-  var key = $('kKey').value.trim() || 'sk-qt-' + Math.random().toString(36).slice(2,12);
-  var models = Array.from($('kModels').selectedOptions).map(function(o){ return o.value; });
-  api('/api/keys', { method:'POST', body: { key: key, label: $('kLabel').value.trim(), allowedModels: models, qtaiSjAccess: $('kQtai').checked } }).then(function(r){
-   if(r.code === 0){ toast('密钥: '+key, true); closeModal(); loaders.keys(); } else toast(r.msg, false);
+ // ★ v1.105 动态拉取当前用户可见模型（用户隔离：管理员=全部，普通用户=公用+自己的+被授权的），不再用全局缓存
+ api('/api/models').then(function(mr){
+  var mlist = (mr && mr.data) || [];
+  var modelOpts = mlist.map(function(m){ return '<option value="'+esc(m.modelId)+'">'+esc(m.displayName)+'</option>'; }).join('');
+  var html = [
+   '<div class="form-row"><label>密钥（留空自动生成）</label><input id="kKey" class="input"></div>',
+   '<div class="form-row"><label>标签</label><input id="kLabel" class="input"></div>',
+   '<div class="form-row"><label>允许的模型（Ctrl多选，留空=全部，仅当前用户可见模型）</label><select id="kModels" class="input" multiple size="4">'+modelOpts+'</select></div>',
+   '<div class="form-row"><label><input type="checkbox" id="kQtai" checked>允许访问 qtai-sj</label></div>'
+  ].join('');
+  openModal('添加密钥', html, function(){
+   var key = $('kKey').value.trim() || 'sk-qt-' + Math.random().toString(36).slice(2,12);
+   var models = Array.from($('kModels').selectedOptions).map(function(o){ return o.value; });
+   api('/api/keys', { method:'POST', body: { key: key, label: $('kLabel').value.trim(), allowedModels: models, qtaiSjAccess: $('kQtai').checked } }).then(function(r){
+    if(r.code === 0){ toast('密钥: '+key, true); closeModal(); loaders.keys(); } else toast(r.msg, false);
+   });
   });
  });
 };

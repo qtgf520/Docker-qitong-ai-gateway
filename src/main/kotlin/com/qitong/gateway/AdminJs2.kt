@@ -14,6 +14,7 @@ loaders.models = function(){
    var enBtn = '<button class="btn-ghost ' + (m.isEnabled ? '' : 'danger') + '" style="padding:2px 8px;font-size:12px" onclick="toggleModel(' + m.id + ')">' + (m.isEnabled ? '停用' : '启用') + '</button>';
    var pubTxt = m.isPublic ? '<span class="badge green">公用</span>' : (m.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
    var priceTxt = m.price > 0 ? ('¥'+m.price+'/M') : '<span style="color:var(--muted)">默认价</span>';
+   var auTxt = (m.authorizedNames||'') ? '<span class="badge purple">'+esc(m.authorizedNames)+'</span>' : (m.isPublic ? '<span style="color:var(--muted)">—</span>' : '<span class="badge gray">仅属主</span>');
    var key = m.providerId + '::' + m.modelId;
    return '<tr id="mdRow-' + esc(key) + '" data-key="' + esc(key) + '">' +
     '<td>'+(m.isEnabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
@@ -21,6 +22,7 @@ loaders.models = function(){
     '<td><span class="badge blue">'+esc(pmap[m.providerId]||('P'+m.providerId))+'</span></td>'+
     '<td>'+pubTxt+'</td><td><span class="badge blue">'+esc(m.ownerName||'')+'</span></td>'+
     '<td>'+priceTxt+'</td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td>'+
+    '<td style="font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+auTxt+'</td>'+
     '<td class="md-health" style="min-width:90px"><span class="badge gray">未测</span></td>'+
     '<td>'+enBtn+'</td>'+
     '<td style="white-space:nowrap"><button class="btn-ghost btn-sm md-test-btn" onclick="testOneModel('+m.providerId+',\''+esc(m.modelId)+'\',\''+esc(key)+'\')">测速</button> '+
@@ -33,8 +35,8 @@ loaders.models = function(){
     '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
     '<span style="color:var(--muted);font-size:12px">点每行「测速」单测该模型；批量测速通过自动启用 / 失败自动关闭</span>',
    '</div><div class="card" id="batchSpeedCard" style="display:none"></div>',
-   '<div class="card"><div class="table-wrap"><table><thead><tr><th>状态</th><th>模型ID</th><th>显示名</th><th>服务商</th><th>归属</th><th>属主</th><th>价格</th><th>默认</th><th>上下文</th><th>健康</th><th>启停</th><th>操作</th></tr></thead><tbody>' +
-   rows + '<tr><td colspan="12" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
+   '<div class="card"><div class="table-wrap"><table><thead><tr><th>状态</th><th>模型ID</th><th>显示名</th><th>服务商</th><th>归属</th><th>属主</th><th>价格</th><th>默认</th><th>上下文</th><th>授权用户</th><th>健康</th><th>启停</th><th>操作</th></tr></thead><tbody>' +
+   rows + '<tr><td colspan="13" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
    '</tbody></table></div></div>'
   ].join('');
 // 接续后台批量测速任务：高亮正在被测的那一行
@@ -155,20 +157,28 @@ window.runBatchSpeedTest = function(){
 window.editModel = function(id){
  var m = state.models.find(function(x){ return x.id===id; }) || {};
  var opts = state.providers.map(function(p){ return '<option value="'+p.id+'"'+(p.id===m.providerId?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('');
- var html = [
-  '<div class="form-row"><label>服务商 *</label><select id="mdProv" class="input">'+(opts||'<option value="0">请先添加服务商</option>')+'</select></div>',
-  '<div class="form-row"><label>模型ID *</label><input id="mdId" class="input" value="'+esc(m.modelId||'')+'" placeholder="如 gpt-4o"></div>',
-  '<div class="form-row"><label>显示名</label><input id="mdName" class="input" value="'+esc(m.displayName||'')+'"></div>',
-  '<div class="form-row"><label>自定义别名</label><input id="mdAlias" class="input" value="'+esc(m.customAlias||'')+'"></div>',
-  '<div class="form-row"><label>上下文窗口</label><input id="mdCtx" class="input" type="number" value="'+(m.contextWindow||4096)+'"></div>',
-  '<div class="form-row"><label>单价（元/百万Token，0=自动默认价）</label><input id="mdPrice" class="input" type="number" step="0.1" value="'+(m.price||0)+'"><small style="color:var(--muted)">如 gpt-4o 默认 ¥15/M，留0自动按内置价格表</small></div>',
-  '<div class="form-row"><label><input type="checkbox" id="mdEnabled"'+(m.isEnabled!==false?' checked':'')+'>启用</label> <label style="margin-left:12px"><input type="checkbox" id="mdPublic"'+(m.isPublic?' checked':'')+'>公用（所有用户可见可用）</label> <label style="margin-left:12px"><input type="checkbox" id="mdDefault"'+(m.isDefault?' checked':'')+'>默认</label></div>'
- ].join('');
- openModal(id ? '编辑模型' : '添加模型', html, function(){
-  var body = { id:id||0, providerId:parseInt($('mdProv').value)||0, modelId:$('mdId').value.trim(), displayName:$('mdName').value.trim()||$('mdId').value.trim(), customAlias:$('mdAlias').value.trim(), contextWindow:parseInt($('mdCtx').value)||4096, price:parseFloat($('mdPrice').value)||0, isEnabled:$('mdEnabled').checked, isPublic:$('mdPublic').checked, isDefault:$('mdDefault').checked };
-  if(!body.modelId){ toast('请填写模型ID', false); return; }
-  api('/api/models', { method:'POST', body: body }).then(function(r){
-   if(r.code === 0){ toast('保存成功', true); closeModal(); loaders.models(); } else toast(r.msg, false);
+ var curAu = (m.authorizedUsers||[]).map(function(u){ return String(u); });
+ // ★ v1.105 动态拉用户列表做授权多选（管理员可用；普通用户只能选自己=无意义，隐藏）
+ api('/api/users').then(function(ur){
+  var users = (ur && ur.data) || [];
+  var userOpts = users.map(function(u){ return '<option value="'+u.id+'"'+(curAu.indexOf(String(u.id))>=0?' selected':'')+'>'+esc(u.username)+(u.displayName?' ('+esc(u.displayName)+')':'')+'</option>'; }).join('');
+  var auRow = userOpts ? '<div class="form-row"><label>授权用户（Ctrl多选：仅这些人+属主可见可用，独立收费）</label><select id="mdAu" class="input" multiple size="5">'+userOpts+'</select><small style="color:var(--muted)">选中的用户可单独使用该定制模型；配合单价实现独立收费；不选=仅属主私有</small></div>' : '';
+  var html = [
+   '<div class="form-row"><label>服务商 *</label><select id="mdProv" class="input">'+(opts||'<option value="0">请先添加服务商</option>')+'</select></div>',
+   '<div class="form-row"><label>模型ID *</label><input id="mdId" class="input" value="'+esc(m.modelId||'')+'" placeholder="如 gpt-4o"></div>',
+   '<div class="form-row"><label>显示名</label><input id="mdName" class="input" value="'+esc(m.displayName||'')+'"></div>',
+   '<div class="form-row"><label>自定义别名</label><input id="mdAlias" class="input" value="'+esc(m.customAlias||'')+'"></div>',
+   '<div class="form-row"><label>上下文窗口</label><input id="mdCtx" class="input" type="number" value="'+(m.contextWindow||4096)+'"></div>',
+   '<div class="form-row"><label>单价（元/百万Token，0=自动默认价）</label><input id="mdPrice" class="input" type="number" step="0.1" value="'+(m.price||0)+'"><small style="color:var(--muted)">如 gpt-4o 默认 ¥15/M，留0自动按内置价格表；自定义价格=对该模型独立收费</small></div>',
+   auRow,
+   '<div class="form-row"><label><input type="checkbox" id="mdEnabled"'+(m.isEnabled!==false?' checked':'')+'>启用</label> <label style="margin-left:12px"><input type="checkbox" id="mdPublic"'+(m.isPublic?' checked':'')+'>公用（所有用户可见可用）</label> <label style="margin-left:12px"><input type="checkbox" id="mdDefault"'+(m.isDefault?' checked':'')+'>默认</label></div>'
+  ].join('');
+  openModal(id ? '编辑模型' : '添加模型', html, function(){
+   var body = { id:id||0, providerId:parseInt($('mdProv').value)||0, modelId:$('mdId').value.trim(), displayName:$('mdName').value.trim()||$('mdId').value.trim(), customAlias:$('mdAlias').value.trim(), contextWindow:parseInt($('mdCtx').value)||4096, price:parseFloat($('mdPrice').value)||0, isEnabled:$('mdEnabled').checked, isPublic:$('mdPublic').checked, isDefault:$('mdDefault').checked, authorizedUsers: JSON.stringify(Array.from($('mdAu')?$('mdAu').selectedOptions:[]).map(function(o){ return parseInt(o.value); })) };
+   if(!body.modelId){ toast('请填写模型ID', false); return; }
+   api('/api/models', { method:'POST', body: body }).then(function(r){
+    if(r.code === 0){ toast('保存成功', true); closeModal(); loaders.models(); } else toast(r.msg, false);
+   });
   });
  });
 };

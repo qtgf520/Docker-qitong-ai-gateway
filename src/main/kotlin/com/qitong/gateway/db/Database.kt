@@ -184,6 +184,8 @@ class Database(private val dbPath: String) {
             try { st.executeUpdate("ALTER TABLE models ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE models ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE models ADD COLUMN price REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            // ★ v1.105 模型授权用户（JSON数组：被授权可单独使用该定制模型的用户ID列表；配合公用/私有实现"定制给某些人+独立收费+共享"）
+            try { st.executeUpdate("ALTER TABLE models ADD COLUMN authorized_users TEXT NOT NULL DEFAULT '[]'") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE routing_rule ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE api_keys ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'") } catch (_: Exception) {}
@@ -696,7 +698,10 @@ class Database(private val dbPath: String) {
         contextWindow = (r["context_window"] as? Number)?.toInt() ?: 4096,
         ownerId = (r["owner_id"] as? Number)?.toLong() ?: 0,
         isPublic = (r["is_public"] as? Number)?.toInt() == 1,
-        price = (r["price"] as? Number)?.toDouble() ?: 0.0
+        price = (r["price"] as? Number)?.toDouble() ?: 0.0,
+        authorizedUsers = (r["authorized_users"] as? String ?: "[]").let { s ->
+            try { kotlinx.serialization.json.Json.decodeFromString<List<Long>>(s) } catch (_: Exception) { emptyList() }
+        }
     )
 
     private fun rowToRoute(r: Map<String, Any?>) = RoutingRule(
@@ -773,17 +778,19 @@ class Database(private val dbPath: String) {
         query("SELECT * FROM models WHERE owner_id=0 OR owner_id=? ORDER BY id", ownerId).map { rowToModel(it) }
 
     fun addModel(m: AiModel): Long {
+        val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUsers)
         stmt(
-            "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window,owner_id,is_public,price) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price
+            "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window,owner_id,is_public,price,authorized_users) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized
         )
         return lastInsertId()
     }
 
     fun updateModel(m: AiModel) {
+        val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUsers)
         stmt(
-            "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=?,owner_id=?,is_public=?,price=? WHERE id=?",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, m.id
+            "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=?,owner_id=?,is_public=?,price=?,authorized_users=? WHERE id=?",
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, m.id
         )
     }
 
@@ -1418,6 +1425,7 @@ class Database(private val dbPath: String) {
     /** ★ v1.104 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.105", "密钥页模型用户隔离 + 模型可授权用户", "密钥添加/编辑可选模型动态按当前用户隔离（管理员=全部，普通用户=公用+自己的+被授权）；模型可授权给指定用户/代理单独使用（授权用户+属主可见，配合自定义单价独立收费）；网关API与/v1/models按API Key属主隔离模型列表"),
             Triple("v1.104", "admin 页面 JS 语法错误修复", "修复 admin 页 SyntaxError（missing ) after argument list）：文件管理器重命名/删除按钮传文件名由引号转义改为 encodeURIComponent 传参、函数内 decodeURIComponent 还原；修复 fmLoad/fmGlob/fmRename/fmDelete 函数闭合结构错乱"),
             Triple("v1.103", "SSH持久化 + 文件管理增强 + Agent进度 + 每日体检", "SSH配置存数据库重启不丢；文件管理器新增重命名/删除（安全护栏）；QQ/微信多步执行显示第N步/共M步进度；启动预置每天8点 sys_health 体检任务（幂等）"),
             Triple("v1.102", "计划任务到期执行真动作", "定时任务 content 支持前缀分派——cmd:命令跑终端 / wf:工作流名触发工作流 / mail:收件人|主题|内容发邮件 / 默认纯提醒；到点自动执行并随心跳推送结果"),
