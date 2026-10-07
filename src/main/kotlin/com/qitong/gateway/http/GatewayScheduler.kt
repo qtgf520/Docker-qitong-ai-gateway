@@ -87,6 +87,11 @@ object GatewayScheduler {
 
     fun routeKey(providerId: Long, modelId: String) = "$providerId::$modelId"
 
+    /** ★ v1.107 查询单模型健康状态（对外 /v1/models 展示用；未测过默认健康） */
+    fun healthOf(providerId: Long, modelId: String): ModelHealth? = synchronized(healthCache) {
+        healthCache[routeKey(providerId, modelId)]
+    }
+
     private val sharedClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(HEALTH_CHECK_TIMEOUT, TimeUnit.MILLISECONDS)

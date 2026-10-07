@@ -1010,6 +1010,18 @@ class Database(private val dbPath: String) {
         } catch (_: Exception) { 0 }
     }
 
+    /** ★ v1.107 按 API Key label 删除用量（管理员可删任意；普通用户删自己的） */
+    fun deleteTokenUsageByApiKey(label: String, userId: Long? = null): Int {
+        val sql = if (userId != null && userId > 0) "DELETE FROM token_usage WHERE api_key_label=? AND user_id=?" else "DELETE FROM token_usage WHERE api_key_label=?"
+        return try {
+            conn.prepareStatement(sql).use { ps ->
+                ps.setObject(1, label)
+                if (userId != null && userId > 0) ps.setObject(2, userId)
+                ps.executeUpdate()
+            }
+        } catch (_: Exception) { 0 }
+    }
+
     // ============ 测速历史 ============
 
     fun addSpeedHistory(s: SpeedHistory) {
@@ -1224,8 +1236,25 @@ class Database(private val dbPath: String) {
         return true
     }
 
-    /** 扣费：从余额扣款（精确到分；余额不足返回 false，不允许出现负数） */
-    fun deductBalance(userId: Long, amount: Double): Boolean {
+    /** ★ v1.107 管理员直接设置余额（精确值） + 累计充值（后台可改） */
+    fun setUserBalance(userId: Long, newBalance: Double): Boolean {
+        if (newBalance < 0) return false
+        val user = getUserById(userId) ?: return false
+        val diff = newBalance - user.balance
+        stmt("UPDATE users SET balance = ? WHERE id=?", newBalance, userId)
+        addBalanceLog(userId, "admin_deduct", diff, if (diff >= 0) "管理员调整余额" else "管理员调整余额")
+        return true
+    }
+
+    /** ★ v1.107 管理员直接设置累计充值（后台可改） */
+    fun setUserTotalRecharge(userId: Long, newTotal: Double): Boolean {
+        if (newTotal < 0) return false
+        stmt("UPDATE users SET total_recharge = ? WHERE id=?", newTotal, userId)
+        return true
+    }
+
+    /** 扣费：从余额扣款（精确到分；余额不足返回 false，不允许出现负数）★v1.107 备注带模型名便于对账 */
+    fun deductBalance(userId: Long, amount: Double, remark: String = "模型调用扣费"): Boolean {
         if (amount <= 0) return true
         val user = getUserById(userId) ?: return false
         // 用 BigDecimal 精确计算；余额不足则拒绝（不允许负数）
@@ -1234,7 +1263,7 @@ class Database(private val dbPath: String) {
         if (bal.compareTo(amt) < 0) return false  // 余额不足
         val newBal = bal.subtract(amt)
         stmt("UPDATE users SET balance = ? WHERE id=?", newBal.toDouble(), userId)
-        addBalanceLog(userId, "consume", -amount, "模型调用扣费")
+        addBalanceLog(userId, "consume", -amount, remark)
         return true
     }
 
@@ -1425,6 +1454,7 @@ class Database(private val dbPath: String) {
     /** ★ v1.104 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.107", "用量统计完善 + 万人并发 + 多项体验修复", "按API密钥用量可单独删除某Key统计；OkHttp连接池5→200每host并发200 Dispatcher256线程顶万人并发；/v1/models按测速排序附healthy修复不可用模型返回空白；余额扣费流水备注带模型名；管理员可调整用户余额和累计充值；移除智能工具页；弹窗支持滚动；首页统计卡片与网关控制隔开"),
             Triple("v1.106", "对外模型展示服务商 P 标识", "对外 /v1/models 每个模型显示「P几·模型名」（服务商自定义ID或P+ID），新增 provider_label/provider_name 字段；后台模型页/聊天下拉/密钥选择器同步显示 P 标识，前后台一一对应"),
             Triple("v1.105", "密钥页模型用户隔离 + 模型可授权用户", "密钥添加/编辑可选模型动态按当前用户隔离（管理员=全部，普通用户=公用+自己的+被授权）；模型可授权给指定用户/代理单独使用（授权用户+属主可见，配合自定义单价独立收费）；网关API与/v1/models按API Key属主隔离模型列表"),
             Triple("v1.104", "admin 页面 JS 语法错误修复", "修复 admin 页 SyntaxError（missing ) after argument list）：文件管理器重命名/删除按钮传文件名由引号转义改为 encodeURIComponent 传参、函数内 decodeURIComponent 还原；修复 fmLoad/fmGlob/fmRename/fmDelete 函数闭合结构错乱"),

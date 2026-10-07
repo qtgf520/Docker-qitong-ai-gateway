@@ -580,13 +580,30 @@ class GatewayProxy(private val database: Database) {
             var totalTokens = 0
 
             if (stream && respContentType.contains("text/event-stream")) {
+                // ★ v1.107 修复空白bug：先探测上游响应体是否真的非空（200但空SSE=模型不可用，视为失败走故障转移/友好提示）
+                val bufferedSrc = response.body?.source()
+                val hasContent = runCatching {
+                    withContext(Dispatchers.IO) {
+                        if (bufferedSrc == null) false
+                        else {
+                            bufferedSrc.request(1)
+                            !bufferedSrc.exhausted()
+                        }
+                    }
+                }.getOrDefault(false)
+                if (!hasContent) {
+                    // 空响应=上游没产出，标记失败并返回 false（触发故障转移/友好提示，绝不空白）
+                    GatewayScheduler.markModelFailed(targetModel.modelId, targetModel.providerId)
+                    GatewayScheduler.recordModelResult(targetModel.modelId, targetModel.providerId, false)
+                    return false
+                }
                 // ★ 流式 SSE 透传（字节流直通，最稳；对端断流不抛异常） ★
                 call.response.headers.append("Content-Type", "text/event-stream; charset=utf-8")
                 call.response.headers.append("Cache-Control", "no-cache")
                 call.response.headers.append("Connection", "keep-alive")
                 try {
                     call.respondBytesWriter(ContentType.Text.EventStream, HttpStatusCode.OK) {
-                        val source = response.body?.source()
+                        val source = bufferedSrc
                         if (source != null) {
                             val buf = ByteArray(8192)
                             var n: Int
@@ -678,8 +695,8 @@ class GatewayProxy(private val database: Database) {
                     // 有额度上限：扣额度
                     database.consumeQuota(ownerUser.id, estTokens)
                 } else if (cost > 0) {
-                    // 余额体制：付费模型扣余额（精确 BigDecimal；余额不足则跳过，不产生负数）
-                    if (!database.deductBalance(ownerUser.id, cost)) {
+                    // 余额体制：付费模型扣余额（精确 BigDecimal；余额不足则跳过，不产生负数）★v1.107 备注带模型名对账
+                    if (!database.deductBalance(ownerUser.id, cost, "模型调用扣费·${model.displayName}（${model.modelId}）")) {
                         // 余额不足：本次不扣费（调用已成功返回，但记录cost=0）
                         database.addTokenUsage(
                             TokenUsage(

@@ -135,9 +135,9 @@ loaders.usage = function(){
     var up = u.uploadBytes || 0, down = u.downloadBytes || 0, tt = u.totalTokens || 0;
     return '<tr><td>'+esc(u.modelKey||u.modelName||'')+'</td><td>'+fmtNum(u.promptTokens||0)+'</td><td>'+fmtNum(u.completionTokens||0)+'</td><td>'+fmtNum(tt)+'</td><td>'+fmtBytes(up)+'</td><td>'+fmtBytes(down)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td><td>'+esc(u.apiKeyLabel||'本地')+'</td><td style="font-size:12px;color:var(--muted)">'+fmtTime(u.createdAt)+'</td><td><button class="btn btn-danger btn-sm" onclick="delUsageRow('+(u.id||0)+')">删除</button></td></tr>';
    }).join('');
-  // 按密钥分组（对齐原APP apiKeyUsageRows）
-  var keyRows = (s.apiKeyUsage || []).map(function(u,i){
-   return '<tr><td>'+(i+1)+'</td><td>'+esc(u.api_key_label)+'</td><td>'+(u.calls||0)+'</td><td>'+fmtNum(u.total_tokens||0)+'</td><td>'+fmtBytes(u.upload_bytes||0)+'</td><td>'+fmtBytes(u.download_bytes||0)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td></tr>';
+// 按密钥分组（对齐原APP apiKeyUsageRows；★v1.107 可单独删除该密钥全部用量）
+   var keyRows = (s.apiKeyUsage || []).map(function(u,i){
+    return '<tr><td>'+(i+1)+'</td><td>'+esc(u.api_key_label)+'</td><td>'+(u.calls||0)+'</td><td>'+fmtNum(u.total_tokens||0)+'</td><td>'+fmtBytes(u.upload_bytes||0)+'</td><td>'+fmtBytes(u.download_bytes||0)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td><td><button class="btn btn-danger btn-sm" onclick="clearKeyUsage(\''+esc(u.api_key_label).replace(/'/g,'&#39;')+'\')">删除</button></td></tr>';
   }).join('');
   // 模型下拉（用于按模型清理，来自汇总）
   var modelOpts = (s.usage || []).map(function(u){ return '<option value="'+esc(u.model_key)+'">'+esc(u.model_key)+'（'+(u.calls||0)+'次）</option>'; }).join('');
@@ -155,8 +155,8 @@ loaders.usage = function(){
     '<div class="card" style="margin-top:14px"><h3>按模型用量汇总</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>模型Key</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th><th>费用</th></tr></thead><tbody>' +
     rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + ((s.usage||[]).length ? '' : '暂无用量') + '</td></tr>' +
     '</tbody></table></div></div>',
-    '<div class="card" style="margin-top:14px"><h3>按API密钥用量 <span style="font-size:12px;color:var(--muted)">每个Key的调用汇总</span></h3><div class="table-wrap"><table><thead><tr><th>#</th><th>密钥Label</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th><th>费用</th></tr></thead><tbody>' +
-    keyRows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + ((s.apiKeyUsage||[]).length ? '' : '暂无密钥用量，发起API调用后显示') + '</td></tr>' +
+    '<div class="card" style="margin-top:14px"><h3>按API密钥用量 <span style="font-size:12px;color:var(--muted)">每个Key的调用汇总，可单独删除该Key全部用量</span></h3><div class="table-wrap"><table><thead><tr><th>#</th><th>密钥Label</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th><th>费用</th><th>操作</th></tr></thead><tbody>' +
+    keyRows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + ((s.apiKeyUsage||[]).length ? '' : '暂无密钥用量，发起API调用后显示') + '</td></tr>' +
     '</tbody></table></div></div>',
     '<div class="card" style="margin-top:14px"><h3>传输明细（每次调用）<span style="font-size:12px;color:var(--muted)">对齐原APP TokenUsage，每条=一次API传输</span></h3><div class="table-wrap"><table><thead><tr><th>模型</th><th>Prompt</th><th>输出</th><th>总Token</th><th>上行</th><th>下行</th><th>费用</th><th>密钥</th><th>时间</th><th>操作</th></tr></thead><tbody>' +
     rrows + '<tr><td colspan="10" style="text-align:center;color:var(--muted)">' + (recent.length ? '' : '暂无传输记录，发起API调用后显示') + '</td></tr>' +
@@ -184,6 +184,15 @@ window.clearUsageByModel = function(){
  if(!confirm('确定清理该模型的全部用量记录？')) return;
  api('/api/usage/clear-model', { method:'POST', body: { modelKey: sel.value } }).then(function(r){
   if(r.code === 0){ toast('已清理 ' + (r.data && r.data.deleted != null ? r.data.deleted : '') + ' 条', true); loaders.usage(); } else toast(r.msg, false);
+ });
+};
+// ★ v1.107 按 API Key 删除全部用量（单独删某个Key的统计）
+window.clearKeyUsage = function(label){
+ var lbl = String(label||'').replace(/&#39;/g, "'");
+ if(!lbl){ toast('密钥标识无效', false); return; }
+ if(!confirm('确定删除该密钥「'+lbl+'」的全部用量统计？')) return;
+ api('/api/usage/clear-key', { method:'POST', body: { label: lbl } }).then(function(r){
+  if(r.code === 0){ toast('已删除 ' + (r.data && r.data.deleted != null ? r.data.deleted : '') + ' 条', true); loaders.usage(); } else toast(r.msg, false);
  });
 };
 // ===== 记忆独立页（大脑记忆 + 记忆配置） =====
@@ -710,7 +719,7 @@ loaders.users = function(){
    if(u.role === 'admin') permTxt = '<span class="badge green">全部权限</span>';
 var balTxt = '<span style="color:var(--green);font-weight:700">¥'+(u.balance||0).toFixed(2)+'</span>';
     var roleBadge = u.role==='admin' ? '<span class="badge purple">管理员</span>' : (u.role==='agent' ? '<span class="badge amber">代理</span>' : '<span class="badge blue">用户</span>');
-    return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td>'+roleBadge+'</td><td>'+balTxt+' <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="rechargeUser('+u.id+',\''+esc(u.username)+'\')">充值</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="deductUser('+u.id+',\''+esc(u.username)+'\')">扣款</button></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td style="font-size:11px;color:var(--muted)">'+(u.email?esc(u.email):'—')+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
+    return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td>'+roleBadge+'</td><td>'+balTxt+' <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="rechargeUser('+u.id+',\''+esc(u.username)+'\')">充值</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="deductUser('+u.id+',\''+esc(u.username)+'\')">扣款</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--cyan)" onclick="setBalanceUser('+u.id+',\''+esc(u.username)+'\','+(u.balance||0)+','+(u.totalRecharge||0)+')">调整</button></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td style="font-size:11px;color:var(--muted)">'+(u.email?esc(u.email):'—')+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
    }).join('');
    // 代理登录时提示管理自己的下级
    api('/api/auth/me').then(function(me){
@@ -750,6 +759,25 @@ window.deductUser = function(id, name){
   if(!amount || amount <= 0){ toast('请输入有效金额', false); return; }
   api('/api/users/deduct', { method:'POST', body: { id: id, amount: amount } }).then(function(r){
    if(r.code === 0){ toast(r.msg, true); closeModal(); loaders.users(); } else toast(r.msg, false);
+  });
+ });
+};
+// ★ v1.107 管理员调整余额 + 累计充值
+window.setBalanceUser = function(id, name, curBal, curTotal){
+ openModal('调整余额/累计充值 - ' + name,
+  '<div class="form-row"><label>当前余额</label><div style="color:var(--green);font-weight:700">¥'+(curBal||0).toFixed(2)+'</div></div>'+
+  '<div class="form-row"><label>设置余额（元）</label><input id="sbBal" class="input" type="number" step="0.01" min="0" value="'+(curBal||0)+'"></div>'+
+  '<div class="form-row"><label>累计充值（元，供统计展示）</label><input id="sbTotal" class="input" type="number" step="0.01" min="0" value="'+(curTotal||0)+'"></div>'+
+  '<div style="font-size:12px;color:var(--muted)">设置余额=直接改到该值；累计充值=改到该值（不影响余额）</div>', function(){
+  var bal = parseFloat($('sbBal').value);
+  var total = parseFloat($('sbTotal').value);
+  if(isNaN(bal) || bal < 0){ toast('余额无效', false); return; }
+  if(isNaN(total) || total < 0){ toast('累计充值无效', false); return; }
+  api('/api/users/set-balance', { method:'POST', body: { id: id, balance: bal } }).then(function(r){
+   if(r.code !== 0){ toast(r.msg, false); return; }
+   api('/api/users/set-total-recharge', { method:'POST', body: { id: id, totalRecharge: total } }).then(function(r2){
+    if(r2.code === 0){ toast('余额与累计充值已更新', true); closeModal(); loaders.users(); } else toast(r2.msg, false);
+   });
   });
  });
 };

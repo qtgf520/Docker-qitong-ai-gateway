@@ -36,7 +36,12 @@ object UpstreamClient {
             .writeTimeout(120, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .callTimeout(0, TimeUnit.SECONDS)
-            .connectionPool(ConnectionPool(5, 30, TimeUnit.SECONDS))
+            // ★ v1.107 万人并发转发：连接池 5→200、每host并发 5→200、Dispatcher 256 线程（顶得住高并发）
+            .connectionPool(ConnectionPool(200, 60, TimeUnit.SECONDS))
+            .dispatcher(okhttp3.Dispatcher(java.util.concurrent.Executors.newFixedThreadPool(256)).apply {
+                maxRequests = 512
+                maxRequestsPerHost = 200
+            })
 
         val config = currentConfig
         if (config != null && config.isValid) {
@@ -100,7 +105,12 @@ object UpstreamClient {
             .writeTimeout(120, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .callTimeout(0, TimeUnit.SECONDS)
-            .connectionPool(ConnectionPool(5, 30, TimeUnit.SECONDS))
+            // ★ v1.107 万人并发转发：连接池 5→200、每host并发 5→200、Dispatcher 256 线程
+            .connectionPool(ConnectionPool(200, 60, TimeUnit.SECONDS))
+            .dispatcher(okhttp3.Dispatcher(java.util.concurrent.Executors.newFixedThreadPool(256)).apply {
+                maxRequests = 512
+                maxRequestsPerHost = 200
+            })
             .build()
     }
 

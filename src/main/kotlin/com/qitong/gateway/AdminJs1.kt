@@ -176,13 +176,13 @@ loaders.dashboard = function(){
   box.innerHTML = [
    addrHtml,
    '<div class="card" id="announceCard"><h3>公告</h3><div style="color:var(--muted);padding:8px;font-size:13px">加载中...</div></div>',
-   '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr)">' +
+   '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">' +
     '<div class="stat"><div class="num" style="font-size:20px">' + fmtUptime(st.uptime || 0) + '</div><div class="lbl">运行时长</div></div>' +
     '<div class="stat"><div class="num" style="font-size:20px">' + (st.pipelineSorted||[]).length + '</div><div class="lbl">可用模型</div></div>' +
     '<div class="stat"><div class="num" style="font-size:20px;color:' + ((st.healthCache||[]).filter(function(x){return x.isHealthy;}).length / Math.max((st.healthCache||[]).length,1) * 100 > 50 ? 'var(--green)' : 'var(--amber)') + '">' + Math.round((st.healthCache||[]).filter(function(x){return x.isHealthy;}).length / Math.max((st.healthCache||[]).length,1) * 100) + '%</div><div class="lbl">健康率</div></div>' +
     '<div class="stat"><div class="num" style="font-size:20px">' + (st.autoFailover ? '已开启' : '已关闭') + '</div><div class="lbl">故障转移</div></div>' +
    '</div>',
-   '<div class="grid grid-2">',
+   '<div class="grid grid-2" style="gap:16px;margin-top:4px">',
     '<div class="card" id="gwCtrlCard"><h3>网关控制</h3><div style="display:flex;gap:10px;align-items:center">' +
      '<span id="gwDot" class="dot ' + (st.running ? '' : 'off') + '"></span>' +
      '<span id="gwState" style="font-weight:700;color:' + (st.running ? 'var(--green)' : 'var(--red)') + '">' + (st.running ? '运行中' : '已停止') + '</span>' +

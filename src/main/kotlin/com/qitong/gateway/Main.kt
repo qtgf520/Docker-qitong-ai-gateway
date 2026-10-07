@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.106
+ * 綦桐AI网关 · Docker 服务器版 v1.107
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.106    ║
+        ║   綦桐AI网关 · Docker Server v1.107    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -191,7 +191,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.106"))
+                put("version", JsonPrimitive("1.107"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -219,12 +219,15 @@ fun Application.moduleGateway(database: Database) {
             val models = if (ownerId > 0 && ownerUser?.role != "admin")
                 allModels.filter { m -> m.isPublic || m.ownerId == ownerId || m.authorizedUsers.contains(ownerId) }
             else allModels
-            val modelList = models.map { m ->
+            // ★ v1.107 按测速健康排序：能用的在前（健康+延迟低优先），并附健康状态
+            val sortedModels = com.qitong.gateway.http.GatewayScheduler.getSortedModels(models)
+            val modelList = sortedModels.map { m ->
                 // ★ v1.106 对外展示带服务商 P 标识：让对接方知道模型挂在后台哪个服务商下
                 val provider = database.getProviderById(m.providerId)
                 val pLabel = if (provider != null && provider.customId.isNotBlank()) provider.customId
                     else "P${m.providerId}"
                 val pName = provider?.name ?: ""
+                val health = com.qitong.gateway.http.GatewayScheduler.healthOf(m.providerId, m.modelId)
                 buildJsonObject {
                     put("id", JsonPrimitive(m.modelId))
                     put("object", JsonPrimitive("model"))
@@ -235,6 +238,7 @@ fun Application.moduleGateway(database: Database) {
                     put("provider_id", JsonPrimitive(m.providerId))
                     put("provider_label", JsonPrimitive(pLabel))   // ★ v1.106 P几标识
                     put("provider_name", JsonPrimitive(pName))     // ★ v1.106 服务商名
+                    put("healthy", JsonPrimitive(health?.isHealthy ?: true))  // ★ v1.107 健康状态
                 }
             }
             val finalList = modelList + buildJsonObject {
@@ -580,6 +584,15 @@ fun Application.moduleWeb(database: Database) {
             if (u.role == "admin") database.clearTokenUsage()
             else database.clearTokenUsageByUser(u.id)
             AdminApi.ok(call, null, "用量已清理")
+        }
+        // ★ v1.107 按 API Key label 删除用量（普通用户只能删自己的；管理员可删任意）
+        post("/api/usage/clear-key") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val label = body["label"]?.jsonPrimitive?.content ?: run { AdminApi.fail(call, "密钥标识无效", 400); return@post }
+            val n = if (u.role == "admin") database.deleteTokenUsageByApiKey(label)
+                else database.deleteTokenUsageByApiKey(label, u.id)
+            AdminApi.ok(call, mapOf("deleted" to n), "已删除 $n 条记录")
         }
         // 删除单条用量记录：普通用户只能删自己的；管理员可删任何
         post("/api/usage/delete") {
@@ -1713,6 +1726,34 @@ fun Application.moduleWeb(database: Database) {
                 AdminApi.ok(call, mapOf("balance" to bal), "已扣款 ¥$amount，当前余额 ¥$bal")
             } else AdminApi.fail(call, "扣款失败", 400)
         }
+        // ★ v1.107 管理员直接设置余额（精确值）
+        post("/api/users/set-balance") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin" && u.role != "agent" && !AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "用户ID无效", 400); return@post }
+            if (u.role != "admin" && !database.isSubordinate(u.id, userId)) { AdminApi.fail(call, "只能管理自己的下级用户", 403); return@post }
+            val newBalance = body["balance"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: run { AdminApi.fail(call, "余额无效", 400); return@post }
+            if (database.setUserBalance(userId, newBalance)) {
+                val target = database.getUserById(userId)
+                database.addOpLog(u.id, u.username, "调整余额", "将 ${target?.username ?: "用户$userId"} 余额调整为 ¥$newBalance", call.request.local.remoteHost)
+                AdminApi.ok(call, mapOf("balance" to newBalance), "余额已调整为 ¥$newBalance")
+            } else AdminApi.fail(call, "调整失败", 400)
+        }
+        // ★ v1.107 管理员直接设置累计充值
+        post("/api/users/set-total-recharge") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin" && u.role != "agent" && !AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "用户ID无效", 400); return@post }
+            if (u.role != "admin" && !database.isSubordinate(u.id, userId)) { AdminApi.fail(call, "只能管理自己的下级用户", 403); return@post }
+            val newTotal = body["totalRecharge"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: run { AdminApi.fail(call, "累计充值无效", 400); return@post }
+            if (database.setUserTotalRecharge(userId, newTotal)) {
+                val target = database.getUserById(userId)
+                database.addOpLog(u.id, u.username, "调整累计充值", "将 ${target?.username ?: "用户$userId"} 累计充值调整为 ¥$newTotal", call.request.local.remoteHost)
+                AdminApi.ok(call, mapOf("totalRecharge" to newTotal), "累计充值已调整为 ¥$newTotal")
+            } else AdminApi.fail(call, "调整失败", 400)
+        }
         // 我的分销信息（邀请码/邀请人数/累计佣金）——空码自动生成并持久化
         get("/api/me/distribution") {
             val u = call.requireAuth(database) ?: return@get
@@ -1833,7 +1874,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.106"))
+                put("version", JsonPrimitive("1.107"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2585,7 +2626,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.106"))
+                    put("version", JsonPrimitive("1.107"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

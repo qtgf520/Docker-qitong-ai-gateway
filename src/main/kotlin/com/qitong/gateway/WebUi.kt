@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v1.106"
+    private const val VER = "v1.107"
 
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -146,7 +146,6 @@ ${adminCss()}
       <a data-page="keys"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><b>API密钥</b></a>
       <a data-page="qqbot" class="admin-only"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg><b>QQ机器人</b></a>
       <a data-page="weixin" class="admin-only"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/><path d="M9 6.5a3 3 0 0 1 6 0"/></svg><b>微信机器人</b></a>
-      <a data-page="aitools"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><b>智能工具</b></a>
       <div class="nav-group">工具</div>
       <a data-page="chat"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><b>内置聊天</b></a>
       <a data-page="tickets"><svg viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.83z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><b>工单中心</b></a>
@@ -174,7 +173,6 @@ ${adminCss()}
     <div id="view-keys" class="view"></div>
     <div id="view-qqbot" class="view"></div>
     <div id="view-weixin" class="view"></div>
-    <div id="view-aitools" class="view"></div>
     <div id="view-rules" class="view"></div>
     <div id="view-usage" class="view"></div>
     <div id="view-tickets" class="view"></div>
@@ -337,12 +335,18 @@ th .sort-ind{color:var(--primary);font-size:10px;margin-left:3px}
 select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238791A0'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
 input[type=range]{accent-color:var(--primary)}
 /* ===== 弹窗 ===== */
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-start;justify-content:center;z-index:1200;padding-top:8vh}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:1200;padding:4vh 2vw}
 .modal.show{display:flex}
-.modal-box{width:480px;max-width:94vw;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;max-height:84vh;overflow-y:auto;box-shadow:var(--shadow)}
-.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.modal-box{width:480px;max-width:96vw;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;max-height:88vh;overflow-y:auto;overscroll-behavior:contain;box-shadow:var(--shadow)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-shrink:0}
 .modal-head h3{font-size:14px;color:var(--text)}
 .modal-close{background:none;border:0;color:var(--muted);font-size:20px;cursor:pointer}
+#modalBody{max-height:calc(88vh - 90px);overflow-y:auto;overscroll-behavior:contain}
+@media (max-width:640px){
+ .modal{align-items:flex-end;padding:0}
+ .modal-box{width:100vw;max-width:100vw;max-height:92vh;border-radius:14px 14px 0 0;padding:18px}
+ #modalBody{max-height:calc(92vh - 80px)}
+}
 /* ===== 聊天（全屏沉浸式聊天应用：左会话列表+右消息区，输入固定底部） ===== */
 .chat-layout{position:relative;display:flex;gap:0;height:calc(100dvh - 118px);min-height:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.14)}
 .chat-side{position:absolute;top:0;left:0;bottom:0;width:260px;max-width:82vw;z-index:30;background:var(--inset);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transform:translateX(-100%);transition:transform .25s ease;box-shadow:0 0 0 rgba(0,0,0,0)}
@@ -494,6 +498,6 @@ background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none;box-
 }
 """.trimIndent()
 
-    /** 后台 JS：核心 + 模型测速聊天 + 密钥规则用量用户 + UX 增强包 + QQ + 技能工作流MCP + 微信 + 智能工具 */
-    fun adminJs(): String = "var APP_VER = '" + VER + "';\n" + AdminJs1.js() + AdminJs2.js() + AdminJs3.js() + AdminJs4.js() + AdminJs5.js() + AdminJs6.js() + AdminJs7.js() + AdminJs8.js()
+    /** 后台 JS：核心 + 模型测速聊天 + 密钥规则用量用户 + UX 增强包 + QQ + 技能工作流MCP + 微信（v1.107 移除智能工具页） */
+    fun adminJs(): String = "var APP_VER = '" + VER + "';\n" + AdminJs1.js() + AdminJs2.js() + AdminJs3.js() + AdminJs4.js() + AdminJs5.js() + AdminJs6.js() + AdminJs7.js()
 }
