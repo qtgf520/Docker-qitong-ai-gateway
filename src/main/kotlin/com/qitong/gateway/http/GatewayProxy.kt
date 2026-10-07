@@ -367,12 +367,13 @@ class GatewayProxy(private val database: Database) {
 
         // ★ 余额检查：用户显式请求的模型为付费（price>0）且余额不足 → 拒绝使用（像AI回答提示）；免费模型不检查
         if (ownerUser != null && ownerUser.role != "admin") {
-            // 查找请求模型的真实价格（按 modelId 匹配任意 provider）
+            // 查找请求模型的真实价格（按 modelId 匹配任意 provider）★v1.109 未设自定义价也用价格表默认价，均视为付费
             val requestedModel = models.firstOrNull { it.modelId == modelId }
-            val requestedPaid = requestedModel?.price?.let { it > 0 } ?: false
+            val requestedPrice = requestedModel?.let { if (it.price > 0) it.price else PricingTable.priceOf(it.modelId).takeIf { p -> p > 0 } ?: PricingTable.DEFAULT_PRICE } ?: 0.0
+            val requestedPaid = requestedPrice > 0
             if (requestedPaid && ownerUser.quotaLimit <= 0) {
                 val bal = database.getUserBalance(ownerUser.id)
-                val estCost = 0.001 * (requestedModel?.price ?: 0.0) * com.qitong.gateway.http.PricingTable.OUTPUT_MULTIPLIER
+                val estCost = 0.001 * requestedPrice * com.qitong.gateway.http.PricingTable.OUTPUT_MULTIPLIER
                 if (bal < estCost) {
                     val hint = "您的余额不足（当前 ¥${"%.2f".format(bal)}），请先充值后再使用。模型 ${requestedModel!!.modelId} 为付费模型，需要余额才能调用。"
                     if (stream) {
@@ -551,7 +552,7 @@ class GatewayProxy(private val database: Database) {
             sanitizeRequestBody(bodyStr)
         }
 
-        val client = com.qitong.gateway.network.UpstreamClient.getClient(useProxy = targetModel.useProxy)
+        val client = com.qitong.gateway.network.UpstreamClient.getClient(useProxy = targetModel.useProxy, stream = stream)
         val uploadBytes = finalBody.toByteArray(Charsets.UTF_8).size.toLong()
         val req = okhttp3.Request.Builder()
             .url("$upstreamUrl$targetPath")
@@ -610,6 +611,8 @@ class GatewayProxy(private val database: Database) {
                             val buf = ByteArray(8192)
                             var n: Int
                             val sb = StringBuilder()   // ★ v1.108 流式 token 统计：捕获 SSE 文本提取 usage
+                            // ★ v1.109 流式空闲超时：上游 5 分钟无数据视为挂起，断开触发故障转移（防止调佣不回复）
+                            source.timeout().timeout(300, TimeUnit.SECONDS)
                             while (true) {
                                 n = runCatching { source.read(buf) }.getOrNull() ?: -1
                                 if (n < 0) break
@@ -715,9 +718,10 @@ class GatewayProxy(private val database: Database) {
             // token 缺省时按字节估算（兼容无 usage 字段的上游）
             val estTokens = if (totalTokens > 0) totalTokens.toLong()
                 else ((downloadBytes + uploadBytes) / 4).coerceAtLeast(1)
-            // 计算成本：模型自定义价 price>0 才扣费；price=0（含默认0）→ 免费模型不扣
-            val price = if (model.price > 0) model.price else 0.0
-            val cost = if (price > 0) estTokens / 1_000_000.0 * price * PricingTable.OUTPUT_MULTIPLIER else 0.0
+            // ★ v1.109 成本计算：模型自定义价优先；未设（price=0）用价格表默认价（PricingTable），不再免费 → 费用不再 0.000
+            val price = if (model.price > 0) model.price
+                else PricingTable.priceOf(model.modelId).takeIf { it > 0 } ?: PricingTable.DEFAULT_PRICE
+            val cost = estTokens / 1_000_000.0 * price * PricingTable.OUTPUT_MULTIPLIER
             val userId = ownerUser?.id ?: 0
 
             // 商业化扣款：付费模型扣自己余额（精确到分，余额不足则不扣不产生负数）；免费模型不扣

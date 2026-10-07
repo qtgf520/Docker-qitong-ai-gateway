@@ -1454,6 +1454,7 @@ class Database(private val dbPath: String) {
     /** ★ v1.104 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.109", "费用修复 + API 持久不掉线（超时兜底）", "费用不再0.000——模型未设自定义价时自动用价格表默认价计费；非流式请求加60s读超时+120s总超时，流式SSE加5分钟空闲超时，上游挂起快速失败→故障转移→友好提示，对接者不再收重试5遍不回复"),
             Triple("v1.108", "用量统计修复（token/费用/密钥统计全正常）", "修复API密钥用量统计不到（currentApiKeyLabel从未赋值→从请求attributes读取）；修复流式token全0（SSE流内解析usage）；按模型用量汇总加删除按钮；传输明细费用随token正确计算"),
             Triple("v1.107", "用量统计完善 + 万人并发 + 多项体验修复", "按API密钥用量可单独删除某Key统计；OkHttp连接池5→200每host并发200 Dispatcher256线程顶万人并发；/v1/models按测速排序附healthy修复不可用模型返回空白；余额扣费流水备注带模型名；管理员可调整用户余额和累计充值；移除智能工具页；弹窗支持滚动；首页统计卡片与网关控制隔开"),
             Triple("v1.106", "对外模型展示服务商 P 标识", "对外 /v1/models 每个模型显示「P几·模型名」（服务商自定义ID或P+ID），新增 provider_label/provider_name 字段；后台模型页/聊天下拉/密钥选择器同步显示 P 标识，前后台一一对应"),

@@ -118,6 +118,22 @@ object UpstreamClient {
     fun getClient(useProxy: Boolean): OkHttpClient =
         if (useProxy) client else directClient
 
+    /** ★ v1.109 非流式请求客户端（readTimeout 60s 兜底，防上游挂起卡死「调佣不回复」）；流式用上面无限超时的 client */
+    @Volatile
+    private var clientShort: OkHttpClient? = null
+    @Volatile
+    private var directShort: OkHttpClient? = null
+
+    fun getClient(useProxy: Boolean, stream: Boolean): OkHttpClient {
+        if (stream) return getClient(useProxy)
+        if (useProxy) {
+            if (clientShort == null) clientShort = createClient().newBuilder().readTimeout(60, TimeUnit.SECONDS).callTimeout(120, TimeUnit.SECONDS).build()
+            return clientShort!!
+        }
+        if (directShort == null) directShort = createDirectClient().newBuilder().readTimeout(60, TimeUnit.SECONDS).callTimeout(120, TimeUnit.SECONDS).build()
+        return directShort!!
+    }
+
     /** 获取默认客户端 */
     fun getOkHttpClient(): OkHttpClient = client
 }
