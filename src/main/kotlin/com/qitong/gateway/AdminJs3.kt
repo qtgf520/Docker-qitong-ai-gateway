@@ -126,7 +126,7 @@ loaders.usage = function(){
  api('/api/stats').then(function(r){
   var s = r.data;
   var rows = (s.usage || []).map(function(u,i){
-   return '<tr><td>'+(i+1)+'</td><td>'+esc(u.model_key)+'</td><td>'+(u.calls||0)+'</td><td>'+fmtNum(u.total_tokens||0)+'</td><td>'+fmtBytes(u.upload_bytes||0)+'</td><td>'+fmtBytes(u.download_bytes||0)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td></tr>';
+   return '<tr><td>'+(i+1)+'</td><td>'+esc(u.model_key)+'</td><td>'+(u.calls||0)+'</td><td>'+fmtNum(u.total_tokens||0)+'</td><td>'+fmtBytes(u.upload_bytes||0)+'</td><td>'+fmtBytes(u.download_bytes||0)+'</td><td>¥'+(u.cost||0).toFixed(4)+'</td><td><button class="btn btn-danger btn-sm" onclick="delModelUsage(\''+esc(u.model_key).replace(/'/g,'&#39;')+'\')">删除</button></td></tr>';
   }).join('');
   // 传输明细（每次调用一条）
   api('/api/usage/recent').then(function(rr){
@@ -152,8 +152,8 @@ loaders.usage = function(){
      '<div class="stat"><div class="num">'+fmtBytes(s.totalDownload)+'</div><div class="lbl">总下行</div></div>',
      '<div class="stat"><div class="num">'+(s.usage||[]).length+'</div><div class="lbl">模型维度</div></div>',
     '</div>',
-    '<div class="card" style="margin-top:14px"><h3>按模型用量汇总</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>模型Key</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th><th>费用</th></tr></thead><tbody>' +
-    rows + '<tr><td colspan="7" style="text-align:center;color:var(--muted)">' + ((s.usage||[]).length ? '' : '暂无用量') + '</td></tr>' +
+    '<div class="card" style="margin-top:14px"><h3>按模型用量汇总 <span style="font-size:12px;color:var(--muted)">可单独删除该模型全部用量</span></h3><div class="table-wrap"><table><thead><tr><th>#</th><th>模型Key</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th><th>费用</th><th>操作</th></tr></thead><tbody>' +
+    rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + ((s.usage||[]).length ? '' : '暂无用量') + '</td></tr>' +
     '</tbody></table></div></div>',
     '<div class="card" style="margin-top:14px"><h3>按API密钥用量 <span style="font-size:12px;color:var(--muted)">每个Key的调用汇总，可单独删除该Key全部用量</span></h3><div class="table-wrap"><table><thead><tr><th>#</th><th>密钥Label</th><th>调用</th><th>Tokens</th><th>上行</th><th>下行</th><th>费用</th><th>操作</th></tr></thead><tbody>' +
     keyRows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + ((s.apiKeyUsage||[]).length ? '' : '暂无密钥用量，发起API调用后显示') + '</td></tr>' +
@@ -184,6 +184,15 @@ window.clearUsageByModel = function(){
  if(!confirm('确定清理该模型的全部用量记录？')) return;
  api('/api/usage/clear-model', { method:'POST', body: { modelKey: sel.value } }).then(function(r){
   if(r.code === 0){ toast('已清理 ' + (r.data && r.data.deleted != null ? r.data.deleted : '') + ' 条', true); loaders.usage(); } else toast(r.msg, false);
+ });
+};
+// ★ v1.108 按模型删除全部用量（按模型汇总表行内按钮）
+window.delModelUsage = function(modelKey){
+ var mk = String(modelKey||'').replace(/&#39;/g, "'");
+ if(!mk){ toast('模型Key无效', false); return; }
+ if(!confirm('确定删除该模型「'+mk+'」的全部用量统计？')) return;
+ api('/api/usage/clear-model', { method:'POST', body: { modelKey: mk } }).then(function(r){
+  if(r.code === 0){ toast('已删除 ' + (r.data && r.data.deleted != null ? r.data.deleted : '') + ' 条', true); loaders.usage(); } else toast(r.msg, false);
  });
 };
 // ★ v1.107 按 API Key 删除全部用量（单独删某个Key的统计）

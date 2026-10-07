@@ -278,6 +278,8 @@ class GatewayProxy(private val database: Database) {
     ) {
         // 当前调用者用户ID（来自API密钥属主；本地/免密钥=0）
         val ownerId = try { call.attributes[ApiKeyOwnerKey] } catch (_: Exception) { 0L }
+        // ★ v1.108 修复：API Key 标签从未赋值 → 按密钥用量统计不到。从 call attributes 读出 label
+        currentApiKeyLabel = try { call.attributes[ApiKeyLabelKey] } catch (_: Exception) { "" }
         val ownerUser = if (ownerId > 0) database.getUserById(ownerId) else null
         // 用户级 API 开关检查（非管理员用户暂停则拒绝）
         if (ownerId > 0 && ownerUser?.role != "admin") {
@@ -607,12 +609,41 @@ class GatewayProxy(private val database: Database) {
                         if (source != null) {
                             val buf = ByteArray(8192)
                             var n: Int
+                            val sb = StringBuilder()   // ★ v1.108 流式 token 统计：捕获 SSE 文本提取 usage
                             while (true) {
                                 n = runCatching { source.read(buf) }.getOrNull() ?: -1
                                 if (n < 0) break
                                 if (n > 0) {
                                     runCatching { writeFully(buf, 0, n); flush() }
                                     downloadBytes += n
+                                    // 提取 SSE 数据行中的 usage（OpenAI 流式结尾会带 usage）
+                                    val chunk = String(buf, 0, n, Charsets.UTF_8)
+                                    sb.append(chunk)
+                                    val s = sb.toString()
+                                    val uIdx = s.lastIndexOf("\"usage\"")
+                                    if (uIdx >= 0) {
+                                        val brace = s.indexOf('{', uIdx)
+                                        if (brace >= 0) {
+                                            var depth = 0
+                                            var end = -1
+                                            for (j in brace until s.length) {
+                                                when (s[j]) {
+                                                    '{' -> depth++
+                                                    '}' -> { depth--; if (depth == 0) { end = j; break } }
+                                                }
+                                            }
+                                            if (end > brace) {
+                                                runCatching {
+                                                    val uo = org.json.JSONObject(s.substring(brace, end + 1))
+                                                    val pt = uo.optInt("prompt_tokens", 0)
+                                                    val ct = uo.optInt("completion_tokens", 0)
+                                                    if (pt > 0 || ct > 0) { promptTokens = pt; completionTokens = ct; totalTokens = pt + ct }
+                                                }
+                                                sb.setLength(0)
+                                            }
+                                        }
+                                    }
+                                    if (sb.length > 4096) sb.setLength(0)  // 防内存增长
                                 }
                             }
                         }
