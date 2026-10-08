@@ -513,6 +513,31 @@ object QqBotManager {
         val builtin = matchBuiltin(text, groupOpenid)
         if (builtin != null) {
             when (builtin.first) {
+                // ★ v1.113 人格/角色卡切换（Operit 角色卡精髓：多角色对话）
+                "persona_switch" -> {
+                    val name = builtin.second.trim().lowercase()
+                    val roleCards = mapOf(
+                        "助手" to "你是綦桐小助理，语气亲切专业，擅长解答问题、管理网关、安排任务，简洁高效。",
+                        "程序员" to "你是资深程序员「码哥」，说话带点技术范儿但通俗易懂，擅长写代码、讲架构、帮调试，爱用大白话解释技术。",
+                        "知心姐姐" to "你是温柔贴心的「知心姐姐」，擅长倾听、共情、给建议，语气温暖关怀，像朋友一样陪聊。",
+                        "翻译官" to "你是专业「翻译官」，擅长中英互译，翻译准确自然，遇到生词会解释，也帮忙润色表达。",
+                        "老师" to "你是耐心「老师」，擅长把复杂知识讲简单，循循善诱，鼓励式教学，爱举例说明。",
+                        "默认" to ""
+                    )
+                    val target = roleCards.entries.find { name.contains(it.key, true) || it.key.contains(name, true) }
+                    if (target == null) {
+                        send("可切换的人格：助手 / 程序员 / 知心姐姐 / 翻译官 / 老师 / 默认\n用法：发「切换人格 程序员」")
+                    } else {
+                        db.updateQqUserByGroup(userOpenid, groupOpenid, persona = target.value)
+                        send("✅ 已切换人格为「${target.key}」！之后对话我会以这个角色陪你聊～发「查看人格」看当前设定")
+                    }
+                    return
+                }
+                "persona_show" -> {
+                    val cur = db.getQqUserByGroup(userOpenid, groupOpenid)?.get("persona") as? String
+                    send(if (cur.isNullOrBlank()) "当前人格：默认（綦桐小助理）\n发「切换人格 程序员/知心姐姐/翻译官/老师」试试不同角色" else "当前人格：\n$cur\n\n发「切换人格 默认」恢复默认")
+                    return
+                }
                 "sign" -> {
                     if (onCooldown(userOpenid, 3)) return
                     val reward = (5..20).random()
@@ -1053,6 +1078,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (t.startsWith("绑定账号", true) || t.startsWith("绑定", true) && t.length > 3) return "bind" to t.substringAfter(" ").trim()
         if (t.equals("我的账号", true) || t.equals("账号信息", true)) return "my_account" to t
         if (t.equals("退出账号", true) || t.equals("解绑", true) || t.equals("退出登录", true)) return "unbind" to t
+        // ★ v1.113 人格切换：发「切换人格 助手/程序员/知心姐姐/翻译官/默认」等即可切换 qtai-sj 角色卡
+        if (t.startsWith("切换人格", true) || t.startsWith("人格切换", true) || t.startsWith("设置人格", true)) return "persona_switch" to t.substringAfter(" ").trim()
+        if (t.equals("查看人格", true) || t.equals("我的人格", true) || t.equals("人格", true)) return "persona_show" to t
         if (t.equals("切换卡片", true) || t.equals("卡片模式", true)) return "card_on" to t
         if (t.equals("切换文本", true) || t.equals("文本模式", true) || t.equals("切换文字", true)) return "card_off" to t
         // 群里改当前群备注/群名（管理员3+）
