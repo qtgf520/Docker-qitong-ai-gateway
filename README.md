@@ -223,6 +223,12 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v1.118（2026-10-08）· 技能/工具用户自管理
+- 🧩 **技能自管理**：QQ/微信发「添加技能 名称|触发词|回复内容」即可创建自己的技能，发「我的技能 / 删除技能 编号 / 停用技能 编号」管理自己的技能
+- 🤖 **智能体技能函数**：qtai-sj 新增 skill_my/skill_add/skill_del/skill_toggle（普通用户可添加自己的技能，管理员可管理公共技能）
+- 🔧 学到的技能 QQ/微信/网页三端自动生效（命中触发词自动回复）
+- 🛡 技能归属隔离：普通用户只能管理自己的技能，管理员可管理全部
+
 ### v1.117（2026-10-08）· 机器人全接口远程化（网关全部功能远程可查可改）
 - 🌐 **网关全接口远程化**：服务商/模型/密钥/用户/配置/公告/工单 全部支持 QQ 机器人 / 微信 / qtai-sj 远程查询、添加、修改、删除
 - 🛠 **新增一批智能体管理函数**：provider_list/add/update/delete/enable/disable、model_set_name/price/public/authorized/delete、api_key_list/create/delete、user_list/set_balance/set_role/delete、config_get/set、announcement_list/add/delete、ticket_reply/close

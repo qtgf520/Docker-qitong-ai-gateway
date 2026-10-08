@@ -564,6 +564,7 @@ object QqBotManager {
                         "· 待办 / 添加待办 xxx — 待办管理\n" +
                         "· 切换人格 程序员/知心姐姐/翻译官/老师 — 多角色对话\n" +
                         "· 画图 xxx — AI 生成图片\n" +
+                        "· 我的技能 / 添加技能 触发词|回复内容 — 技能自管理\n" +
                         "· 菜单 — 已安装插件"
                     val adminExtra = if (isAdmin) "\n\n🔐 管理员专属：\n" +
                         "· 管理 状态 / 体检 / 机器人 / 模型 / 余额\n" +
@@ -571,6 +572,56 @@ object QqBotManager {
                         "· 执行工作流 xxx — 触发自动化工作流\n" +
                         "· 充值 用户名 金额 / 扣款 用户名 金额 — 用户账务" else ""
                     send(common + adminExtra + "\n\n💬 其他需求直接说，我（qtai-sj）会自己找工具帮你搞定～")
+                    return
+                }
+                // ★ v1.118 技能自管理（添加/删除/停用/我的）
+                "skill_add" -> {
+                    val raw = builtin.second.trim()
+                    if (raw.isBlank()) { send("⚠️ 语法：添加技能 技能名|触发词|回复内容\n（如：添加技能 打招呼|你好|嗨~ 很高兴见到你！）"); return }
+                    val parts = raw.split("|").map { it.trim() }
+                    if (parts.size < 3) { send("⚠️ 请用 | 分隔：添加技能 名称|触发词|回复内容"); return }
+                    val bound = db.getQqBoundUser(userOpenid)
+                    val owner = bound?.id ?: 0L
+                    try {
+                        db.saveSkill(null, parts[0].take(30), parts[1].take(30), "contains", "reply", parts[2].take(500), true, owner)
+                        send("✅ 技能「${parts[0]}」已创建！\n触发词：${parts[1]}\n之后发「${parts[1]}」就会回复：${parts[2]}\n（发「我的技能」查看，发「删除技能 编号」删除）")
+                    } catch (e: Exception) { send("❌ 创建失败：${e.message}") }
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill", "添加技能 ${parts[0]}", System.currentTimeMillis() - t0)
+                    return
+                }
+                "skill_del" -> {
+                    val id = builtin.second.trim().toLongOrNull()
+                    if (id == null) { send("⚠️ 语法：删除技能 编号（发「我的技能」查编号）"); return }
+                    val owner = db.getQqBoundUser(userOpenid)?.id ?: 0L
+                    val list = try { db.getSkills(if (owner > 0) owner else 0L) } catch (e: Exception) { emptyList<Map<String, Any?>>() }
+                    val mine = list.any { (it["id"] as? Number)?.toLong() == id }
+                    if (!mine) { send("⚠️ 技能 $id 不存在或不属于你"); return }
+                    db.deleteSkill(id)
+                    send("✅ 技能 $id 已删除")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill", "删除技能 $id", System.currentTimeMillis() - t0)
+                    return
+                }
+                "skill_toggle" -> {
+                    val id = builtin.second.trim().toLongOrNull()
+                    if (id == null) { send("⚠️ 语法：停用技能 编号 或 启用技能 编号"); return }
+                    val owner = db.getQqBoundUser(userOpenid)?.id ?: 0L
+                    val list = try { db.getSkills(if (owner > 0) owner else 0L) } catch (e: Exception) { emptyList<Map<String, Any?>>() }
+                    val row = list.firstOrNull { (it["id"] as? Number)?.toLong() == id }
+                    if (row == null) { send("⚠️ 技能 $id 不存在或不属于你"); return }
+                    val newState = (row["enabled"] as? Boolean) != true
+                    db.saveSkill(id, "", "", "", "", "", newState, owner)
+                    send("✅ 技能「${row["name"]}」已${if (newState) "启用" else "停用"}")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill", "切换技能 $id -> $newState", System.currentTimeMillis() - t0)
+                    return
+                }
+                "skill_my" -> {
+                    val owner = db.getQqBoundUser(userOpenid)?.id ?: 0L
+                    val list = try { db.getSkills(if (owner > 0) owner else 0L) } catch (e: Exception) { emptyList<Map<String, Any?>>() }
+                    if (list.isEmpty()) { send("📭 还没有技能。发「添加技能 名称|触发词|回复内容」即可创建自己的技能"); return }
+                    send("🧩 【你的技能 ${list.size} 个】\n" + list.take(30).joinToString("\n") { sk ->
+                        "• [${sk["id"]}] ${sk["name"]}（触发：${sk["trigger"]}）${if ((sk["enabled"] as? Boolean) == true) "✅" else "⛔停用"}"
+                    } + "\n\n管理：删除技能 编号 / 停用技能 编号 / 启用技能 编号")
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "skill", "查看技能列表 ${list.size}个", System.currentTimeMillis() - t0)
                     return
                 }
                 "sign" -> {
@@ -1118,6 +1169,11 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (t.equals("查看人格", true) || t.equals("我的人格", true) || t.equals("人格", true)) return "persona_show" to t
         // ★ v1.114 功能快捷面板：发「功能」看全部快捷指令
         if (t.equals("功能", true) || t.equals("功能菜单", true) || t.equals("快捷指令", true) || t.equals("帮助", true) || t.equals("怎么用", true)) return "features" to t
+        // ★ v1.118 技能自管理：添加技能 / 删除技能 / 我的技能 / 停用技能
+        if (t.startsWith("添加技能", true) || t.startsWith("学习技能", true) || t.startsWith("新建技能", true)) return "skill_add" to t.substringAfter(" ").trim()
+        if (t.startsWith("删除技能", true) || t.startsWith("移除技能", true)) return "skill_del" to t.substringAfter(" ").trim()
+        if (t.startsWith("停用技能", true) || t.startsWith("启用技能", true)) return "skill_toggle" to t.substringAfter(" ").trim()
+        if (t.equals("我的技能", true) || t.equals("技能列表", true) || t.equals("查看技能", true)) return "skill_my" to t
         if (t.equals("切换卡片", true) || t.equals("卡片模式", true)) return "card_on" to t
         if (t.equals("切换文本", true) || t.equals("文本模式", true) || t.equals("切换文字", true)) return "card_off" to t
         // 群里改当前群备注/群名（管理员3+）

@@ -40,7 +40,8 @@ object SandboxEngine {
         "git_version", "git_log", "provider_list", "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
         "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
         "api_key_list", "api_key_create", "api_key_delete", "user_list", "user_set_balance", "user_set_role", "user_delete",
-        "config_get", "config_set", "announcement_add", "announcement_delete", "ticket_reply", "ticket_close"
+        "config_get", "config_set", "announcement_add", "announcement_delete", "ticket_reply", "ticket_close",
+        "skill_add", "skill_del", "skill_toggle", "skill_my"
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -377,13 +378,13 @@ $KNOWLEDGE_JSON
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
             "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list", "skill_list",
-            "git_version", "git_log", "announcement_list" -> "user" to "read"
+            "git_version", "git_log", "announcement_list", "skill_my" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
             "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list", "file_read", "file_search",
             "api_key_list", "user_list", "config_get" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
-            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn",
+            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn", "skill_add", "skill_del", "skill_toggle" -> "user" to "modify"
             "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
             "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
             "api_key_create", "api_key_delete", "user_set_balance", "user_set_role", "user_delete",
@@ -891,6 +892,49 @@ $KNOWLEDGE_JSON
                     val tid = args["ticket_id"]?.toLongOrNull() ?: 0
                     db.updateTicketStatus(tid, "closed")
                     "✅ 工单 $tid 已关闭"
+                }
+                "skill_my" -> {
+                    // ★ v1.118 我的技能列表（普通用户看自己的+公共；管理员全量）
+                    val owner = if (isAdmin) 0L else userId
+                    val list = try { db.getSkills(if (isAdmin) 0L else userId) } catch (e: Exception) { emptyList<Map<String, Any?>>() }
+                    if (list.isEmpty()) "📭 还没有技能。可发「添加技能 触发词|回复内容」自己学一个"
+                    else "🧩 【技能列表】\n" + list.take(30).joinToString("\n") { sk ->
+                        "• [${sk["id"]}] ${sk["name"]}（触发：${sk["trigger"]}）${if ((sk["enabled"] as? Boolean) == true) "✅" else "⛔停用"}"
+                    } + "\n\n用「删除技能 编号」「停用技能 编号」管理"
+                }
+                "skill_add" -> {
+                    // ★ v1.118 用户自添加技能：skill_add(name=技能名, trigger=触发词, content=回复内容/执行内容, action=reply/skill)
+                    val name = args["name"] ?: ""
+                    val trigger = args["trigger"] ?: ""
+                    val content = args["content"] ?: ""
+                    if (name.isBlank() || trigger.isBlank() || content.isBlank()) "⚠️ 语法：skill_add(name=技能名, trigger=触发词, content=回复/执行内容, action=reply 默认)"
+                    else {
+                        try {
+                            val owner = if (isAdmin) 0L else userId
+                            val id = db.saveSkill(null, name, trigger, "contains", (args["action"] ?: "reply"), content, true, owner)
+                            "✅ 技能「$name」已创建（ID=$id，触发词：$trigger）\nQQ/微信/网页 发「$trigger」即生效"
+                        } catch (e: Exception) { "❌ 创建失败：${e.message}" }
+                    }
+                }
+                "skill_del" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val list = try { db.getSkills(if (isAdmin) 0L else userId) } catch (e: Exception) { emptyList<Map<String, Any?>>() }
+                    val mine = list.any { (it["id"] as? Number)?.toLong() == id && (((it["ownerId"] as? Number)?.toLong() ?: 0) == userId || isAdmin || ((it["ownerId"] as? Number)?.toLong() ?: 0) == 0L) }
+                    if (!mine) "⚠️ 技能 ID=$id 不存在或无权限"
+                    else {
+                        db.deleteSkill(id)
+                        "✅ 技能 ID=$id 已删除"
+                    }
+                }
+                "skill_toggle" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val list = try { db.getSkills(if (isAdmin) 0L else userId) } catch (e: Exception) { emptyList<Map<String, Any?>>() }
+                    val row = list.firstOrNull { (it["id"] as? Number)?.toLong() == id }
+                    if (row == null) "⚠️ 技能 ID=$id 不存在或无权限"
+                    else {
+                        db.saveSkill(id, "", "", "", "", "", (row["enabled"] as? Boolean) != true, (row["ownerId"] as? Number)?.toLong() ?: userId)
+                        "✅ 技能「${row["name"]}」已${if ((row["enabled"] as? Boolean) == true) "停用" else "启用"}"
+                    }
                 }
                 "gateway_status" -> SkillExecutor.execute(db, "600001", "", userId)
                 "speed_ranking" -> SkillExecutor.execute(db, "600002", "", userId)

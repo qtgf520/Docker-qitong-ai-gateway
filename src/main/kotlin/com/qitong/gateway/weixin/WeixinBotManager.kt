@@ -252,6 +252,54 @@ object WeixinBotManager {
                 else "🔓 未绑定账号，先发「绑定账号」"
                 send(r); return
             }
+            // ★ v1.118 微信技能自管理（对齐 QQ）
+            t.startsWith("添加技能", true) || t.startsWith("学习技能", true) || t.startsWith("新建技能", true) -> {
+                val raw = t.substringAfter(" ").trim()
+                if (raw.isBlank()) { send("⚠️ 语法：添加技能 技能名|触发词|回复内容\n（如：添加技能 打招呼|你好|嗨~ 很高兴见到你！）"); return }
+                val parts = raw.split("|").map { it.trim() }
+                if (parts.size < 3) { send("⚠️ 请用 | 分隔：添加技能 名称|触发词|回复内容"); return }
+                val owner = bound?.id ?: 0L
+                try {
+                    d.saveSkill(null, parts[0].take(30), parts[1].take(30), "contains", "reply", parts[2].take(500), true, owner)
+                    send("✅ 技能「${parts[0]}」已创建！\n触发词：${parts[1]}\n之后发「${parts[1]}」就会回复：${parts[2]}\n（发「我的技能」查看，发「删除技能 编号」删除）")
+                } catch (e: Exception) { send("❌ 创建失败：${e.message}") }
+                d.addWeixinLog(bot.id, msg.from, "skill", "添加技能 ${parts[0]}", System.currentTimeMillis() - t0)
+                return
+            }
+            t.startsWith("删除技能", true) || t.startsWith("移除技能", true) -> {
+                val id = t.substringAfter(" ").trim().toLongOrNull()
+                if (id == null) { send("⚠️ 语法：删除技能 编号（发「我的技能」查编号）"); return }
+                val owner = bound?.id ?: 0L
+                val list = try { d.getSkills(owner) } catch (e: Exception) { emptyList<Map<String, Any?>>() }
+                if (!list.any { (it["id"] as? Number)?.toLong() == id }) { send("⚠️ 技能 $id 不存在或不属于你"); return }
+                d.deleteSkill(id)
+                send("✅ 技能 $id 已删除")
+                d.addWeixinLog(bot.id, msg.from, "skill", "删除技能 $id", System.currentTimeMillis() - t0)
+                return
+            }
+            t.startsWith("停用技能", true) || t.startsWith("启用技能", true) -> {
+                val id = t.substringAfter(" ").trim().toLongOrNull()
+                if (id == null) { send("⚠️ 语法：停用技能 编号 或 启用技能 编号"); return }
+                val owner = bound?.id ?: 0L
+                val list = try { d.getSkills(owner) } catch (e: Exception) { emptyList<Map<String, Any?>>() }
+                val row = list.firstOrNull { (it["id"] as? Number)?.toLong() == id }
+                if (row == null) { send("⚠️ 技能 $id 不存在或不属于你"); return }
+                val newState = (row["enabled"] as? Boolean) != true
+                d.saveSkill(id, "", "", "", "", "", newState, owner)
+                send("✅ 技能「${row["name"]}」已${if (newState) "启用" else "停用"}")
+                d.addWeixinLog(bot.id, msg.from, "skill", "切换技能 $id -> $newState", System.currentTimeMillis() - t0)
+                return
+            }
+            t == "我的技能" || t == "技能列表" || t == "查看技能" -> {
+                val owner = bound?.id ?: 0L
+                val list = try { d.getSkills(owner) } catch (e: Exception) { emptyList<Map<String, Any?>>() }
+                if (list.isEmpty()) { send("📭 还没有技能。发「添加技能 名称|触发词|回复内容」即可创建自己的技能"); return }
+                send("🧩 【你的技能 ${list.size} 个】\n" + list.take(30).joinToString("\n") { sk ->
+                    "• [${sk["id"]}] ${sk["name"]}（触发：${sk["trigger"]}）${if ((sk["enabled"] as? Boolean) == true) "✅" else "⛔停用"}"
+                } + "\n\n管理：删除技能 编号 / 停用技能 编号 / 启用技能 编号")
+                d.addWeixinLog(bot.id, msg.from, "skill", "查看技能列表 ${list.size}个", System.currentTimeMillis() - t0)
+                return
+            }
             t == "体检" || t.contains("全部功能") || t.contains("在线状态") -> {
                 val r = com.qitong.gateway.sandbox.SandboxEngine.execute("sys_health", emptyMap(), isAdmin, bound?.id ?: 0L, d)
                 send(r); return
@@ -265,6 +313,7 @@ object WeixinBotManager {
                     "· 待办 / 添加待办 xxx — 待办管理\n" +
                     "· 切换人格 程序员/知心姐姐/翻译官/老师 — 多角色对话\n" +
                     "· 画图 xxx — AI 生成图片\n" +
+                    "· 我的技能 / 添加技能 触发词|回复内容 — 技能自管理\n" +
                     "· 执行工作流 xxx — 触发自动化工作流"
                 val adminExtra = if (isAdmin) "\n\n🔐 管理员专属：\n" +
                     "· 管理 状态 / 体检 / 机器人 / 模型 / 余额\n" +
