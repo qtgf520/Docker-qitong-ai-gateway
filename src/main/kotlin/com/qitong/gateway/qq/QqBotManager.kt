@@ -1399,6 +1399,15 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (promoted.isNotEmpty()) {
             memSection += "\n\n【这位用户的重要信息（高价值记忆）】\n" + promoted.joinToString("\n") { "- " + it }
         }
+        // ★ v1.115 群级公共记忆：群内话题公共沉淀，群成员共享上下文（仅群消息注入）
+        if (groupOpenid.isNotBlank()) {
+            runCatching {
+                val gmems = db.getGroupBrainMemories(groupOpenid, limit = 5)
+                if (gmems.isNotEmpty()) {
+                    memSection += "\n\n【这个群的近期公共记忆（群聊话题，供你记住群里聊过什么）】\n" + gmems.reversed().joinToString("\n") { "- " + it }
+                }
+            }
+        }
         val sysFull = baseSys + memSection
         if (sysFull.isNotBlank()) msgs.put(JSONObject().put("role", "system").put("content", sysFull))
         hist.forEach { (role, content) -> msgs.put(JSONObject().put("role", role).put("content", content)) }
@@ -1538,6 +1547,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 // 长期记忆：把用户这次说的话存一条（截断，防止刷爆）
                 if (userText.length >= 4) {
                     runCatching { db.saveQqBrainMemory(userOpenid, userText.take(200)) }
+                    // ★ v1.115 群级公共记忆：群内话题也沉淀一份（仅群消息；截断防刷爆）
+                    if (groupOpenid.isNotBlank()) {
+                        runCatching { db.saveGroupBrainMemory(groupOpenid, userText.take(200)) }
+                    }
                 }
                 content
             }

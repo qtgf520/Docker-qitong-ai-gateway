@@ -309,12 +309,15 @@ window.loadBalanceLogs = function(){
    var el = $('balLogBox'); if(!el) return;
    var list = (r && r.data) || [];
    if(!list.length){ el.innerHTML = '<div style="color:var(--muted);padding:8px">暂无账单记录。充值/模型扣费后会显示在这里。</div>'; return; }
-   var rows = list.map(function(b){
-    var sign = (b.type === 'recharge' || b.type === 'commission') ? '+' : '';
-    var color = (b.type === 'recharge' || b.type === 'commission') ? 'var(--green)' : 'var(--red)';
-    var t = {recharge:'充值', consume:'扣费', commission:'返佣', admin_deduct:'管理员扣款'}[b.type] || b.type;
-    return '<tr><td>' + t + '</td><td style="color:' + color + ';font-weight:600">' + sign + '¥' + (b.amount||0).toFixed(2) + '</td><td style="color:var(--muted)">' + esc(b.remark||'') + '</td><td style="font-size:11px;color:var(--muted)">' + new Date(b.createdAt).toLocaleString('zh-CN',{hour12:false}) + '</td></tr>';
-   }).join('');
+    var rows = list.map(function(b){
+     var sign = (b.type === 'recharge' || b.type === 'commission') ? '+' : '';
+     var color = (b.type === 'recharge' || b.type === 'commission') ? 'var(--green)' : 'var(--red)';
+     var t = {recharge:'充值', consume:'扣费', commission:'返佣', admin_deduct:'管理员扣款'}[b.type] || b.type;
+     var amt = b.amount || 0;
+     // ★ v1.115 扣费金额精度：小额扣费（<0.005）也用 4 位小数显示，避免「扣了多少看不到」变成 ¥0.00
+     var amtStr = (Math.abs(amt) > 0 && Math.abs(amt) < 0.005) ? amt.toFixed(4) : amt.toFixed(2);
+     return '<tr><td>' + t + '</td><td style="color:' + color + ';font-weight:600">' + sign + '¥' + amtStr + '</td><td style="color:var(--muted)">' + esc(b.remark||'') + '</td><td style="font-size:11px;color:var(--muted)">' + new Date(b.createdAt).toLocaleString('zh-CN',{hour12:false}) + '</td></tr>';
+    }).join('');
    el.innerHTML = '<div class="table-wrap"><table style="min-width:520px"><thead><tr><th>类型</th><th>金额</th><th>说明</th><th>时间</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   });
  };

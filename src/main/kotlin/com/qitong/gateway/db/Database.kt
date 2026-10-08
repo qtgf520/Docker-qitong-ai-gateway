@@ -930,9 +930,9 @@ class Database(private val dbPath: String) {
     fun getTokenUsageSummary(): List<Map<String, Any?>> =
         query("SELECT model_key, model_name, provider_id, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(upload_bytes) as upload_bytes, SUM(download_bytes) as download_bytes, SUM(cost) as cost, COUNT(*) as calls FROM token_usage GROUP BY model_key ORDER BY total_tokens DESC")
 
-    /** 按用户维度的用量汇总（商业化） */
+    /** 按用户维度的用量汇总（商业化）★v1.115 补全 upload/download（之前漏了导致普通用户统计缺列） */
     fun getTokenUsageByUser(userId: Long): List<Map<String, Any?>> =
-        query("SELECT model_key, model_name, provider_id, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(cost) as cost, COUNT(*) as calls FROM token_usage WHERE user_id=? GROUP BY model_key ORDER BY total_tokens DESC", userId)
+        query("SELECT model_key, model_name, provider_id, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(upload_bytes) as upload_bytes, SUM(download_bytes) as download_bytes, SUM(cost) as cost, COUNT(*) as calls FROM token_usage WHERE user_id=? GROUP BY model_key ORDER BY total_tokens DESC", userId)
 
     fun getTokenUsageRecent(limit: Int = 200): List<TokenUsage> =
         query("SELECT * FROM token_usage ORDER BY id DESC LIMIT $limit").map {
@@ -1454,6 +1454,7 @@ class Database(private val dbPath: String) {
     /** ★ v1.104 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.115", "记忆补全+扣费显示+统计并发安全", "微信长期记忆补全（未绑定用户按openid记忆，对齐QQ）；新增群级公共记忆（群内话题公共沉淀、成员共享上下文）；余额账单小额扣费4位小数显示（不再显示¥0.00）；API Key标签改参数传递（修复万人并发下按密钥统计串号/不同步）；普通用户用量统计补上行/下行字节列；新增微信/群记忆管理接口"),
             Triple("v1.114", "功能快捷面板（QQ/微信）", "QQ/微信发「功能/帮助/怎么用」一键看常用指令（签到/查余额/网关状态/体检/提醒/待办/切换人格/画图等），管理员额外显示管理指令"),
             Triple("v1.113", "人格切换（多角色对话）", "QQ/微信发「切换人格 程序员/知心姐姐/翻译官/老师/助手/默认」切换qtai-sj角色卡，对话风格随之改变，按用户独立存储；发「查看人格」看当前设定"),
             Triple("v1.112", "qtai-sj 更聪明（主动记忆+任务节奏+对话温度）", "主动用记忆回忆上下文；复杂任务先给一句话计划再执行、关键步骤简短同步不刷屏；对话口语化有温度自然回应；追问有度一次只问最关键的1个问题"),
@@ -2680,16 +2681,108 @@ class Database(private val dbPath: String) {
                 "timestamp" to ((row["timestamp"] as? Number)?.toLong() ?: 0L)
             )
         }
-
     /** 删除单条 QQ 用户记忆。 */
     fun deleteQqBrainMemoryById(id: Long) {
         stmt("DELETE FROM brain_memory WHERE id=? AND tags LIKE 'qq:%'", id)
     }
+
+    // ============ ★ v1.115 群级公共记忆（复用 brain_memory 表，tags=group:{groupOpenid}，群内话题公共沉淀） ============
+
+    /** 读取某群最近的公共记忆（注入 system，群内成员共享群话题上下文）。 */
+    fun getGroupBrainMemories(groupOpenid: String, limit: Int = 5): List<String> {
+        val rows = query(
+            "SELECT content FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit",
+            "group:$groupOpenid"
+        )
+        return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
+    }
+
+    /** 写入一条群公共记忆。 */
+    fun saveGroupBrainMemory(groupOpenid: String, content: String, type: String = "short") {
+        stmt(
+            "INSERT INTO brain_memory (user_id,title,content,type,emotion,importance,timestamp,access_count,source,tags,model_id) VALUES (0,?,?,?,?,?,?,0,'group',?, '')",
+            groupOpenid, content.take(500), type, "neutral", 4, System.currentTimeMillis(), "group:$groupOpenid"
+        )
+    }
+
+    /** 清空某群公共记忆。 */
+    fun clearGroupBrainMemories(groupOpenid: String) {
+        stmt("DELETE FROM brain_memory WHERE tags=?", "group:$groupOpenid")
+    }
+
+    /** 自动过期：清理 N 天前的群记忆。 */
+    fun cleanOldGroupMemories(days: Int = 15) {
+        val cutoff = System.currentTimeMillis() - days * 86400000L
+        stmt("DELETE FROM brain_memory WHERE tags LIKE 'group:%' AND timestamp < ?", cutoff)
+    }
+
+    /** 读取某群记忆明细（供前端单条删除）。 */
+    fun getGroupBrainMemoryItems(groupOpenid: String, limit: Int = 100): List<Map<String, Any?>> =
+        query("SELECT id, content, type, timestamp FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit", "group:$groupOpenid").map { row ->
+            mapOf(
+                "id" to ((row["id"] as? Number)?.toLong() ?: 0L),
+                "content" to (row["content"] as? String).orEmpty(),
+                "type" to (row["type"] as? String).orEmpty(),
+                "timestamp" to ((row["timestamp"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    /** 删除单条群记忆。 */
+    fun deleteGroupBrainMemoryById(id: Long) {
+        stmt("DELETE FROM brain_memory WHERE id=? AND tags LIKE 'group:%'", id)
+    }
+
 
 
     /** 自动过期：清理 N 天前的 QQ 记忆。 */
     fun cleanOldQqMemories(days: Int = 30) {
         val cutoff = System.currentTimeMillis() - days * 86400000L
         stmt("DELETE FROM brain_memory WHERE tags LIKE 'qq:%' AND timestamp < ?", cutoff)
+    }
+
+    // ============ ★ v1.115 微信长期大脑记忆（复用 brain_memory 表，tags=wx:{openid}，对齐 QQ） ============
+
+    /** 读取某微信用户最近的记忆（未绑定账号也生效；绑定账号后合并账号记忆）。 */
+    fun getWxBrainMemories(openid: String, limit: Int = 6): List<String> {
+        val rows = query(
+            "SELECT content FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit",
+            "wx:$openid"
+        )
+        return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
+    }
+
+    /** 写入一条微信用户记忆。 */
+    fun saveWxBrainMemory(openid: String, content: String, type: String = "short") {
+        stmt(
+            "INSERT INTO brain_memory (user_id,title,content,type,emotion,importance,timestamp,access_count,source,tags,model_id) VALUES (0,?,?,?,?,?,?,0,'weixin',?, '')",
+            openid, content.take(500), type, "neutral", 5, System.currentTimeMillis(), "wx:$openid"
+        )
+    }
+
+    /** 清空某微信用户记忆。 */
+    fun clearWxBrainMemories(openid: String) {
+        stmt("DELETE FROM brain_memory WHERE tags=?", "wx:$openid")
+    }
+
+    /** 读取某微信用户记忆明细（供前端单条删除）。 */
+    fun getWxBrainMemoryItems(openid: String, limit: Int = 100): List<Map<String, Any?>> =
+        query("SELECT id, content, type, timestamp FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit", "wx:$openid").map { row ->
+            mapOf(
+                "id" to ((row["id"] as? Number)?.toLong() ?: 0L),
+                "content" to (row["content"] as? String).orEmpty(),
+                "type" to (row["type"] as? String).orEmpty(),
+                "timestamp" to ((row["timestamp"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    /** 删除单条微信用户记忆。 */
+    fun deleteWxBrainMemoryById(id: Long) {
+        stmt("DELETE FROM brain_memory WHERE id=? AND tags LIKE 'wx:%'", id)
+    }
+
+    /** 自动过期：清理 N 天前的微信记忆。 */
+    fun cleanOldWxMemories(days: Int = 30) {
+        val cutoff = System.currentTimeMillis() - days * 86400000L
+        stmt("DELETE FROM brain_memory WHERE tags LIKE 'wx:%' AND timestamp < ?", cutoff)
     }
 }

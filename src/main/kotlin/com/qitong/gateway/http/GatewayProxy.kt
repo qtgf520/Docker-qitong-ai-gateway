@@ -279,7 +279,9 @@ class GatewayProxy(private val database: Database) {
         // 当前调用者用户ID（来自API密钥属主；本地/免密钥=0）
         val ownerId = try { call.attributes[ApiKeyOwnerKey] } catch (_: Exception) { 0L }
         // ★ v1.108 修复：API Key 标签从未赋值 → 按密钥用量统计不到。从 call attributes 读出 label
-        currentApiKeyLabel = try { call.attributes[ApiKeyLabelKey] } catch (_: Exception) { "" }
+        // ★ v1.115 并发安全：改用局部变量+参数传递（原全局 volatile 在万人并发流式响应期间会被其他请求覆盖→按密钥统计串号/不同步）
+        val apiKeyLabel = try { call.attributes[ApiKeyLabelKey] } catch (_: Exception) { "" }
+        currentApiKeyLabel = apiKeyLabel  // 保留全局供其他读取点兼容
         val ownerUser = if (ownerId > 0) database.getUserById(ownerId) else null
         // 用户级 API 开关检查（非管理员用户暂停则拒绝）
         if (ownerId > 0 && ownerUser?.role != "admin") {
@@ -434,7 +436,7 @@ class GatewayProxy(private val database: Database) {
 
             attemptedModels.add(targetModel.modelId)
             try {
-                val success = forwardToUpstream(call, provider, targetModel, bodyStr, body, modelId, stream, path, ownerUser)
+                val success = forwardToUpstream(call, provider, targetModel, bodyStr, body, modelId, stream, path, ownerUser, apiKeyLabel)
                 if (success) {
                     // 记录实际命中的模型，首页灯跟随它
                     lastServedKey = "${targetModel.providerId}::${targetModel.modelId}"
@@ -532,7 +534,8 @@ class GatewayProxy(private val database: Database) {
         modelId: String,
         stream: Boolean,
         path: String,
-        ownerUser: User? = null
+        ownerUser: User? = null,
+        apiKeyLabel: String = ""  // ★ v1.115 并发安全：调用方传入（原全局 volatile 会被并发请求覆盖）
     ): Boolean {
         val startMs = System.currentTimeMillis()
         val upstreamUrl = provider.resolvedBaseUrl.trimEnd('/')
@@ -685,7 +688,7 @@ class GatewayProxy(private val database: Database) {
             }
 
             // 用量统计（含商业化扣费）
-            recordUsage(targetModel, modelId, uploadBytes, downloadBytes, ownerUser, promptTokens, completionTokens, totalTokens)
+            recordUsage(targetModel, modelId, uploadBytes, downloadBytes, ownerUser, promptTokens, completionTokens, totalTokens, apiKeyLabel)
             response.close()
             return true
         } else {
@@ -712,7 +715,8 @@ class GatewayProxy(private val database: Database) {
         model: AiModel, usedModelId: String,
         uploadBytes: Long, downloadBytes: Long,
         ownerUser: User? = null,
-        promptTokens: Int = 0, completionTokens: Int = 0, totalTokens: Int = 0
+        promptTokens: Int = 0, completionTokens: Int = 0, totalTokens: Int = 0,
+        apiKeyLabel: String = ""  // ★ v1.115 并发安全：由调用方传入（原全局 volatile 会被并发请求覆盖→按密钥统计串号）
     ) {
         try {
             // token 缺省时按字节估算（兼容无 usage 字段的上游）
@@ -741,35 +745,35 @@ class GatewayProxy(private val database: Database) {
                                 promptTokens = promptTokens.toLong(),
                                 completionTokens = completionTokens.toLong(),
                                 totalTokens = totalTokens.toLong(),
-                                uploadBytes = uploadBytes,
-                                downloadBytes = downloadBytes,
-                                apiKeyLabel = currentApiKeyLabel,
-                                userId = userId,
-                                cost = 0.0
-                            )
-                        )
-                        return
-                    }
-                }
-                // cost == 0 → 免费模型，不扣费
-            }
+                                 uploadBytes = uploadBytes,
+                                 downloadBytes = downloadBytes,
+                                 apiKeyLabel = apiKeyLabel,
+                                 userId = userId,
+                                 cost = 0.0
+                             )
+                         )
+                         return
+                     }
+                 }
+                 // cost == 0 → 免费模型，不扣费
+             }
 
-            database.addTokenUsage(
-                TokenUsage(
-                    modelKey = "${model.providerId}::${model.modelId}",
-                    modelName = model.displayName,
-                    providerId = model.providerId,
-                    promptTokens = promptTokens.toLong(),
-                    completionTokens = completionTokens.toLong(),
-                    totalTokens = totalTokens.toLong(),
-                    uploadBytes = uploadBytes,
-                    downloadBytes = downloadBytes,
-                    apiKeyLabel = currentApiKeyLabel,
-                    userId = userId,
-                    cost = cost
-                )
-            )
-        } catch (_: Exception) {}
+             database.addTokenUsage(
+                 TokenUsage(
+                     modelKey = "${model.providerId}::${model.modelId}",
+                     modelName = model.displayName,
+                     providerId = model.providerId,
+                     promptTokens = promptTokens.toLong(),
+                     completionTokens = completionTokens.toLong(),
+                     totalTokens = totalTokens.toLong(),
+                     uploadBytes = uploadBytes,
+                     downloadBytes = downloadBytes,
+                     apiKeyLabel = apiKeyLabel,
+                     userId = userId,
+                     cost = cost
+                 )
+             )
+         } catch (_: Exception) {}
     }
 
     @Volatile

@@ -417,7 +417,7 @@ object WeixinBotManager {
         } else {
             userPrompt.ifBlank { "你是綦桐小助理，运行在綦桐AI网关微信渠道。" }
         }
-        // ★ v76 微信长期记忆：绑定账号后按 userId 注入大脑记忆（每条消息带上下文，对齐 QQ）
+        // ★ v76 微信长期记忆：绑定账号后按 userId 注入大脑记忆；★v1.115 未绑定用户也按 openid 注入（对齐 QQ），不再「没记忆」
         if (userId > 0) {
             runCatching {
                 val mems = d.getMemories(userId, limit = 8)
@@ -426,6 +426,14 @@ object WeixinBotManager {
                         "- ${m["content"]}"
                     }
                     baseSys += memSection
+                }
+            }
+        } else {
+            // ★ v1.115 未绑定账号：按 openid 走微信独立记忆（对齐 QQ 的 qq:{openid} 通道）
+            runCatching {
+                val mems = d.getWxBrainMemories(msg.from, limit = 8)
+                if (mems.isNotEmpty()) {
+                    baseSys += "\n\n【你对这位用户的长期记忆】\n" + mems.reversed().joinToString("\n") { "- " + it }
                 }
             }
         }
@@ -563,12 +571,14 @@ object WeixinBotManager {
                 hist.add("assistant" to cleanFunctionTags(content))
                 while (hist.size > 20) hist.removeAt(0)
                 // ★ v92 微信记忆闭环增强：qtai-sj（sandboxOn）模式也沉淀记忆（对齐 QQ 长期记忆；受 memory_enabled 开关控制）
-                if (userId > 0 && d.getConfig("memory_enabled", "true") != "false") {
+                // ★v1.115 未绑定用户也按 openid 沉淀（对齐 QQ），绑定账号仍走账号记忆
+                if (d.getConfig("memory_enabled", "true") != "false") {
                     runCatching {
                         val memText = userText.trim()
                         if (memText.length in 4..200 && !memText.startsWith("绑定") && !memText.startsWith("停止") &&
                             !memText.startsWith("管理") && memText != "我的账号" && memText != "退出账号") {
-                            d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
+                            if (userId > 0) d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
+                            else d.saveWxBrainMemory(msg.from, memText.take(200))
                         }
                     }
                 }
@@ -611,12 +621,14 @@ object WeixinBotManager {
                 }
             } else {
                 // ★ v76 微信记忆存储：绑定账号后把有信息量的话存大脑记忆（对话期间存储，下次带上下文；受 memory_enabled 开关控制）
-                if (userId > 0 && !sandboxOn && d.getConfig("memory_enabled", "true") != "false") {
+                // ★v1.115 未绑定用户也按 openid 沉淀（对齐 QQ）
+                if (!sandboxOn && d.getConfig("memory_enabled", "true") != "false") {
                     runCatching {
                         val memText = userText.trim()
                         if (memText.length in 4..200 && !memText.startsWith("绑定") && !memText.startsWith("停止") &&
                             !memText.startsWith("管理") && memText != "我的账号" && memText != "退出账号") {
-                            d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
+                            if (userId > 0) d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
+                            else d.saveWxBrainMemory(msg.from, memText.take(200))
                         }
                     }
                 }
