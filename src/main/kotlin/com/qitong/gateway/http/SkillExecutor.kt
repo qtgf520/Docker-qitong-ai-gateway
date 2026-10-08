@@ -15,6 +15,20 @@ object SkillExecutor {
         param: String,
         userId: Long
     ): String {
+        // ★ v1.110 严重bug修复：敏感管理操作必须有管理员身份（防任何用户/Agent 循环给自己充值）
+        val adminOnlyCodes = setOf(
+            "900020", "900021",   // 充值 / 扣款
+            "900010", "900011",   // 开/关API密钥校验
+            "800001", "800002", "800003", "800004", // 启停模型/服务商
+            "700001", "700002"    // 改配置类（若存在）
+        )
+        if (code in adminOnlyCodes) {
+            val caller = database.getUserById(userId)
+            val isAdminCaller = caller?.role == "admin" || caller?.role == "agent"
+            if (!isAdminCaller) {
+                return "⛔ 该操作仅限管理员/代理执行（当前身份: ${caller?.username ?: "未绑定账号"}）"
+            }
+        }
         return when (code) {
             // ========== 1xxxxx 测速 ==========
             "100001" -> {

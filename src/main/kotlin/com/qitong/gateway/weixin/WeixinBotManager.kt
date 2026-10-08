@@ -29,6 +29,7 @@ object WeixinBotManager {
     private val stopSignals = ConcurrentHashMap<String, Boolean>()
     private var db: Database? = null
     private var gatewayPort = 18889
+    @Volatile private var watchdogStarted = false
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
@@ -46,6 +47,26 @@ object WeixinBotManager {
     fun startAll(database: Database, port: Int) {
         init(database, port)
         runCatching { database.getWeixinBots().filter { it.enabled }.forEach { startBot(it) } }
+        // ★ v1.110 看门狗：每 60 秒检查掉线 bot 自动拉起——修复「重启镜像才能登上」
+        if (!watchdogStarted) {
+            watchdogStarted = true
+            Thread {
+                while (true) {
+                    try {
+                        Thread.sleep(60_000L)
+                        val bots = db?.getWeixinBots()?.filter { it.enabled } ?: continue
+                        for (b in bots) {
+                            val st = statusOf(b.id)
+                            if (st.status == WeixinBotStatus.ERROR || st.status == WeixinBotStatus.OFFLINE) {
+                                println("[WeixinBot] ${b.name} 掉线自动重启（status=${st.status} lastErr=${st.lastError}）")
+                                runCatching { startBot(b) }
+                            }
+                        }
+                    } catch (_: InterruptedException) { break }
+                    catch (_: Exception) { }
+                }
+            }.apply { isDaemon = true; name = "weixin-watchdog"; start() }
+        }
     }
 
     /** ★ v76 全网广播（心跳/计划任务到期推送给所有在线微信 bot 的最近联系人） */
@@ -466,21 +487,13 @@ object WeixinBotManager {
                     // ★ v1.104 进度增强：显示「第 N 步/共 M 步」让用户看到整体进度
                     val totalSteps = calls.size
                     if (calls.size <= 1) {
-                        // 单调用直接执行
+                        // 单调用直接执行（★v1.110 静默：不推过程，只回最终答案）
                         val (fn, args) = calls[0]
-                        val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
-                        send("💭 我在帮你处理（第 $loop 步/共 ${(loop + totalSteps).coerceAtMost(8)} 步），正在调用 ${fn}(${argTxt})…")
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
                         results.append("【$fn 执行结果】\n$r\n")
-                        // ★ v83 不截断：完整结果交给 send 内置分段（超长自动多条）
-                        send("✅ $fn：\n$r")
                         executedCalls = true
                     } else {
-                        // 多调用并行：先统一推送思考（用户看到一次批次），再并发执行，结果按序推送
-                        calls.forEach { (fn, args) ->
-                            val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
-                            send("💭 我在并行批处理（第 $loop 轮，共 ${calls.size} 个）：${fn}(${argTxt})…")
-                        }
+                        // 多调用并行（★v1.110 静默：不推「并行批处理」过程，只回最终答案）
                         val executor = java.util.concurrent.Executors.newFixedThreadPool(calls.size.coerceAtMost(5))
                         try {
                             val futures = calls.map { (fn, args) ->
@@ -493,12 +506,9 @@ object WeixinBotManager {
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append("【$fn 执行结果】\n$r\n")
-                                    // ★ v83 不截断：完整结果交给 send 内置分段
-                                    send("✅ $fn：\n$r")
                                     executedCalls = true
                                 } catch (e: Exception) {
                                     results.append("【工具执行异常】\n${e.message}\n")
-                                    send("❌ 工具执行异常：${e.message}")
                                 }
                             }
                         } finally {
@@ -506,7 +516,7 @@ object WeixinBotManager {
                         }
                     }
                     val cleanText = cleanFunctionTags(content)
-                    // 结果回填给模型继续决策
+                    // 结果回填给模型继续决策（★v1.110 静默：结果未展示给用户，要求模型输出完整最终答案）
                     val nextBody = JSONObject()
                         .put("model", bot.aiModel)
                         .put("messages", JSONArray()
@@ -514,7 +524,7 @@ object WeixinBotManager {
                             .put(JSONObject().put("role", "user").put("content", userText))
                             .put(JSONObject().put("role", "assistant").put("content", cleanText))
                             .put(JSONObject().put("role", "user").put("content",
-                                "【工具执行结果（已同步给用户）】\n$results\n\n根据结果：如果任务完成，直接给出简洁总结（不要复述工具输出）；如果还需要其他操作，继续调用工具。"))) .toString()
+                                "【工具执行结果（内部参考，尚未向用户展示）】\n$results\n\n请基于以上真实执行结果给用户输出**完整、自然、像真人**的最终答复：\n- 任务完成→直接输出最终答案（包含关键结果/数据/结论，不要用空话）\n- 还需更多操作→继续调用工具\n- 不要输出函数调用语法，只输出对用户说的话"))) .toString()
                     val nextReq = Request.Builder()
                         .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
                         .addHeader("Content-Type", "application/json")
