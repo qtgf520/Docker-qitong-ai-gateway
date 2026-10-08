@@ -162,7 +162,7 @@ ${adminCss()}
       <a data-page="announcements" class="admin-only"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><b>公告管理</b></a>
       <a data-page="users" class="admin-only agent-only"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><b>用户管理</b></a>
       <a data-page="about"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><b>关于我们</b></a>
-    </nav></nav>
+    </nav>
   </aside>
   <!-- 内容区 -->
   <main class="content" id="content">
