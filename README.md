@@ -223,6 +223,12 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v1.117（2026-10-08）· 机器人全接口远程化（网关全部功能远程可查可改）
+- 🌐 **网关全接口远程化**：服务商/模型/密钥/用户/配置/公告/工单 全部支持 QQ 机器人 / 微信 / qtai-sj 远程查询、添加、修改、删除
+- 🛠 **新增一批智能体管理函数**：provider_list/add/update/delete/enable/disable、model_set_name/price/public/authorized/delete、api_key_list/create/delete、user_list/set_balance/set_role/delete、config_get/set、announcement_list/add/delete、ticket_reply/close
+- 🔐 **权限模型**：管理员=全量读写；普通用户=只读自己的数据（公告人人可读）；危险操作（增删改）一律 admin 校验
+- 🔄 三通道（QQ/微信/qtai-sj）共用同一套沙盒函数，不用改机器人代码即可远程管理网关
+
 ### v1.116（2026-10-08）· 页面重划 + 机器人流畅性三连修 + Git版本查询
 - 🧭 **个人中心/网关设置重划**：个人人格配置、修改密码、大脑绑定、界面语言、限流设置移入「个人中心」；网关设置保留全局配置（API校验/故障转移/心跳/缓存/计划任务/通知/备份，管理员专属）
 - ⚡ **机器人停止即时生效**：发「停止」立即中断当前模型调用与任务（不再等跑完/等45秒超时）

@@ -1454,6 +1454,7 @@ class Database(private val dbPath: String) {
     /** ★ v1.104 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.117", "机器人全接口远程化", "网关全部功能远程可查可改：新增 provider_list/add/update/delete/enable/disable、model_set_name/price/public/authorized/delete、api_key_list/create/delete、user_list/set_balance/set_role/delete、config_get/set、announcement_list/add/delete、ticket_reply/close 等智能体管理函数；QQ/微信/qtai-sj 三通道共用；权限模型：管理员全量读写，普通用户只读自己的，公告人人可读"),
             Triple("v1.116", "页面重划+机器人流畅性三连修+Git版本查询", "个人中心/网关设置重划（人格/改密/大脑绑定/语言/限流移个人中心）；机器人停止即时生效（发停止立即中断模型调用）；不间断追问（执行中发新消息立即接入上下文继续干）；Agent轮数8→20单轮等待90秒（多思考不停息）；长任务每30秒推进度；qtai-sj新增git_version/git_log查版本与提交历史"),
             Triple("v1.115", "记忆补全+扣费显示+统计并发安全", "微信长期记忆补全（未绑定用户按openid记忆，对齐QQ）；新增群级公共记忆（群内话题公共沉淀、成员共享上下文）；余额账单小额扣费4位小数显示（不再显示¥0.00）；API Key标签改参数传递（修复万人并发下按密钥统计串号/不同步）；普通用户用量统计补上行/下行字节列；新增微信/群记忆管理接口"),
             Triple("v1.114", "功能快捷面板（QQ/微信）", "QQ/微信发「功能/帮助/怎么用」一键看常用指令（签到/查余额/网关状态/体检/提醒/待办/切换人格/画图等），管理员额外显示管理指令"),

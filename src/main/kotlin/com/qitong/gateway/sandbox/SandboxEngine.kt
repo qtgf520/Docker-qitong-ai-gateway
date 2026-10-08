@@ -37,7 +37,10 @@ object SandboxEngine {
         "account_info", "account_bind", "account_unbind",
         "mail_send", "update_logs", "code_run", "memory_search", "todo_add", "todo_list", "todo_done", "todo_del",
         "file_read", "file_write", "file_search", "skill_learn", "skill_list", "image_gen", "cache_stats", "skill_auto_learn",
-        "git_version", "git_log"
+        "git_version", "git_log", "provider_list", "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
+        "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
+        "api_key_list", "api_key_create", "api_key_delete", "user_list", "user_set_balance", "user_set_role", "user_delete",
+        "config_get", "config_set", "announcement_add", "announcement_delete", "ticket_reply", "ticket_close"
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -105,6 +108,32 @@ object SandboxEngine {
             .put(func("mail_send", "发送邮件（SMTP，管理员；复用网关通知配置；to可为任意收件人）", "admin", "modify", listOf(param("to", true, "收件人邮箱"), param("title", false, "邮件主题"), param("content", true, "邮件内容")), "发送结果"))
             .put(func("git_version", "查看网关 Git 版本信息（只读）：当前版本号/最新提交/最近 tag（用户问版本号时用这个）", "user", "read", emptyList(), "版本号/提交摘要/tag列表"))
             .put(func("git_log", "查看网关 Git 最近提交历史（只读）：最近 N 条提交（用户问更新了啥/历史记录时用）", "user", "read", listOf(param("n", false, "条数，默认10")), "最近提交列表"))
+            // ===== ★ v1.117 网关全接口远程管理（管理员；QQ/微信/qtai-sj 共用） =====
+            .put(func("provider_list", "查看全部服务商（管理员）", "admin", "read", emptyList(), "服务商ID/名称/类型/状态"))
+            .put(func("provider_add", "新增服务商（管理员；type=OpenAI Compatible/Ollama/Custom）", "admin", "modify", listOf(param("name", true, "服务商名称"), param("type", false, "类型，默认OpenAI Compatible"), param("base_url", true, "接口地址如 https://api.openai.com"), param("api_key", false, "API密钥"), param("port", false, "端口，可选"), param("chat_path", false, "对话路径，默认/v1/chat/completions")), "新增结果/新服务商ID"))
+            .put(func("provider_update", "更新服务商配置（管理员；传要改的字段）", "admin", "modify", listOf(param("id", true, "服务商ID"), param("name", false, "新名称"), param("base_url", false, "新地址"), param("api_key", false, "新密钥"), param("port", false, "新端口")), "更新结果"))
+            .put(func("provider_delete", "删除服务商（管理员；会连带删除其下模型）", "admin", "modify", listOf(param("id", true, "服务商ID")), "删除结果"))
+            .put(func("provider_enable", "启用服务商（管理员）", "admin", "modify", listOf(param("id", true, "服务商ID")), "启用结果"))
+            .put(func("provider_disable", "停用服务商（管理员）", "admin", "modify", listOf(param("id", true, "服务商ID")), "停用结果"))
+            .put(func("model_set_name", "修改模型显示名/别名（管理员）", "admin", "modify", listOf(param("id", true, "模型ID"), param("name", false, "新显示名"), param("alias", false, "自定义别名")), "修改结果"))
+            .put(func("model_set_price", "设置模型单价（元/百万Token，管理员；0=按默认价格表）", "admin", "modify", listOf(param("id", true, "模型ID"), param("price", true, "单价数字")), "设置结果"))
+            .put(func("model_set_public", "设置模型是否公用（管理员；1=所有人可见，0=私有）", "admin", "modify", listOf(param("id", true, "模型ID"), param("is_public", true, "1或0")), "设置结果"))
+            .put(func("model_set_authorized", "设置模型可授权用户ID列表（逗号分隔；定制模型只有这些人可见）", "admin", "modify", listOf(param("id", true, "模型ID"), param("user_ids", true, "用户ID逗号分隔，空=仅属主")), "设置结果"))
+            .put(func("model_delete", "删除模型（管理员）", "admin", "modify", listOf(param("id", true, "模型ID")), "删除结果"))
+            .put(func("api_key_list", "查看全部API密钥（管理员）", "admin", "read", emptyList(), "密钥/标签/启停状态/属主"))
+            .put(func("api_key_create", "创建API密钥（管理员；label标签，model_ids模型ID逗号分隔可选）", "admin", "modify", listOf(param("label", true, "密钥标签/备注"), param("model_ids", false, "可访问模型ID逗号分隔，空=全部")), "新密钥内容"))
+            .put(func("api_key_delete", "删除API密钥（管理员）", "admin", "modify", listOf(param("key", true, "密钥值")), "删除结果"))
+            .put(func("user_list", "查看全部用户（管理员）", "admin", "read", emptyList(), "用户ID/用户名/角色/余额"))
+            .put(func("user_set_balance", "设置用户余额（管理员；精确值）", "admin", "modify", listOf(param("username", true, "用户名"), param("balance", true, "新余额数字")), "设置结果"))
+            .put(func("user_set_role", "设置用户角色（管理员；admin/agent/user）", "admin", "modify", listOf(param("username", true, "用户名"), param("role", true, "新角色")), "设置结果"))
+            .put(func("user_delete", "删除用户（管理员）", "admin", "modify", listOf(param("username", true, "用户名")), "删除结果"))
+            .put(func("config_get", "查看网关配置项（管理员；key留空=全部）", "admin", "read", listOf(param("key", false, "配置键名，空=全部")), "配置值"))
+            .put(func("config_set", "修改网关配置项（管理员；如 auto_failover/response_cache/active_model_key）", "admin", "modify", listOf(param("key", true, "配置键"), param("value", true, "配置值")), "设置结果"))
+            .put(func("announcement_list", "查看公告列表（只读）", "user", "read", emptyList(), "公告标题/内容/时间"))
+            .put(func("announcement_add", "发布公告（管理员）", "admin", "modify", listOf(param("title", true, "公告标题"), param("content", true, "公告内容")), "发布结果"))
+            .put(func("announcement_delete", "删除公告（管理员）", "admin", "modify", listOf(param("id", true, "公告ID")), "删除结果"))
+            .put(func("ticket_reply", "回复工单（管理员；给用户工单回复）", "admin", "modify", listOf(param("ticket_id", true, "工单ID"), param("content", true, "回复内容")), "回复结果"))
+            .put(func("ticket_close", "关闭工单（管理员）", "admin", "modify", listOf(param("ticket_id", true, "工单ID")), "关闭结果"))
             .toString()
     }
 
@@ -348,12 +377,17 @@ $KNOWLEDGE_JSON
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
             "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list", "skill_list",
-            "git_version", "git_log" -> "user" to "read"
+            "git_version", "git_log", "announcement_list" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
-            "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list", "file_read", "file_search" -> "admin" to "read"
+            "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list", "file_read", "file_search",
+            "api_key_list", "user_list", "config_get" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
-            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn" -> "admin" to "modify"
+            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn",
+            "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
+            "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
+            "api_key_create", "api_key_delete", "user_set_balance", "user_set_role", "user_delete",
+            "config_set", "announcement_add", "announcement_delete", "ticket_reply", "ticket_close" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -617,6 +651,247 @@ $KNOWLEDGE_JSON
                 "model_enable" -> SkillExecutor.execute(db, "800003", args["model_name"] ?: "", userId)
                 "model_disable" -> SkillExecutor.execute(db, "800004", args["model_name"] ?: "", userId)
                 "provider_get_all" -> SkillExecutor.execute(db, "600007", "", userId)
+                "provider_list" -> {
+                    // ★ v1.117 查看全部服务商
+                    val provs = db.getProviders()
+                    if (provs.isEmpty()) "📭 暂无服务商"
+                    else "🏢 【服务商列表】\n" + provs.joinToString("\n") { p ->
+                        "• [${p.id}] ${p.name}（${p.type}）${if (p.isEnabled) "✅启用" else "⛔停用"}｜${p.resolvedBaseUrl}"
+                    }
+                }
+                "provider_add" -> {
+                    // ★ v1.117 新增服务商
+                    val name = args["name"] ?: ""
+                    val type = (args["type"] ?: "OpenAI Compatible")
+                    val baseUrl = args["base_url"] ?: ""
+                    if (name.isBlank() || baseUrl.isBlank()) "⚠️ 语法：provider_add(name=服务商名, base_url=接口地址, type=类型, api_key=可选, port=可选, chat_path=可选)"
+                    else {
+                        try {
+                            val id = db.addProvider(com.qitong.gateway.model.Provider(
+                                name = name,
+                                type = type,
+                                baseUrl = baseUrl,
+                                port = args["port"] ?: "",
+                                apiKey = args["api_key"] ?: "",
+                                isEnabled = true,
+                                chatPath = (args["chat_path"] ?: "").ifBlank { null },
+                                ownerId = 0,
+                                isPublic = false
+                            ))
+                            "✅ 服务商「$name」新增成功（ID=$id）"
+                        } catch (e: Exception) { "❌ 新增失败：${e.message}" }
+                    }
+                }
+                "provider_update" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val p = db.getProviderById(id)
+                    if (p == null) "⚠️ 服务商 ID=$id 不存在"
+                    else {
+                        try {
+                            val np = p.copy(
+                                name = args["name"]?.takeIf { it.isNotBlank() } ?: p.name,
+                                baseUrl = args["base_url"]?.takeIf { it.isNotBlank() } ?: p.baseUrl,
+                                apiKey = args["api_key"] ?: p.apiKey,
+                                port = args["port"] ?: p.port
+                            )
+                            db.updateProvider(np)
+                            "✅ 服务商「${np.name}」已更新"
+                        } catch (e: Exception) { "❌ 更新失败：${e.message}" }
+                    }
+                }
+                "provider_delete" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val p = db.getProviderById(id)
+                    if (p == null) "⚠️ 服务商 ID=$id 不存在"
+                    else {
+                        db.deleteProvider(id)
+                        "✅ 服务商「${p.name}」已删除（含其下模型）"
+                    }
+                }
+                "provider_enable" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val p = db.getProviderById(id)
+                    if (p == null) "⚠️ 服务商 ID=$id 不存在"
+                    else { db.updateProvider(p.copy(isEnabled = true)); "✅ 服务商「${p.name}」已启用" }
+                }
+                "provider_disable" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val p = db.getProviderById(id)
+                    if (p == null) "⚠️ 服务商 ID=$id 不存在"
+                    else { db.updateProvider(p.copy(isEnabled = false)); "✅ 服务商「${p.name}」已停用" }
+                }
+                "model_set_name" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val m = try { db.getModels().firstOrNull { it.id == id } } catch (e: Exception) { null }
+                    if (m == null) "⚠️ 模型 ID=$id 不存在"
+                    else {
+                        db.updateModel(m.copy(
+                            displayName = args["name"]?.takeIf { it.isNotBlank() } ?: m.displayName,
+                            customAlias = args["alias"] ?: m.customAlias
+                        ))
+                        "✅ 模型 ${m.modelId} 显示名已改为「${args["name"] ?: m.displayName}」"
+                    }
+                }
+                "model_set_price" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val price = args["price"]?.toDoubleOrNull()
+                    val m = try { db.getModels().firstOrNull { it.id == id } } catch (e: Exception) { null }
+                    if (m == null) "⚠️ 模型 ID=$id 不存在"
+                    else if (price == null) "⚠️ 请输入合法单价"
+                    else {
+                        db.updateModel(m.copy(price = price))
+                        "✅ 模型 ${m.modelId} 单价已设为 ¥$price/百万Token（0=按默认价格表）"
+                    }
+                }
+                "model_set_public" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val pub = args["is_public"] == "1" || args["is_public"] == "true"
+                    val m = try { db.getModels().firstOrNull { it.id == id } } catch (e: Exception) { null }
+                    if (m == null) "⚠️ 模型 ID=$id 不存在"
+                    else {
+                        db.updateModel(m.copy(isPublic = pub))
+                        "✅ 模型 ${m.modelId} 已${if (pub) "设为公用（所有人可见）" else "改为私有"}"
+                    }
+                }
+                "model_set_authorized" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val m = try { db.getModels().firstOrNull { it.id == id } } catch (e: Exception) { null }
+                    if (m == null) "⚠️ 模型 ID=$id 不存在"
+                    else {
+                        val ids = (args["user_ids"] ?: "").split(",").mapNotNull { it.trim().toLongOrNull() }
+                        db.updateModel(m.copy(authorizedUsers = ids))
+                        "✅ 模型 ${m.modelId} 授权用户已更新为 ${if (ids.isEmpty()) "仅属主可见" else ids.joinToString("、")}"
+                    }
+                }
+                "model_delete" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val m = try { db.getModels().firstOrNull { it.id == id } } catch (e: Exception) { null }
+                    if (m == null) "⚠️ 模型 ID=$id 不存在"
+                    else { db.deleteModel(id); "✅ 模型 ${m.modelId} 已删除" }
+                }
+                "api_key_list" -> {
+                    val keys = db.getApiKeys()
+                    if (keys.isEmpty()) "📭 暂无API密钥"
+                    else "🔑 【API密钥列表】\n" + keys.joinToString("\n") { k ->
+                        "• ${k.label.ifBlank { "(无标签)" }}｜${k.key.take(8)}...${if (k.enabled) "✅启用" else "⛔停用"}"
+                    }
+                }
+                "api_key_create" -> {
+                    val label = args["label"] ?: ""
+                    if (label.isBlank()) "⚠️ 语法：api_key_create(label=密钥备注)"
+                    else {
+                        try {
+                            // 生成 sk- 开头的密钥
+                            val key = "sk-" + java.util.UUID.randomUUID().toString().replace("-", "")
+                            val ok = db.addApiKey(com.qitong.gateway.model.ApiKeyEntry(
+                                key = key, label = label, enabled = true
+                            ))
+                            if (ok) "✅ 新密钥已创建：\n$key\n（标签：$label，请妥善保存）" else "❌ 创建失败（可能 key 冲突）"
+                        } catch (e: Exception) { "❌ 创建失败：${e.message}" }
+                    }
+                }
+                "api_key_delete" -> {
+                    val key = args["key"] ?: ""
+                    if (key.isBlank()) "⚠️ 语法：api_key_delete(key=密钥值)"
+                    else {
+                        db.deleteApiKey(key)
+                        "✅ 密钥 ${key.take(8)}... 已删除"
+                    }
+                }
+                "user_list" -> {
+                    val users = db.getUsers()
+                    if (users.isEmpty()) "📭 暂无用户"
+                    else "👥 【用户列表】\n" + users.joinToString("\n") { u ->
+                        "• [${u.id}] ${u.username}（${u.role}）余额 ¥${"%.2f".format(u.balance)}"
+                    }.take(1500)
+                }
+                "user_set_balance" -> {
+                    val username = args["username"] ?: ""
+                    val bal = args["balance"]?.toDoubleOrNull()
+                    val u = db.getUserByUsername(username)
+                    if (u == null) "⚠️ 用户「$username」不存在"
+                    else if (bal == null || bal < 0) "⚠️ 请输入合法余额"
+                    else {
+                        db.setUserBalance(u.id, bal)
+                        "✅ 用户「$username」余额已设为 ¥${"%.2f".format(bal)}"
+                    }
+                }
+                "user_set_role" -> {
+                    val username = args["username"] ?: ""
+                    val role = (args["role"] ?: "").lowercase()
+                    val u = db.getUserByUsername(username)
+                    if (u == null) "⚠️ 用户「$username」不存在"
+                    else if (role !in listOf("admin", "agent", "user")) "⚠️ 角色必须是 admin/agent/user"
+                    else {
+                        db.updateUser(u.copy(role = role))
+                        "✅ 用户「$username」角色已改为 $role"
+                    }
+                }
+                "user_delete" -> {
+                    val username = args["username"] ?: ""
+                    val u = db.getUserByUsername(username)
+                    if (u == null) "⚠️ 用户「$username」不存在"
+                    else if (u.id == userId) "⚠️ 不能删除自己"
+                    else {
+                        db.deleteUser(u.id)
+                        "✅ 用户「$username」已删除"
+                    }
+                }
+                "config_get" -> {
+                    val key = args["key"] ?: ""
+                    if (key.isBlank()) {
+                        // 展示核心配置
+                        val keys = listOf("auto_failover", "response_cache", "memory_enabled", "active_model_key", "forced_pool_keys", "require_api_key", "heartbeat_enabled")
+                        "⚙️ 【网关配置】\n" + keys.joinToString("\n") { k -> "• $k = ${db.getConfig(k, "")}" }
+                    } else {
+                        "⚙️ $key = ${db.getConfig(key, "(未设置)")}"
+                    }
+                }
+                "config_set" -> {
+                    val key = args["key"] ?: ""
+                    val value = args["value"] ?: ""
+                    if (key.isBlank() || value.isBlank()) "⚠️ 语法：config_set(key=配置键, value=值)"
+                    else {
+                        db.setConfig(key, value)
+                        "✅ 配置 $key = $value 已保存"
+                    }
+                }
+                "announcement_list" -> {
+                    val list = try { db.getAnnouncements(10) } catch (e: Exception) { emptyList<Map<String, Any?>>() }
+                    if (list.isEmpty()) "📭 暂无公告"
+                    else "📢 【公告】\n" + list.joinToString("\n\n") { a ->
+                        "【${a["title"]}】${a["content"]}"
+                    }.take(1500)
+                }
+                "announcement_add" -> {
+                    val title = args["title"] ?: ""
+                    val content = args["content"] ?: ""
+                    if (title.isBlank() || content.isBlank()) "⚠️ 语法：announcement_add(title=标题, content=内容)"
+                    else {
+                        db.addAnnouncement(title, content, userId, false)
+                        "✅ 公告「$title」已发布"
+                    }
+                }
+                "announcement_delete" -> {
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    db.deleteAnnouncement(id)
+                    "✅ 公告 ID=$id 已删除"
+                }
+                "ticket_reply" -> {
+                    val tid = args["ticket_id"]?.toLongOrNull() ?: 0
+                    val content = args["content"] ?: ""
+                    if (content.isBlank()) "⚠️ 语法：ticket_reply(ticket_id=工单ID, content=回复内容)"
+                    else {
+                        db.addTicketMessage(tid, userId, "admin", content)
+                        db.updateTicketStatus(tid, "replied")
+                        "✅ 工单 $tid 已回复"
+                    }
+                }
+                "ticket_close" -> {
+                    val tid = args["ticket_id"]?.toLongOrNull() ?: 0
+                    db.updateTicketStatus(tid, "closed")
+                    "✅ 工单 $tid 已关闭"
+                }
                 "gateway_status" -> SkillExecutor.execute(db, "600001", "", userId)
                 "speed_ranking" -> SkillExecutor.execute(db, "600002", "", userId)
                 "active_model" -> SkillExecutor.execute(db, "600003", "", userId)
