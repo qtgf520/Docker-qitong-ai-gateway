@@ -244,6 +244,23 @@ object WeixinBotManager {
                 val r = com.qitong.gateway.sandbox.SandboxEngine.execute("sys_health", emptyMap(), isAdmin, bound?.id ?: 0L, d)
                 send(r); return
             }
+            // ★ v1.114 微信功能快捷面板（对齐 QQ）
+            t == "功能" || t == "功能菜单" || t == "快捷指令" || t == "帮助" || t == "怎么用" -> {
+                val common = "🧰 常用功能（直接发指令即可）\n" +
+                    "· 查余额 / 我的账号 — 账户信息\n" +
+                    "· 网关状态 / 体检 — 网关与全功能健康\n" +
+                    "· 提醒我 10分钟后 xxx — 定时提醒\n" +
+                    "· 待办 / 添加待办 xxx — 待办管理\n" +
+                    "· 切换人格 程序员/知心姐姐/翻译官/老师 — 多角色对话\n" +
+                    "· 画图 xxx — AI 生成图片\n" +
+                    "· 执行工作流 xxx — 触发自动化工作流"
+                val adminExtra = if (isAdmin) "\n\n🔐 管理员专属：\n" +
+                    "· 管理 状态 / 体检 / 机器人 / 模型 / 余额\n" +
+                    "· AI终端 xxx — 自然语言执行终端命令\n" +
+                    "· 充值 用户名 金额 / 扣款 用户名 金额 — 用户账务" else ""
+                send(common + adminExtra + "\n\n💬 其他需求直接说，我（qtai-sj）会自己找工具帮你搞定～")
+                return
+            }
             t.startsWith("停止") || t == "停" || t == "中断" -> { send("🛑 已停止当前任务"); return }
             t.startsWith("管理") && !isAdmin -> { send("⛔ 仅管理员可执行管理指令"); return }
             t.startsWith("管理 ") && isAdmin -> {

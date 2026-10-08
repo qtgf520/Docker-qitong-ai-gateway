@@ -538,6 +538,29 @@ object QqBotManager {
                     send(if (cur.isNullOrBlank()) "当前人格：默认（綦桐小助理）\n发「切换人格 程序员/知心姐姐/翻译官/老师」试试不同角色" else "当前人格：\n$cur\n\n发「切换人格 默认」恢复默认")
                     return
                 }
+                // ★ v1.114 功能快捷面板（Operit 工具箱精髓：常用操作一目了然）
+                "features" -> {
+                    val bound = db.getQqBoundUser(userOpenid)
+                    val isAdmin = (bound?.role == "admin" || bound?.role == "agent") ||
+                        ((db.getQqUserByGroup(userOpenid, groupOpenid)?.get("permLevel") as? Number)?.toInt() ?: 1) >= 3
+                    val common = "🧰 常用功能（直接发指令即可）\n" +
+                        "· 签到 / 积分 — 每日签到赚积分\n" +
+                        "· 查余额 / 我的账号 — 账户信息\n" +
+                        "· 网关状态 / 体检 — 网关与全功能健康\n" +
+                        "· 查排行 — 积分排行榜\n" +
+                        "· 提醒我 10分钟后 xxx — 定时提醒\n" +
+                        "· 待办 / 添加待办 xxx — 待办管理\n" +
+                        "· 切换人格 程序员/知心姐姐/翻译官/老师 — 多角色对话\n" +
+                        "· 画图 xxx — AI 生成图片\n" +
+                        "· 菜单 — 已安装插件"
+                    val adminExtra = if (isAdmin) "\n\n🔐 管理员专属：\n" +
+                        "· 管理 状态 / 体检 / 机器人 / 模型 / 余额\n" +
+                        "· AI终端 xxx — 自然语言执行终端命令\n" +
+                        "· 执行工作流 xxx — 触发自动化工作流\n" +
+                        "· 充值 用户名 金额 / 扣款 用户名 金额 — 用户账务" else ""
+                    send(common + adminExtra + "\n\n💬 其他需求直接说，我（qtai-sj）会自己找工具帮你搞定～")
+                    return
+                }
                 "sign" -> {
                     if (onCooldown(userOpenid, 3)) return
                     val reward = (5..20).random()
@@ -1081,6 +1104,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         // ★ v1.113 人格切换：发「切换人格 助手/程序员/知心姐姐/翻译官/默认」等即可切换 qtai-sj 角色卡
         if (t.startsWith("切换人格", true) || t.startsWith("人格切换", true) || t.startsWith("设置人格", true)) return "persona_switch" to t.substringAfter(" ").trim()
         if (t.equals("查看人格", true) || t.equals("我的人格", true) || t.equals("人格", true)) return "persona_show" to t
+        // ★ v1.114 功能快捷面板：发「功能」看全部快捷指令
+        if (t.equals("功能", true) || t.equals("功能菜单", true) || t.equals("快捷指令", true) || t.equals("帮助", true) || t.equals("怎么用", true)) return "features" to t
         if (t.equals("切换卡片", true) || t.equals("卡片模式", true)) return "card_on" to t
         if (t.equals("切换文本", true) || t.equals("文本模式", true) || t.equals("切换文字", true)) return "card_off" to t
         // 群里改当前群备注/群名（管理员3+）
