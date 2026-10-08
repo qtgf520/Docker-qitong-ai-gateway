@@ -33,11 +33,16 @@ object WeixinBotManager {
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(40, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
         // ★ v1.104 总超时 40s：模型调用超时快速返回提示，防"说执行不返回"卡顿
-        .callTimeout(40, TimeUnit.SECONDS)
+        // ★ v1.116 单轮提高到 90s：允许模型长思考；停止靠 activeCall.cancel() 即时打断，不再依赖超时
+        .callTimeout(120, TimeUnit.SECONDS)
         .build()
     private val jsonCt = "application/json; charset=utf-8".toMediaType()
+    // ★ v1.116 当前活动模型调用（按用户），发「停止」立即 cancel() 打断，不再等跑完
+    private val activeCalls = ConcurrentHashMap<String, okhttp3.Call>()
+    // ★ v1.116 每用户当前任务 Job：新消息（非停止）立即取消旧任务 → 无缝接上下文继续干（不间断追问）
+    private val userJobs = ConcurrentHashMap<String, kotlinx.coroutines.Job>()
 
     fun init(database: Database, port: Int) { db = database; gatewayPort = port }
 
@@ -214,10 +219,17 @@ object WeixinBotManager {
         if (t.equals("停止", true) || t.equals("停", true) || t.equals("停一下", true) ||
             t.equals("中断", true) || t.equals("不干了", true) || t.equals("算了", true) || t.equals("停止执行", true)) {
             stopSignals[msg.from] = true
+            // ★ v1.116 即时打断：取消当前模型调用 + 取消旧任务 Job（不再等跑完/等超时）
+            activeCalls[msg.from]?.cancel()
+            activeCalls.remove(msg.from)
+            userJobs.remove(msg.from)?.cancel()
             send("🛑 已停止任务（用户中断）。")
             d.addWeixinLog(bot.id, msg.from, "command", "停止指令", System.currentTimeMillis() - t0)
             return
         }
+        stopSignals[msg.from] = false
+        // ★ v1.116 不间断追问：上一任务还在跑？新消息来了直接取消旧任务，立即接入上下文继续干（对齐 QQ）
+        userJobs.remove(msg.from)?.cancel()
 
         // 管理指令（白名单 + 权限校验）
         val bound = d.getWeixinBoundUser(msg.from)
@@ -454,7 +466,11 @@ object WeixinBotManager {
                 .addHeader("Content-Type", "application/json")
                 .post(body.toRequestBody(jsonCt))
                 .build()
-            var content = http.newCall(req).execute().use { resp ->
+            // ★ v1.116 注册当前调用到 activeCalls（可被「停止」即时 cancel）
+            val firstCall = http.newCall(req)
+            activeCalls[msg.from] = firstCall
+            var content = firstCall.execute().use { resp ->
+                activeCalls.remove(msg.from)
                 if (!resp.isSuccessful) return null
                 JSONObject(resp.body?.string().orEmpty())
                     .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
@@ -462,18 +478,26 @@ object WeixinBotManager {
             }
              // ★ v78 收敛标记：本轮是否真执行过工具（结果已实时推送，最终回复不再复述）
             var executedCalls = false
-            // ★ v74 qtai-sj 完整 Agent 循环：思考推送 → 解析函数 → 执行 → 结果回填 → 再调模型（最多5轮）
+            var lastProgressAt = System.currentTimeMillis()
+            // ★ v74 qtai-sj 完整 Agent 循环：思考推送 → 解析函数 → 执行 → 结果回填 → 再调模型
+            // ★ v1.116 多思考不停息：轮数 5→20，只要模型还在输出函数调用就不停；干不完继续干，除非用户说停
             if (sandboxOn && content.isNotBlank()) {
                 val isAdmin = d.getWeixinUserPerm(msg.from) >= 3 ||
                     d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
                 var loop = 0
                 var noCallGuide = 0   // ★ v77 引导计数器：模型只输出描述不输出标签时引导它
-                while (loop < 5) {
+                while (loop < 20) {
                     // ★ v75 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考（对齐 QQ v64）
                     if (stopSignals[msg.from] == true) {
                         stopSignals.remove(msg.from)
                         content = "🛑 已停止任务（用户中断）。"
                         break
+                    }
+                    loop++
+                    // ★ v1.116 长时间任务进度提示：每 30s 推一次「还在处理」，不刷屏但让用户知道没卡死
+                    if (System.currentTimeMillis() - lastProgressAt > 30_000) {
+                        send("⏳ 任务还在处理中（第 $loop 轮），请稍候…")
+                        lastProgressAt = System.currentTimeMillis()
                     }
                     loop++
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
@@ -555,12 +579,21 @@ object WeixinBotManager {
                         .addHeader("Content-Type", "application/json")
                         .post(nextBody.toRequestBody(jsonCt))
                         .build()
-                    val nextContent = http.newCall(nextReq).execute().use { resp2 ->
-                        if (!resp2.isSuccessful) null
-                        else JSONObject(resp2.body?.string().orEmpty())
-                            .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
-                            ?.optString("content")?.trim().orEmpty()
-                    }
+                    val nextContent = try {
+                        // ★ v1.116 内循环调用也注册 activeCall（停止可即时取消）
+                        val nextCall = http.newCall(nextReq)
+                        activeCalls[msg.from] = nextCall
+                        try {
+                            nextCall.execute().use { resp2 ->
+                                if (!resp2.isSuccessful) null
+                                else JSONObject(resp2.body?.string().orEmpty())
+                                    .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                    ?.optString("content")?.trim().orEmpty()
+                            }
+                        } finally {
+                            if (activeCalls[msg.from] === nextCall) activeCalls.remove(msg.from)
+                        }
+                    } catch (e: Exception) { null }
                     if (nextContent.isNullOrBlank()) {
                         content = cleanText + "\n\n" + results
                         break

@@ -269,7 +269,28 @@ loaders.profile = function(){
    '</div>',
     '<div class="card"><h3>余额账单 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadBalanceLogs()">刷新</button></h3><div id="balLogBox" style="color:var(--muted);font-size:12px">加载中...</div></div>',
     '<div class="card"><h3>模型扣费记录 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadUsageLogs()">刷新</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="clearUsageLogs()">清空全部</button></h3><div id="usageLogBox" style="color:var(--muted);font-size:12px">加载中...</div></div>',
-    '<div class="card"><h3>限流设置 <span style="font-size:12px;color:var(--muted)">QPS + 每日配额，0=不限</span></h3><div id="rateBox">加载中...</div></div>'
+    '<div class="card"><h3>限流设置 <span style="font-size:12px;color:var(--muted)">QPS + 每日配额，0=不限</span></h3><div id="rateBox">加载中...</div></div>',
+    // ★ v1.116 从网关设置迁移到个人中心：个人人格、修改密码、qtai-sj 大脑绑定、界面语言
+    '<div class="card"><h3>个人人格配置 <small style="color:var(--muted)">让 qtai-sj 回复带上你设定的人设（按用户独立）</small></h3>' +
+     '<div class="form-row"><label>名字</label><input id="psName" class="input" placeholder="如：綦小桐"></div>' +
+     '<div class="form-row"><label>年龄</label><input id="psAge" class="input" placeholder="如：18岁"></div>' +
+     '<div class="form-row"><label>性格</label><input id="psPersonality" class="input" placeholder="如：开朗、幽默、乐于助人"></div>' +
+     '<div class="form-row"><label>语气</label><input id="psTone" class="input" placeholder="如：亲切、像朋友一样"></div>' +
+     '<div class="form-row"><label>背景设定（多行）</label><textarea id="psBg" class="input" rows="4" placeholder="如：你是綦桐AI网关的智能助手，擅长帮助用户使用AI网关、解答问题、管理记忆..."></textarea></div>' +
+     '<div class="form-row"><label>大五人格维度</label>' +
+     '<div style="font-size:12px;color:var(--muted)">开放度 <input id="psO" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psOv">0.5</span></div>' +
+     '<div style="font-size:12px;color:var(--muted)">尽责性 <input id="psC" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psCv">0.5</span></div>' +
+     '<div style="font-size:12px;color:var(--muted)">外向性 <input id="psE" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psEv">0.5</span></div>' +
+     '<div style="font-size:12px;color:var(--muted)">宜人性 <input id="psA" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psAv">0.5</span></div>' +
+     '<div style="font-size:12px;color:var(--muted)">神经质 <input id="psN" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psNv">0.5</span></div></div>' +
+     '<div class="form-row"><label><input type="checkbox" id="psMem" checked>启用记忆系统</label></div>' +
+     '<button class="btn" onclick="savePersona()">保存人格</button></div>',
+    '<div class="card"><h3>修改密码</h3>' +
+     '<div class="form-row"><label>旧密码</label><input id="chgOld" class="input" type="password" placeholder="输入旧密码"></div>' +
+     '<div class="form-row"><label>新密码</label><input id="chgNew" class="input" type="password" placeholder="至少6个字符"></div>' +
+     '<button class="btn" onclick="changePassword()">修改密码</button></div>',
+    '<div class="card" id="brainCardP"><h3>qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+    '<div class="card" id="langCardP"><h3>界面语言</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>'
   ].join('');
 
   // 加载余额账单
@@ -286,6 +307,57 @@ loaders.profile = function(){
      '<button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="saveRate()">保存限流</button>' +
      '</div>';
    }
+  });
+  // ★ v1.116 迁移到个人中心：qtai-sj 大脑绑定 / 界面语言
+  api('/api/qtai/brain').then(function(br){
+   if(br && br.code === 0){
+    var bc = $('brainCardP');
+    if(bc){
+     var brain = (br.data && br.data.brain) || '';
+     bc.innerHTML = '<h3>qtai-sj 大脑绑定</h3>' +
+      '<div class="form-row"><label>绑定模型Key（如 2::deepseek-flash，留空=自动）</label><input id="qtBrain" class="input" value="'+esc(brain)+'" placeholder="如 2::deepseek-flash"></div>' +
+      '<button class="btn" onclick="saveBrain()">保存绑定</button>' +
+      '<div style="margin-top:8px;font-size:12px;color:var(--muted)">绑定后 qtai-sj 优先使用该模型作为大脑回复</div>';
+    }
+   }
+  });
+  api('/api/me/language').then(function(lr){
+   if(lr && lr.code === 0){
+    var lc = $('langCardP');
+    if(lc){
+     var cur = (lr.data && lr.data.language) || 'zh';
+     var LANGS = [
+      ['zh','简体中文'],['zh-tw','繁體中文'],['en','English'],['ja','日本語'],['ko','한국어'],
+      ['es','Español'],['fr','Français'],['de','Deutsch'],['ru','Русский'],['pt','Português'],
+      ['vi','Tiếng Việt'],['th','ภาษาไทย'],['ar','العربية'],['hi','हिन्दी'],['id','Bahasa Indonesia']
+     ];
+     var opts = LANGS.map(function(l){ return '<option value="'+l[0]+'"'+(cur===l[0]?' selected':'')+'>'+l[1]+'</option>'; }).join('');
+     lc.innerHTML = '<h3>界面语言</h3>' +
+      '<div class="form-row"><label>选择语言</label><select id="langSel" class="input" onchange="saveLang()">'+opts+'</select></div>' +
+      '<small style="color:var(--muted)">按用户独立存储，下次登录保留</small>';
+    }
+   }
+  });
+  // ★ v1.116 迁移到个人中心：人格回填
+  api('/api/persona').then(function(pr){
+   if(pr && pr.code === 0 && pr.data && pr.data.name !== undefined){
+    var pp = pr.data;
+    if($('psName')){ $('psName').value = pp.name || ''; }
+    if($('psAge')){ $('psAge').value = pp.age || ''; }
+    if($('psPersonality')){ $('psPersonality').value = pp.personality || ''; }
+    if($('psTone')){ $('psTone').value = pp.tone || ''; }
+    if($('psBg')){ $('psBg').value = pp.background || ''; }
+    if($('psO')){ $('psO').value = pp.openness || 0.5; $('psOv').textContent = pp.openness || 0.5; }
+    if($('psC')){ $('psC').value = pp.conscientiousness || 0.5; $('psCv').textContent = pp.conscientiousness || 0.5; }
+    if($('psE')){ $('psE').value = pp.extraversion || 0.5; $('psEv').textContent = pp.extraversion || 0.5; }
+    if($('psA')){ $('psA').value = pp.agreeableness || 0.5; $('psAv').textContent = pp.agreeableness || 0.5; }
+    if($('psN')){ $('psN').value = pp.neuroticism || 0.5; $('psNv').textContent = pp.neuroticism || 0.5; }
+    if($('psMem')){ $('psMem').checked = pp.memoryEnabled !== false; }
+   }
+  });
+  ['psO','psC','psE','psA','psN'].forEach(function(id){
+   var el = $('view-profile').querySelector('#'+id);
+   if(el) el.addEventListener('input', function(){ $(''+id+'v').textContent = this.value; });
   });
  });
  };
@@ -399,30 +471,6 @@ loaders.settings = function(){
     '<div class="form-row"><button class="btn-ghost btn-sm" onclick="loadCacheStats()">⚡ 缓存统计</button><span id="cacheStatsBox" style="font-size:12px;color:var(--muted);margin-left:8px"></span></div>' +
     '<div class="form-row"><label><input type="checkbox" id="cfgScheduledTasks"'+(cfg.scheduled_tasks_enabled!=='false'?' checked':'')+'>启用计划任务（AI 安排未来执行任务/提醒）</label></div>' +
     '<button class="btn" onclick="saveSettings()">保存设置</button></div>' : '') +
-'<div class="card"><h3>个人人格配置</h3><small style="color:var(--muted);display:block;margin-bottom:12px">让 qtai-sj 回复时带上你设定的人设（按用户独立存储）</small>',
-   '<div class="form-row"><label>名字</label><input id="psName" class="input" placeholder="如：綦小桐"></div>',
-   '<div class="form-row"><label>年龄</label><input id="psAge" class="input" placeholder="如：18岁"></div>',
-   '<div class="form-row"><label>性格</label><input id="psPersonality" class="input" placeholder="如：开朗、幽默、乐于助人"></div>',
-   '<div class="form-row"><label>语气</label><input id="psTone" class="input" placeholder="如：亲切、像朋友一样"></div>',
-   '<div class="form-row"><label>背景设定（超级文本，多行）</label><textarea id="psBg" class="input" rows="5" placeholder="如：你是綦桐AI网关的智能助手，擅长帮助用户使用AI网关、解答问题、管理记忆，像一个真实的朋友一样陪伴用户..."></textarea></div>',
-   '<div class="form-row"><label>大五人格维度</label>',
-   '<div style="font-size:12px;color:var(--muted)">开放度 <input id="psO" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psOv">0.5</span></div>',
-   '<div style="font-size:12px;color:var(--muted)">尽责性 <input id="psC" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psCv">0.5</span></div>',
-   '<div style="font-size:12px;color:var(--muted)">外向性 <input id="psE" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psEv">0.5</span></div>',
-   '<div style="font-size:12px;color:var(--muted)">宜人性 <input id="psA" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psAv">0.5</span></div>',
-   '<div style="font-size:12px;color:var(--muted)">神经质 <input id="psN" type="range" min="0" max="1" step="0.05" value="0.5" style="width:120px"> <span id="psNv">0.5</span></div></div>',
-   '<div class="form-row"><label><input type="checkbox" id="psMem" checked>启用记忆系统</label></div>',
-   '<button class="btn" onclick="savePersona()">保存人格</button>',
-   '</div>',
-   '<div class="card"><h3>修改密码</h3>',
-   '<div class="form-row"><label>旧密码</label><input id="chgOld" class="input" type="password" placeholder="输入旧密码"></div>',
-   '<div class="form-row"><label>新密码</label><input id="chgNew" class="input" type="password" placeholder="至少6个字符"></div>',
-   '<button class="btn" onclick="changePassword()">修改密码</button>',
-   '</div>',
-'<div class="card" id="memCard"><h3>大脑记忆</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-    '<div class="card" id="memCfgCard"><h3>记忆配置</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-    '<div class="card" id="brainCard"><h3>qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
-    '<div class="card" id="langCard"><h3>界面语言</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
     '<div class="card" id="bakCard"><h3>数据备份/恢复</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
     (isAdmin ? '<div class="card" id="notifyCard"><h3>通知设置</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>' : '')
    ].join('');
@@ -449,72 +497,6 @@ loaders.settings = function(){
     }
    });
   }
-  // 大脑记忆
-  api('/api/memory').then(function(mr){
-   if(mr && mr.code === 0){
-    var mems = mr.data || [];
-    var mc = $('memCard');
-    if(mc){
-     var rows = mems.map(function(m){
-      return '<tr><td>'+esc(m.title||'(无标题)')+'</td><td style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.content)+'</td><td><span class="badge '+(m.emotion==='happy'?'green':m.emotion==='sad'?'red':'purple')+'">'+esc(m.emotion)+'</span></td><td>'+m.importance+'</td><td>'+new Date(m.timestamp).toLocaleString('zh-CN')+'</td><td><button class="btn-ghost" style="color:var(--red)" onclick="delMemory('+m.id+')">删</button></td></tr>';
-     }).join('');
-     mc.innerHTML = '<h3>大脑记忆 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="addMemory()">添加</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="clearMemories()">清空</button></h3>' +
-      '<div class="table-wrap"><table><thead><tr><th>标题</th><th>内容</th><th>情感</th><th>重要</th><th>时间</th><th>操作</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="6" style="text-align:center;color:var(--muted)">' + (mems.length ? '' : '暂无记忆') + '</td></tr></tbody></table></div>';
-    }
-   }
-  });
-  // 记忆配置（模型独立记忆开关，对齐原APP MemoryConfig）
-  api('/api/memory/config').then(function(cr){
-   if(cr && cr.code === 0){
-    var c = cr.data || {};
-    var cc = $('memCfgCard');
-    if(cc){
-     cc.innerHTML = '<h3>记忆配置</h3>' +
-      '<div class="form-row"><label><input type="checkbox" id="mcEnabled"'+(c.enabled?' checked':'')+'>启用记忆系统</label></div>' +
-      '<div class="form-row"><label><input type="checkbox" id="mcIndependent"'+(c.modelIndependent?' checked':'')+'>模型独立记忆</label><small style="color:var(--muted);display:block;margin-top:4px">开启后各模型记忆互相隔离，模型间互不干扰（对齐原APP）</small></div>' +
-      '<div class="form-row"><label>保存模式</label><select id="mcMode" class="input"><option value="frequent"'+(c.saveMode==='frequent'?' selected':'')+'>频繁保存</option><option value="normal"'+(c.saveMode==='normal'||!c.saveMode?' selected':'')+'>正常保存</option><option value="occasional"'+(c.saveMode==='occasional'?' selected':'')+'>偶尔保存</option></select></div>' +
-      '<div class="form-row"><label>共情力(1-10)：<b id="mcEmpV">'+(c.empathyLevel||8)+'</b></label><input id="mcEmp" type="range" min="1" max="10" value="'+(c.empathyLevel||8)+'" style="width:200px" oninput="$(\'mcEmpV\').textContent=this.value"></div>' +
-      '<div class="form-row"><label>思考深度(1-5)：<b id="mcThinkV">'+(c.thinkingDepth||3)+'</b></label><input id="mcThink" type="range" min="1" max="5" value="'+(c.thinkingDepth||3)+'" style="width:200px" oninput="$(\'mcThinkV\').textContent=this.value"></div>' +
-      '<div class="form-row"><label>口头禅（逗号分隔）</label><input id="mcCatch" class="input" value="'+esc(c.catchphrases||'')+'" placeholder="好嘞~,搞定了！"></div>' +
-      '<div class="form-row"><label>禁用词（逗号分隔）</label><input id="mcForbid" class="input" value="'+esc(c.forbiddenWords||'')+'" placeholder="作为一个AI,AI语言模型"></div>' +
-      '<div class="form-row"><label>专业领域</label><input id="mcExpert" class="input" value="'+esc(c.expertise||'全栈通用')+'"></div>' +
-      '<div class="form-row"><label>沟通风格</label><input id="mcStyle" class="input" value="'+esc(c.communicationStyle||'自然亲切、像朋友聊天')+'"></div>' +
-      '<button class="btn" onclick="saveMemoryCfg()">保存记忆配置</button>';
-    }
-   }
-  });
-  // qtai-sj 大脑绑定
-  api('/api/qtai/brain').then(function(br){
-   if(br && br.code === 0){
-    var bc = $('brainCard');
-    if(bc){
-     var brain = (br.data && br.data.brain) || '';
-     bc.innerHTML = '<h3>qtai-sj 大脑绑定</h3>' +
-      '<div class="form-row"><label>绑定模型Key（如 2::deepseek-flash，留空=自动）</label><input id="qtBrain" class="input" value="'+esc(brain)+'" placeholder="如 2::deepseek-flash"></div>' +
-      '<button class="btn" onclick="saveBrain()">保存绑定</button>' +
-      '<div style="margin-top:8px;font-size:12px;color:var(--muted)">绑定后 qtai-sj 优先使用该模型作为大脑回复</div>';
-    }
-   }
-  });
-  // 界面语言
-  api('/api/me/language').then(function(lr){
-   if(lr && lr.code === 0){
-    var lc = $('langCard');
-    if(lc){
-     var cur = (lr.data && lr.data.language) || 'zh';
-     var LANGS = [
-      ['zh','简体中文'],['zh-tw','繁體中文'],['en','English'],['ja','日本語'],['ko','한국어'],
-      ['es','Español'],['fr','Français'],['de','Deutsch'],['ru','Русский'],['pt','Português'],
-      ['vi','Tiếng Việt'],['th','ภาษาไทย'],['ar','العربية'],['hi','हिन्दी'],['id','Bahasa Indonesia']
-     ];
-     var opts = LANGS.map(function(l){ return '<option value="'+l[0]+'"'+(cur===l[0]?' selected':'')+'>'+l[1]+'</option>'; }).join('');
-     lc.innerHTML = '<h3>界面语言</h3>' +
-      '<div class="form-row"><label>选择语言</label><select id="langSel" class="input" onchange="saveLang()">'+opts+'</select></div>' +
-      '<small style="color:var(--muted)">按用户独立存储，下次登录保留</small>';
-    }
-   }
-  });
   // 数据备份/恢复
   api('/api/auth/me').then(function(me){
    var isAdmin = me && me.code===0 && me.data && me.data.role === 'admin';
@@ -528,25 +510,6 @@ loaders.settings = function(){
      '<small style="color:var(--muted);display:block;margin-top:6px">导出：服务商/模型/人格/记忆/自定义技能；导入：JSON 文件互传（APP 与线上互传）</small>';
    }
   });
-  // 回填人格配置
-  api('/api/persona').then(function(pr){
-   if(pr && pr.code === 0 && pr.data && pr.data.name !== undefined){
-    var p = pr.data;
-    $('psName').value = p.name || '';
-    $('psAge').value = p.age || '';
-    $('psPersonality').value = p.personality || '';
-    $('psTone').value = p.tone || '';
-    $('psBg').value = p.background || '';
-    $('psO').value = p.openness || 0.5; $('psOv').textContent = p.openness || 0.5;
-    $('psC').value = p.conscientiousness || 0.5; $('psCv').textContent = p.conscientiousness || 0.5;
-    $('psE').value = p.extraversion || 0.5; $('psEv').textContent = p.extraversion || 0.5;
-    $('psA').value = p.agreeableness || 0.5; $('psAv').textContent = p.agreeableness || 0.5;
-    $('psN').value = p.neuroticism || 0.5; $('psNv').textContent = p.neuroticism || 0.5;
-    $('psMem').checked = p.memoryEnabled !== false;
-   }
-  });
-  // 滑块实时显示
-  ['psO','psC','psE','psA','psN'].forEach(function(id){ $('view-settings').querySelector('#'+id).addEventListener('input', function(){ $(''+id+'v').textContent = this.value; }); });
  });
  });
 };

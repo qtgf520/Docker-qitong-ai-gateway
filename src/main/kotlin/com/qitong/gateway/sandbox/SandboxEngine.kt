@@ -36,7 +36,8 @@ object SandboxEngine {
         "task_create", "task_list", "task_cancel",
         "account_info", "account_bind", "account_unbind",
         "mail_send", "update_logs", "code_run", "memory_search", "todo_add", "todo_list", "todo_done", "todo_del",
-        "file_read", "file_write", "file_search", "skill_learn", "skill_list", "image_gen", "cache_stats", "skill_auto_learn"
+        "file_read", "file_write", "file_search", "skill_learn", "skill_list", "image_gen", "cache_stats", "skill_auto_learn",
+        "git_version", "git_log"
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -102,6 +103,8 @@ object SandboxEngine {
             .put(func("account_bind", "远程登录绑定网关账号（修改）", "user", "modify", listOf(param("username", true, "网关用户名"), param("password", true, "账号密码")), "绑定结果"))
             .put(func("account_unbind", "退出当前绑定账号（修改）", "user", "modify", emptyList(), "解绑结果"))
             .put(func("mail_send", "发送邮件（SMTP，管理员；复用网关通知配置；to可为任意收件人）", "admin", "modify", listOf(param("to", true, "收件人邮箱"), param("title", false, "邮件主题"), param("content", true, "邮件内容")), "发送结果"))
+            .put(func("git_version", "查看网关 Git 版本信息（只读）：当前版本号/最新提交/最近 tag（用户问版本号时用这个）", "user", "read", emptyList(), "版本号/提交摘要/tag列表"))
+            .put(func("git_log", "查看网关 Git 最近提交历史（只读）：最近 N 条提交（用户问更新了啥/历史记录时用）", "user", "read", listOf(param("n", false, "条数，默认10")), "最近提交列表"))
             .toString()
     }
 
@@ -344,7 +347,8 @@ $KNOWLEDGE_JSON
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
-            "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list", "skill_list" -> "user" to "read"
+            "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list", "skill_list",
+            "git_version", "git_log" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
             "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list", "file_read", "file_search" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
@@ -368,6 +372,35 @@ $KNOWLEDGE_JSON
                     else "📋 【网关更新历史】\n" + logs.joinToString("\n\n") { l ->
                         "【${l["version"]}】${l["title"]}\n${l["details"]}"
                     }
+                }
+                "git_version" -> {
+                    // ★ v1.116 查 Git 版本：当前版本 / 最新提交 / 最近 tag
+                    try {
+                        val ver = db.getConfig("app_version", "1.116")
+                        val sb = StringBuilder("🔖 【网关 Git 版本】\n")
+                        sb.append("• 当前版本：v").append(ver).append("\n")
+                        runCatching {
+                            val p1 = ProcessBuilder("/bin/sh", "-c", "cd /app 2>/dev/null && git log --oneline -1 2>/dev/null || echo '工作区无git'").redirectErrorStream(true).start()
+                            val out1 = p1.inputStream.bufferedReader().readText().trim()
+                            if (out1.isNotBlank() && !out1.contains("无git")) sb.append("• 最新提交：").append(out1.take(120)).append("\n")
+                        }
+                        runCatching {
+                            val p2 = ProcessBuilder("/bin/sh", "-c", "cd /app 2>/dev/null && git tag --sort=-creatordate 2>/dev/null | head -5 || echo ''").redirectErrorStream(true).start()
+                            val out2 = p2.inputStream.bufferedReader().readText().trim()
+                            if (out2.isNotBlank()) sb.append("• 最近标签：").append(out2.lines().joinToString("、")).append("\n")
+                        }
+                        sb.toString().trim()
+                    } catch (e: Exception) { "🔖 当前版本：v1.116（版本信息读取失败：${e.message}）" }
+                }
+                "git_log" -> {
+                    // ★ v1.116 查 Git 最近提交历史
+                    val n = (args["n"] ?: "10").toIntOrNull()?.coerceIn(1, 30) ?: 10
+                    try {
+                        val proc = ProcessBuilder("/bin/sh", "-c", "cd /app 2>/dev/null && git log --oneline -$n 2>/dev/null || echo '工作区无git'").redirectErrorStream(true).start()
+                        val out = proc.inputStream.bufferedReader().readText().trim()
+                        if (out.isBlank() || out.contains("无git")) "📭 工作区无 git 记录"
+                        else "🕘 【最近 $n 条提交】\n" + out.lines().take(n).joinToString("\n") { "• " + it.take(100) }
+                    } catch (e: Exception) { "❌ 读取失败：${e.message}" }
                 }
                 "code_run" -> {
                     // ★ v88 代码执行（Python/Shell 沙盒，10秒超时）

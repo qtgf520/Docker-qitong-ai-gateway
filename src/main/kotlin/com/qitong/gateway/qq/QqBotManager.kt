@@ -30,10 +30,15 @@ object QqBotManager {
     private val api = QqApiClient()
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
         // ★ v1.104 总超时 45s：模型调用超时后快速返回「处理超时」提示，不再让用户干等（防"说执行不返回"）
-        .callTimeout(45, TimeUnit.SECONDS)
+        // ★ v1.116 单轮提高到 90s：允许模型长思考；停止靠 activeCall.cancel() 即时打断，不再依赖超时
+        .callTimeout(120, TimeUnit.SECONDS)
         .build()
+    // ★ v1.116 当前活动模型调用（按用户），发「停止」立即 cancel() 打断，不再等跑完
+    private val activeCalls = ConcurrentHashMap<String, okhttp3.Call>()
+    // ★ v1.116 每用户当前任务 Job：新消息（非停止）立即取消旧任务 → 无缝接上下文继续干（不间断追问）
+    private val userJobs = ConcurrentHashMap<String, kotlinx.coroutines.Job>()
 
     @Volatile private lateinit var db: Database
     @Volatile private var gatewayPort: Int = 18889
@@ -434,12 +439,19 @@ object QqBotManager {
         if (t.equals("停止", true) || t.equals("停", true) || t.equals("停一下", true) ||
             t.equals("中断", true) || t.equals("不干了", true) || t.equals("算了", true) || t.equals("停止执行", true)) {
             stopSignals[userOpenid] = true
+            // ★ v1.116 即时打断：取消当前模型调用 + 取消旧任务 Job（不再等跑完/等超时）
+            activeCalls[userOpenid]?.cancel()
+            activeCalls.remove(userOpenid)
+            userJobs.remove(userOpenid)?.cancel()
             send("🛑 已停止当前任务，所有执行已断开。有新指令随时说～")
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "stop", "用户停止任务", System.currentTimeMillis() - t0)
             return
         }
         // 正常消息进来 → 清掉之前的停止信号（新任务开始）
         stopSignals[userOpenid] = false
+        // ★ v1.116 不间断追问：上一任务还在跑？新消息来了直接取消旧任务，把新消息当「补充/纠正」立即接入上下文继续干
+        //   不做硬串行等待——旧任务取消后由 dispatch 尾部的 askModel 用完整上下文（含刚才的对话）重新理解并执行
+        userJobs.remove(userOpenid)?.cancel()
         // ★ v51 分步绑定处理：用户在绑定流程中（pendingBind 有值）发的任意消息 = 绑定输入
         val bindState = pendingBind[userOpenid]
         if (bindState != null && !t.startsWith("绑定账号", true) && !t.equals("取消", true)) {
@@ -1427,7 +1439,11 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             .build()
 
         return try {
-            http.newCall(req).execute().use { resp ->
+            // ★ v1.116 注册当前调用到 activeCalls（可被「停止」即时 cancel）
+            val call = http.newCall(req)
+            activeCalls[userOpenid] = call
+            call.execute().use { resp ->
+                activeCalls.remove(userOpenid)
                 val respBody = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
                     System.err.println("[QQBot] 模型调用失败 ${bot.appid}: HTTP ${resp.code}")
@@ -1442,10 +1458,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 // ★ 沙盒执行：qtai-sj 模式下解析回复中的函数调用并执行（兼容 [[沙盒:]] 与 <dots_function_call> 原生格式）
                 // ★ v46 Agent 循环：每步执行结果立即推送 QQ（过程可见），执行完回填给模型继续下一步
                 // ★ v1.110 静默模式（用户要求）：思考→自己找工具→不把步骤发出来→只回最后结果
+                // ★ v1.116 多思考不停息：轮数 8→20，只要模型还在输出函数调用就不停；干不完继续干，除非用户说停
                 var loopGuard = 0
                 // 只推一次「处理中」，中间步骤全部静默（最后结果由外层推）
                 var stepHintSent = false
-                while (sandboxOn && content.isNotBlank() && loopGuard < 8) {
+                var lastProgressAt = System.currentTimeMillis()
+                while (sandboxOn && content.isNotBlank() && loopGuard < 20) {
                     loopGuard++
                     // ★ v64 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考
                     if (stopSignals[userOpenid] == true) {
@@ -1455,6 +1473,11 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
                     if (calls.isEmpty()) break
                     if (!stepHintSent) { smartSend("🎯 正在处理您的请求，请稍候…", false); stepHintSent = true }
+                    // ★ v1.116 长时间任务进度提示：每 30s 推一次「还在处理」，不刷屏但让用户知道没卡死
+                    if (System.currentTimeMillis() - lastProgressAt > 30_000) {
+                        smartSend("⏳ 任务还在处理中（第 ${loopGuard} 轮），请稍候…", false)
+                        lastProgressAt = System.currentTimeMillis()
+                    }
                     val results = StringBuilder()
                     // ★ v82 并行工具执行（Hermes 理念落地）：独立调用并发跑，结果按序汇总
                     // ★ v1.110 静默：不再逐条推送「第N步/共M步」与「✅ fn结果」，全部折叠到最终答案
@@ -1511,11 +1534,18 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         .post(nextBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
                         .build()
                     val nextContent = try {
-                        http.newCall(nextReq).execute().use { resp2 ->
-                            if (!resp2.isSuccessful) null
-                            else JSONObject(resp2.body?.string().orEmpty())
-                                .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
-                                ?.optString("content")?.trim().orEmpty()
+                        // ★ v1.116 内循环调用也注册 activeCall（停止可即时取消，不依赖 120s 超时）
+                        val nextCall = http.newCall(nextReq)
+                        activeCalls[userOpenid] = nextCall
+                        try {
+                            nextCall.execute().use { resp2 ->
+                                if (!resp2.isSuccessful) null
+                                else JSONObject(resp2.body?.string().orEmpty())
+                                    .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                    ?.optString("content")?.trim().orEmpty()
+                            }
+                        } finally {
+                            if (activeCalls[userOpenid] === nextCall) activeCalls.remove(userOpenid)
                         }
                     } catch (e: Exception) { null }
                     if (nextContent.isNullOrBlank()) {
