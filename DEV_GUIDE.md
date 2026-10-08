@@ -219,6 +219,12 @@ git push origin master
 | 17 | **记忆只对绑定账号用户生效** | 微信未绑定用户"没记忆"（QQ 有微信没有） | 未绑定用户按 openid 走独立记忆通道（tags=wx:{openid}，对齐 QQ） |
 | 18 | **扣费金额 toFixed(2) 显示** | 小额扣费（<¥0.005）显示成 ¥0.00→用户以为扣费没记录 | 金额 <0.005 用 toFixed(4) 动态精度显示 |
 | 19 | **群聊只有成员级上下文无群级记忆** | 群话题记不住、跨天群聊丢上下文 | 加群级公共记忆（tags=group:{groupOpenid}，注入+沉淀+管理接口） |
+| 20 | **机器人停止/新消息被串行锁堵住** | 用户发停止要等旧任务跑完才响应；发新消息被旧任务排队堵住 | 每用户维护 activeCalls（OkHttp Call 可 cancel）+ userJobs（协程 Job 可 cancel）；停止=立即 cancel，新消息=取消旧任务立即接上下文继续干 |
+| 21 | **OKHttp 是同步阻塞 API** | askModel 里 execute() 阻塞线程，不能直接抛 CancellationException 中断 | 用 activeCalls[user]?.cancel() 记录并取消正在执行的 Call，模型调用处注册/注销 |
+| 22 | **Agent 循环轮数太少（5-8轮）** | 复杂多步任务干不完就停，用户以为"卡了" | 轮数提到 20；单轮模型等待 90s（长思考）；长任务每 30s 推一次进度提示 |
+| 23 | **沙盒函数权限表与 KNOWN_FNS 不一致** | 模型调用函数名对不上→功能静默失败 | 加函数必须三处同步：KNOWN_FNS + 权限表 + KNOWLEDGE_JSON + when(fn) 实现 |
+| 24 | **页面重划删除卡片后残留 JS 回调** | 等异步回调操作已删 DOM 元素→空指针/白屏 | 删除页面卡片时同步删其渲染回调，或回调用 if(el) 判空 |
+| 25 | **heredoc 在 terminal 里引号出错** | python <<'PY' 含双引号嵌套报 syntax error | 复杂脚本用 create_file 写 .py 文件再执行，别用 heredoc 硬塞 |
 
 ---
 
