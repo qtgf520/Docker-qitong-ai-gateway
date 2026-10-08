@@ -202,6 +202,9 @@ loaders.dashboard = function(){
      '<div id="homeSpeedProg" style="display:none;margin-top:10px"></div>' +
      '<div style="margin-top:6px;font-size:12px;color:var(--cyan)" id="dashCountdown"></div></div>',
    '</div>',
+   // ★ v1.111 网关性能监控（运行时监控）：内存/线程/GC/请求量/缓存命中
+   '<div class="card" id="perfCard"><h3>网关性能监控</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中…</div></div>',
+   '</div>',
    '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥' + ((st.balance||0)).toFixed(2) + '</div><div class="lbl">我的余额</div></div><div class="stat"><div class="num" style="font-size:18px">' + esc(st.role||'') + '</div><div class="lbl">当前身份</div></div></div></div>',
    poolHtml,
    '<div class="card"><h3>模型排行榜 <span style="font-size:12px;color:var(--muted)">（点击 灯加入/移出强制故障池，多选支持自动故障转移）</span></h3><div class="table-wrap"><table><thead><tr><th>池</th><th>#</th><th>模型ID</th><th>服务商</th><th>TTFT</th><th>TPS</th><th>总耗时</th><th>状态</th><th>强制池</th></tr></thead><tbody>' +
@@ -250,9 +253,29 @@ loaders.dashboard = function(){
    var dc = $('dashCountdown');
    if(dc){ dc.textContent = '下次自动测速：' + interval + '分00秒'; startDashCountdown(interval * 60); }
   }
-  // 接续后台测速任务：首页也显示实时进度条（与测速页一致）
-  checkHomeSpeed();
- });
+   // 接续后台测速任务：首页也显示实时进度条（与测速页一致）
+   checkHomeSpeed();
+   // ★ v1.111 网关性能监控：内存/线程/GC/请求量/缓存命中（st.perf 由 /api/stats 返回）
+   if(st.perf){
+    var pc = $('perfCard');
+    if(pc){
+     var p = st.perf;
+     var cacheHitRate = p.cacheTotal > 0 ? Math.round(p.cacheHits / p.cacheTotal * 100) : 0;
+     var memPct = p.memMaxMB > 0 ? Math.round(p.memUsedMB / p.memMaxMB * 100) : 0;
+     var memColor = memPct > 80 ? 'var(--red)' : (memPct > 60 ? 'var(--amber)' : 'var(--green)');
+     pc.innerHTML = '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr);margin:0">' +
+      '<div class="stat"><div class="num" style="font-size:18px;color:' + memColor + '">' + p.memUsedMB + ' MB</div><div class="lbl">内存使用（' + memPct + '%）</div></div>' +
+      '<div class="stat"><div class="num" style="font-size:18px">' + p.memMaxMB + ' MB</div><div class="lbl">最大堆</div></div>' +
+      '<div class="stat"><div class="num" style="font-size:18px">' + p.threads + '</div><div class="lbl">线程数</div></div>' +
+      '<div class="stat"><div class="num" style="font-size:18px">' + p.gcCount + '</div><div class="lbl">GC次数</div></div>' +
+      '<div class="stat"><div class="num" style="font-size:18px;color:var(--cyan)">' + p.reqUploadMB + ' / ' + p.reqDownloadMB + ' MB</div><div class="lbl">上下行流量</div></div>' +
+      '<div class="stat"><div class="num" style="font-size:18px;color:var(--green)">' + p.cacheTotal + ' 条</div><div class="lbl">响应缓存</div></div>' +
+      '<div class="stat"><div class="num" style="font-size:18px;color:var(--cyan)">' + cacheHitRate + '%</div><div class="lbl">缓存命中率</div></div>' +
+      '<div class="stat"><div class="num" style="font-size:18px">' + p.heapUsedMB + ' MB</div><div class="lbl">堆使用</div></div>' +
+     '</div>';
+    }
+   }
+  });
 };
 // 首页实时测速进度（轮询 /api/speedtest/progress，效果对齐测速页）
 var homeSpeedTimer = null;

@@ -576,6 +576,31 @@ private fun providerToMap(p: Provider) = mapOf(
         put("totalDownload", JsonPrimitive(GatewayProxy.totalDownloadBytes))
         put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
         put("pipelineSorted", JsonArray(GatewayScheduler.pipelineSortedModelKeys.map { JsonPrimitive(it) }))
+        // ★ v1.111 性能监控（对齐运行时监控）：JVM 内存/线程/GC/总请求量/响应缓存命中
+        runCatching {
+            val rt = Runtime.getRuntime()
+            val totalMem = rt.totalMemory()
+            val freeMem = rt.freeMemory()
+            val usedMem = totalMem - freeMem
+            val maxMem = rt.maxMemory()
+            val memBean = java.lang.management.ManagementFactory.getMemoryMXBean()
+            val heap = memBean.heapMemoryUsage
+            val threads = java.lang.management.ManagementFactory.getThreadMXBean().threadCount
+            val gcCount = java.lang.management.ManagementFactory.getGarbageCollectorMXBeans().sumOf { it.collectionCount }
+            val cacheStats = database.getResponseCacheStats()
+            put("perf", buildJsonObject {
+                put("memUsedMB", JsonPrimitive(usedMem / 1024 / 1024))
+                put("memTotalMB", JsonPrimitive(totalMem / 1024 / 1024))
+                put("memMaxMB", JsonPrimitive(maxMem / 1024 / 1024))
+                put("heapUsedMB", JsonPrimitive(heap.used / 1024 / 1024))
+                put("threads", JsonPrimitive(threads))
+                put("gcCount", JsonPrimitive(gcCount))
+                put("reqUploadMB", JsonPrimitive(GatewayProxy.totalUploadBytes / 1024 / 1024))
+                put("reqDownloadMB", JsonPrimitive(GatewayProxy.totalDownloadBytes / 1024 / 1024))
+                put("cacheTotal", JsonPrimitive(cacheStats.first))
+                put("cacheHits", JsonPrimitive(cacheStats.second))
+            })
+        }
         // 按 API Key 分组的用量（对齐原APP apiKeyUsageRows；admin=全部，普通用户=自己）
         val apiKeyUsage = if (user != null && user.role != "admin") database.getTokenUsageByApiKeyForUser(user.id)
             else database.getTokenUsageByApiKey()

@@ -371,12 +371,13 @@ window.saveRate = function(){
   if(r.code === 0){ toast(r.msg, true); } else toast(r.msg, false);
  });
 };
-// ===== 设置 =====
+// ===== 设置（★v1.111 瘦身：仅管理员可见全局配置；普通用户访问跳个人中心） =====
 loaders.settings = function(){
  var box = $('view-settings');
  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
  api('/api/auth/me').then(function(me){
   var isAdmin = me && me.code === 0 && me.data && me.data.role === 'admin';
+  if(!isAdmin){ box.innerHTML = '<div style="text-align:center;padding:60px;color:var(--muted)">🔒 网关设置为管理员专属，个人配置请在「个人中心」查看<br><br><button class="btn" onclick="switchView(\'profile\')">去个人中心</button></div>'; return; }
   api('/api/config').then(function(r){
   var cfg = r.data || {};
   box.innerHTML = [
