@@ -242,7 +242,39 @@ object YuanbaoProto {
         return msg.copy(text = text, imageDesc = imageDesc)
     }
 
-    // ---------- 发消息（Outbound） ----------
+    // ---------- DirectedPush（v1.119c 关键补充：消息可能以 JSON content 字符串推送） ----------
+
+    /** 解码 DirectedPush：type (uint32) + content (string JSON) */
+    fun decodeDirectedPush(data: ByteArray): Pair<Int, String> {
+        var type = 0; var content = ""
+        parse(data) { f, wt, r ->
+            when (f) {
+                1 -> type = r.readUint32().toInt()
+                2 -> content = r.readString()
+                else -> return@parse false
+            }
+            true
+        }
+        return type to content
+    }
+
+    /** 从 JSON 字符串解析用户消息文本（msg_body[].msg_content.text 或顶层 text） */
+    fun extractTextFromJson(json: String): String {
+        return try {
+            val obj = org.json.JSONObject(json)
+            // 顶层 text
+            if (obj.has("text") && obj.optString("text").isNotBlank()) return obj.optString("text")
+            // msg_body 数组
+            val body = obj.optJSONArray("msg_body")
+            if (body != null && body.length() > 0) {
+                val first = body.optJSONObject(0) ?: return ""
+                val mc = first.optJSONObject("msg_content")
+                if (mc != null && mc.optString("text").isNotBlank()) return mc.optString("text")
+                if (first.optString("text").isNotBlank()) return first.optString("text")
+            }
+            ""
+        } catch (e: Exception) { "" }
+    }
 
     fun encodeSendC2C(msgId: String, toAccount: String, fromAccount: String, text: String): ByteArray {
         val w = Writer()

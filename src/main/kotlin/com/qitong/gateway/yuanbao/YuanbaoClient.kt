@@ -49,6 +49,7 @@ class YuanbaoClient(
     @Volatile private var ws: WebSocket? = null
     @Volatile private var connected = false
     private val stopped = AtomicBoolean(false)
+    @Volatile private var lastPongAt = System.currentTimeMillis()
     @Volatile private var backoffMs = 2000L
     @Volatile private var signTokenCache: Pair<String, Long>? = null   // (token, expireAt)
     @Volatile var botUid: String = ""
@@ -149,10 +150,27 @@ class YuanbaoClient(
             }
         }
         ws = http.newWebSocket(req, listener)
-        // 阻塞等待直到停止
+        // 阻塞等待直到停止，同时跑应用层心跳（元宝服务端认 5s ping 帧，不认 WebSocket 协议层 ping）
+        var lastPingAt = System.currentTimeMillis()
         while (!stopped.get()) {
             try { Thread.sleep(1000) } catch (_: InterruptedException) { return }
-            if (!connected) return  // 断线 → 让外层重连
+            val now = System.currentTimeMillis()
+            if (connected) {
+                // 每 5s 发一次应用层 ping（ConnMsg cmd=ping）
+                if (now - lastPingAt >= 5000) {
+                    lastPingAt = now
+                    try {
+                        val pingHead = YuanbaoProto.Head(cmdType = 0, cmd = "ping", seqNo = seqNo.incrementAndGet(), msgId = "ping-${now}", module = "conn_access")
+                        ws?.send(YuanbaoProto.encodeConnMsg(pingHead, ByteArray(0)).toByteString())
+                    } catch (_: Exception) {}
+                }
+                // 10s 无 pong 响应 → 判定掉线，触发外层重连
+                if (now - lastPongAt >= 10_000) {
+                    connected = false
+                    onStatus("离线", "心跳超时(10s无响应)")
+                    return
+                }
+            }
         }
     }
 
@@ -174,7 +192,7 @@ class YuanbaoClient(
                         w.close(1000, "auth-fail")
                     }
                 }
-                head.cmd == "ping" -> { /* ping 由 OkHttp pingInterval 兜底 + 服务端回包忽略 */ }
+                head.cmd == "ping" -> { lastPongAt = System.currentTimeMillis() /* ping rsp 更新心跳 */ }
                 head.cmd == "kickout" -> { onStatus("被踢下线", "kickout") }
                 head.cmd == "sync_information" -> {
                     // sync 响应（Response 或 Push 都可能）
@@ -190,55 +208,54 @@ class YuanbaoClient(
                         println("[Yuanbao] query_bot_info OK code=$qc ownerId=$qm")
                     }
                 }
-                head.cmdType == 2 -> {  // Push（PushMsg 包着真正的 cmd 和 data）
+                head.cmdType == 2 -> {  // Push（★ 必须回 PushAck，否则服务端判定未送达）
+                    // ★ v1.119c 回 PushAck（服务端要求）
+                    try {
+                        val ackHead = head.copy(cmdType = 3, seqNo = seqNo.incrementAndGet())
+                        w.send(YuanbaoProto.encodeConnMsg(ackHead, ByteArray(0)).toByteString())
+                    } catch (_: Exception) {}
+                    // 解码策略：先试 PushMsg wrapper，再直接解 ConnMsg.data 为 Inbound（双路径），最后试 DirectedPush(JSON)
                     val push = YuanbaoProto.decodePushMsg(payload)
-                    // 业务命令分发：sync_information / query_bot_info 响应 or inbound 消息推送
-                    when (push.cmd) {
+                    val bizCmd = if (push.cmd.isNotBlank()) push.cmd else head.cmd
+                    val bizData = if (push.data.isNotEmpty()) push.data else payload
+                    when (bizCmd) {
                         "sync_information" -> runCatching {
-                            val (sc, sm) = YuanbaoProto.decodeSyncInformationRsp(push.data)
+                            val (sc, sm) = YuanbaoProto.decodeSyncInformationRsp(bizData)
                             println("[Yuanbao] sync_information RSP code=$sc msg=$sm")
                             if (sc != 0) onStatus("在线", "命令同步警告 code=$sc")
                         }
                         "query_bot_info" -> runCatching {
-                            val (qc, qm) = YuanbaoProto.decodeQueryBotInfoRsp(push.data)
+                            val (qc, qm) = YuanbaoProto.decodeQueryBotInfoRsp(bizData)
                             println("[Yuanbao] query_bot_info RSP code=$qc ownerId=$qm")
                         }
-                        "inbound_message_push" -> {
-                            val inbound = YuanbaoProto.decodeInboundMessagePush(push.data)
-                            if (inbound != null && (inbound.text.isNotBlank() || inbound.imageDesc.isNotBlank())) {
-                                onMessage(
-                                    YuanbaoInbound(
-                                        msgId = inbound.msgId,
-                                        fromAccount = inbound.fromAccount,
-                                        toAccount = inbound.toAccount,
-                                        senderNickname = inbound.senderNickname,
-                                        groupCode = inbound.groupCode,
-                                        groupName = inbound.groupName,
-                                        isGroup = inbound.clawMsgType == 1 || inbound.groupCode.isNotBlank(),
-                                        text = inbound.text,
-                                        imageDesc = inbound.imageDesc
-                                    )
-                                )
-                            }
-                        }
                         else -> {
-                            // 未知 cmd 但 data 非空，尝试按 Inbound 解（容错）
-                            if (push.data.isNotEmpty()) {
-                                val inbound = YuanbaoProto.decodeInboundMessagePush(push.data)
-                                if (inbound != null && (inbound.text.isNotBlank() || inbound.imageDesc.isNotBlank())) {
-                                    onMessage(
-                                        YuanbaoInbound(
-                                            msgId = inbound.msgId,
-                                            fromAccount = inbound.fromAccount,
-                                            toAccount = inbound.toAccount,
-                                            senderNickname = inbound.senderNickname,
-                                            groupCode = inbound.groupCode,
-                                            groupName = inbound.groupName,
-                                            isGroup = inbound.clawMsgType == 1 || inbound.groupCode.isNotBlank(),
-                                            text = inbound.text,
-                                            imageDesc = inbound.imageDesc
-                                        )
-                                    )
+                            // 1) 按 InboundMessagePush protobuf 解
+                            var handled = tryDispatchInbound(bizData)
+                            // 2) 解不出 → 试 DirectedPush（JSON content）
+                            if (!handled) {
+                                runCatching {
+                                    val (dtype, content) = YuanbaoProto.decodeDirectedPush(bizData)
+                                    if (content.isNotBlank()) {
+                                        println("[Yuanbao] DirectedPush type=$dtype content=${content.take(60)}")
+                                        val text = YuanbaoProto.extractTextFromJson(content)
+                                        val json = try { org.json.JSONObject(content) } catch (e: Exception) { null }
+                                        if (json != null && text.isNotBlank()) {
+                                            onMessage(
+                                                YuanbaoInbound(
+                                                    msgId = json.optString("msg_key", ""),
+                                                    fromAccount = json.optString("from_account"),
+                                                    toAccount = json.optString("to_account", ""),
+                                                    senderNickname = json.optString("sender_nickname", ""),
+                                                    groupCode = json.optString("group_code", ""),
+                                                    groupName = json.optString("group_name", ""),
+                                                    isGroup = json.optString("group_code").isNotBlank(),
+                                                    text = text,
+                                                    imageDesc = ""
+                                                )
+                                            )
+                                            println("[Yuanbao] DirectedPush 收到消息 from=${json.optString("from_account")} text=${text.take(30)}")
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -250,6 +267,32 @@ class YuanbaoClient(
             }
         } catch (e: Exception) {
             // 忽略未知帧
+        }
+    }
+
+    /** 尝试把数据按 InboundMessagePush 解成用户消息（容错：PushMsg.data / ConnMsg.data 双路径）。返回是否成功解出并分发 */
+    private fun tryDispatchInbound(data: ByteArray): Boolean {
+        return try {
+            val inbound = YuanbaoProto.decodeInboundMessagePush(data)
+            if (inbound != null && (inbound.text.isNotBlank() || inbound.imageDesc.isNotBlank())) {
+                println("[Yuanbao] 收到消息 from=${inbound.fromAccount} group=${inbound.groupCode} text=${inbound.text.take(30)}")
+                onMessage(
+                    YuanbaoInbound(
+                        msgId = inbound.msgId,
+                        fromAccount = inbound.fromAccount,
+                        toAccount = inbound.toAccount,
+                        senderNickname = inbound.senderNickname,
+                        groupCode = inbound.groupCode,
+                        groupName = inbound.groupName,
+                        isGroup = inbound.clawMsgType == 1 || inbound.groupCode.isNotBlank(),
+                        text = inbound.text,
+                        imageDesc = inbound.imageDesc
+                    )
+                )
+                true
+            } else false
+        } catch (e: Exception) {
+            false
         }
     }
 
