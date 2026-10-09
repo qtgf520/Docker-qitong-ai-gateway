@@ -225,6 +225,9 @@ git push origin master
 | 23 | **沙盒函数权限表与 KNOWN_FNS 不一致** | 模型调用函数名对不上→功能静默失败 | 加函数必须三处同步：KNOWN_FNS + 权限表 + KNOWLEDGE_JSON + when(fn) 实现 |
 | 24 | **页面重划删除卡片后残留 JS 回调** | 等异步回调操作已删 DOM 元素→空指针/白屏 | 删除页面卡片时同步删其渲染回调，或回调用 if(el) 判空 |
 | 25 | **heredoc 在 terminal 里引号出错** | python <<'PY' 含双引号嵌套报 syntax error | 复杂脚本用 create_file 写 .py 文件再执行，别用 heredoc 硬塞 |
+| 26 | **GitHub API 建 Release 401 Bad credentials** | remote URL 是 `qtgf520:token@` 格式，正则把用户名+token 一起当 token | 解析 remote 用 `https://(?:[^:]+:)?([^@]+)@github` 只取冒号后 token |
+| 27 | **版本号漏改 build.gradle.kts** | 只改 Main/Models/WebUi 的版本，jar 文件名还是旧版 | 发版前 grep 全部版本位置：Main.kt(3处)+Models.kt+WebUi VER+build.gradle.kts version |
+| 28 | **聊天页 CSS 全屏贴合** | 只改 .chat-layout 高度不够，父容器 .content 有 padding/卡片留白 | `.content:has(#chatLayout){padding:0!important}` + `#view-chat .chat-layout{height:calc(100dvh-52px)}`；移动端减底部导航 116px |
 
 ---
 
