@@ -278,8 +278,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .content{margin-left:0;padding:68px 24px 24px;flex:1;min-height:100vh;max-width:100vw;transition:padding .22s ease}
 .view{display:none}
 .view.active{display:block}
-/* ★ v1.120 DeepSeek式聊天：内容区去掉留白，聊天占满可视区（含顶部导航，底部贴合） */
-.content:has(#chatLayout){padding:0!important}
+/* ★ v1.120b DeepSeek式聊天：顶部留出 topbar(52px) 不被遮挡，聊天占满下方可视区 */
+.content:has(#chatLayout){padding:52px 0 0!important}
 #view-chat{height:100%}
 #view-chat .chat-layout{height:calc(100dvh - 52px);min-height:0;border-radius:0}
 [data-nav="side"] #view-chat .chat-layout{height:calc(100dvh - 52px)}
@@ -458,9 +458,9 @@ input[type=range]{accent-color:var(--primary)}
   .topbar-right{flex-shrink:0}
   .topbar-title .ver{display:none}
   .user-name{display:none}
-  /* 移动端聊天：抽屉式会话列表，消息区全宽，撑满到导航 */
-  .content:has(#chatLayout){padding:0!important}
-  #view-chat .chat-layout{height:calc(100dvh - 116px);min-height:0;border-radius:0}
+  /* 移动端聊天：顶部留 topbar(52px) + 底部贴 bottom-nav(52px)，抽屉会话列表 */
+  .content:has(#chatLayout){padding:52px 0 52px!important}
+  #view-chat .chat-layout{height:calc(100dvh - 104px);min-height:0;border-radius:0}
   .chat-layout{height:100%;min-height:0}
   .chat-side{width:84vw;max-width:300px}
   .chat-main .chat-toolbar select{width:130px!important;font-size:11px!important}
