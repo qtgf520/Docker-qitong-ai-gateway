@@ -368,6 +368,31 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
+            // ★ v1.119 元宝 Bot（腾讯元宝开放平台 WS 通道，对齐 weixin_bots）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS yuanbao_bots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL DEFAULT '',
+                    app_key TEXT NOT NULL DEFAULT '',
+                    app_secret TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    ai_model TEXT NOT NULL DEFAULT 'qtai-sj',
+                    system_prompt TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            // ★ v1.119 元宝运行日志（对齐 weixin_logs）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS yuanbao_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL DEFAULT 0,
+                    from_account TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL DEFAULT '',
+                    latency_ms INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
             // ★ v69 微信用户绑定（对齐 qq_user_bindings）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS weixin_user_bindings (
@@ -1454,6 +1479,7 @@ class Database(private val dbPath: String) {
     /** ★ v1.104 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.119", "元宝Bot接入（腾讯元宝开放平台）", "后台「机器人→元宝Bot」填 AppKey/AppSecret 接入腾讯元宝，WS 直连收发消息（私聊+群聊）；协议自研（sign-token HMAC 认证+AuthBind+Protobuf 编解码+心跳）；收到消息自动调网关 qtai-sj 完整沙盒 Agent 循环，支持查余额/网关状态/体检/绑定账号等全功能；动态预览/机器人列表/运行日志+掉线看门狗"),
             Triple("v1.118", "技能/工具用户自管理", "QQ/微信发「添加技能 名称|触发词|回复内容」创建自己的技能，「我的技能/删除技能 编号/停用技能 编号」管理；qtai-sj 新增 skill_my/add/del/toggle（普通用户可加自己的技能，管理员可管公共）；三端自动生效；技能归属隔离"),
             Triple("v1.117", "机器人全接口远程化", "网关全部功能远程可查可改：新增 provider_list/add/update/delete/enable/disable、model_set_name/price/public/authorized/delete、api_key_list/create/delete、user_list/set_balance/set_role/delete、config_get/set、announcement_list/add/delete、ticket_reply/close 等智能体管理函数；QQ/微信/qtai-sj 三通道共用；权限模型：管理员全量读写，普通用户只读自己的，公告人人可读"),
             Triple("v1.116", "页面重划+机器人流畅性三连修+Git版本查询", "个人中心/网关设置重划（人格/改密/大脑绑定/语言/限流移个人中心）；机器人停止即时生效（发停止立即中断模型调用）；不间断追问（执行中发新消息立即接入上下文继续干）；Agent轮数8→20单轮等待90秒（多思考不停息）；长任务每30秒推进度；qtai-sj新增git_version/git_log查版本与提交历史"),
@@ -2460,6 +2486,84 @@ class Database(private val dbPath: String) {
     }
 
     fun deleteWeixinBot(id: Long) { stmt("DELETE FROM weixin_bots WHERE id=?", id) }
+
+    // ============ ★ v1.119 元宝 Bot CRUD（对齐 weixin_bots） ============
+
+    fun getYuanbaoBots(): List<com.qitong.gateway.yuanbao.YuanbaoBot> =
+        query("SELECT * FROM yuanbao_bots ORDER BY id").map { row ->
+            com.qitong.gateway.yuanbao.YuanbaoBot(
+                id = (row["id"] as Number).toLong(),
+                name = row["name"] as? String ?: "",
+                appKey = row["app_key"] as? String ?: "",
+                appSecret = row["app_secret"] as? String ?: "",
+                enabled = (row["enabled"] as? Number)?.toInt() == 1,
+                aiModel = row["ai_model"] as? String ?: "qtai-sj",
+                systemPrompt = row["system_prompt"] as? String ?: "",
+                createdAt = (row["created_at"] as? Number)?.toLong() ?: 0
+            )
+        }
+
+    fun getYuanbaoBotById(id: Long): com.qitong.gateway.yuanbao.YuanbaoBot? =
+        query("SELECT * FROM yuanbao_bots WHERE id=?", id).firstOrNull()?.let { row ->
+            com.qitong.gateway.yuanbao.YuanbaoBot(
+                id = (row["id"] as Number).toLong(),
+                name = row["name"] as? String ?: "",
+                appKey = row["app_key"] as? String ?: "",
+                appSecret = row["app_secret"] as? String ?: "",
+                enabled = (row["enabled"] as? Number)?.toInt() == 1,
+                aiModel = row["ai_model"] as? String ?: "qtai-sj",
+                systemPrompt = row["system_prompt"] as? String ?: "",
+                createdAt = (row["created_at"] as? Number)?.toLong() ?: 0
+            )
+        }
+
+    fun saveYuanbaoBot(b: com.qitong.gateway.yuanbao.YuanbaoBot) {
+        if (b.id > 0) {
+            stmt("UPDATE yuanbao_bots SET name=?, app_key=?, app_secret=?, enabled=?, ai_model=?, system_prompt=? WHERE id=?",
+                b.name, b.appKey, b.appSecret, if (b.enabled) 1 else 0, b.aiModel, b.systemPrompt, b.id)
+        } else {
+            stmt("INSERT INTO yuanbao_bots (name,app_key,app_secret,enabled,ai_model,system_prompt,created_at) VALUES (?,?,?,?,?,?,?)",
+                b.name, b.appKey, b.appSecret, if (b.enabled) 1 else 0, b.aiModel, b.systemPrompt, System.currentTimeMillis())
+        }
+    }
+
+    fun deleteYuanbaoBot(id: Long) { stmt("DELETE FROM yuanbao_bots WHERE id=?", id) }
+
+    /** 元宝运行日志 */
+    fun addYuanbaoLog(botId: Long, fromAccount: String, type: String, content: String, latencyMs: Long = 0) {
+        stmt("INSERT INTO yuanbao_logs (bot_id,from_account,type,content,latency_ms,created_at) VALUES (?,?,?,?,?,?)",
+            botId, fromAccount, type, content.take(500), latencyMs, System.currentTimeMillis())
+        runCatching {
+            val cnt = (queryOne("SELECT COUNT(*) FROM yuanbao_logs") as? Number)?.toLong() ?: 0
+            if (cnt > 100) stmt("DELETE FROM yuanbao_logs WHERE id NOT IN (SELECT id FROM yuanbao_logs ORDER BY id DESC LIMIT 100)")
+        }
+    }
+
+    fun getYuanbaoLogs(limit: Int = 200): List<Map<String, Any?>> =
+        query("SELECT * FROM yuanbao_logs ORDER BY id DESC LIMIT $limit").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "botId" to ((row["bot_id"] as? Number)?.toLong() ?: 0),
+                "fromAccount" to (row["from_account"] as? String ?: ""),
+                "type" to (row["type"] as? String ?: ""),
+                "content" to (row["content"] as? String ?: ""),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+
+    fun clearYuanbaoLogs() { stmt("DELETE FROM yuanbao_logs") }
+
+    // ============ ★ v1.119 元宝大脑记忆（复用 brain_memory 表，tags=yb:{key}） ============
+
+    fun getYuanbaoBrainMemories(key: String, limit: Int = 6): List<String> {
+        val rows = query("SELECT content FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit", "yb:$key")
+        return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
+    }
+
+    fun saveYuanbaoBrainMemory(key: String, content: String, type: String = "short") {
+        stmt("INSERT INTO brain_memory (user_id,title,content,type,emotion,importance,timestamp,access_count,source,tags,model_id) VALUES (0,?,?,?,?,?,?,0,'yuanbao',?, '')",
+            key, content.take(500), type, "neutral", 5, System.currentTimeMillis(), "yb:$key")
+    }
 
     /** 绑定微信 openid 到网关账号 users.id */
     fun setWeixinUserBound(openid: String, userId: Long) {

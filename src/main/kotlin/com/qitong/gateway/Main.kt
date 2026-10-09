@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.118
+ * 綦桐AI网关 · Docker 服务器版 v1.119
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.118    ║
+        ║   綦桐AI网关 · Docker Server v1.119    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -145,6 +145,9 @@ fun main(args: Array<String>) {
 
     // ★ v69 微信 ilink 机器人：启动所有已启用的微信 Bot 长轮询
     com.qitong.gateway.weixin.WeixinBotManager.startAll(database, gatewayPort)
+
+    // ★ v1.119 元宝 Bot：启动所有已启用的元宝 Bot（WS 长连接）
+    com.qitong.gateway.yuanbao.YuanbaoBotManager.startAll(database, gatewayPort)
 
     val gatewayServer = embeddedServer(Netty, port = gatewayPort) { moduleGateway(database) }
     val webServer = embeddedServer(Netty, port = webPort) { moduleWeb(database) }
@@ -191,7 +194,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.118"))
+                put("version", JsonPrimitive("1.119"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -952,6 +955,100 @@ fun Application.moduleWeb(database: Database) {
             database.clearWeixinLogs()
             AdminApi.ok(call, null, "日志已清空")
         }
+
+        // ===== ★ v1.119 元宝 Bot（腾讯元宝开放平台 WS 通道） =====
+        get("/api/yuanbao/bots") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, database.getYuanbaoBots().map { b ->
+                val st = com.qitong.gateway.yuanbao.YuanbaoBotManager.statusOf(b.id)
+                mapOf(
+                    "id" to b.id, "name" to b.name, "enabled" to b.enabled,
+                    "aiModel" to b.aiModel, "systemPrompt" to b.systemPrompt,
+                    "appKey" to b.appKey, "appSecret" to b.appSecret,
+                    "status" to st.status, "lastError" to st.lastError,
+                    "messagesHandled" to st.messagesHandled, "createdAt" to b.createdAt
+                )
+            }, "ok")
+        }
+        get("/api/yuanbao/overview") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val bots = database.getYuanbaoBots()
+            val onlineCount = bots.count { com.qitong.gateway.yuanbao.YuanbaoBotManager.statusOf(it.id).status == "在线" }
+            val recent = database.getYuanbaoLogs(20)
+            AdminApi.ok(call, mapOf(
+                "bots" to bots.map { b ->
+                    val st = com.qitong.gateway.yuanbao.YuanbaoBotManager.statusOf(b.id)
+                    mapOf("id" to b.id, "name" to b.name, "online" to (st.status == "在线"),
+                        "status" to st.status, "lastError" to st.lastError, "messagesHandled" to st.messagesHandled)
+                },
+                "overview" to mapOf("onlineBots" to onlineCount, "totalBots" to bots.size),
+                "recent" to recent
+            ), "ok")
+        }
+        post("/api/yuanbao/bots") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
+            val old = if (id > 0) database.getYuanbaoBotById(id) else null
+            val bot = com.qitong.gateway.yuanbao.YuanbaoBot(
+                id = id,
+                name = body["name"]?.jsonPrimitive?.content ?: "元宝Bot",
+                appKey = body["appKey"]?.jsonPrimitive?.content ?: old?.appKey ?: "",
+                appSecret = body["appSecret"]?.jsonPrimitive?.content ?: old?.appSecret ?: "",
+                enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: (old?.enabled ?: true),
+                aiModel = body["aiModel"]?.jsonPrimitive?.content ?: "qtai-sj",
+                systemPrompt = body["systemPrompt"]?.jsonPrimitive?.content ?: ""
+            )
+            database.saveYuanbaoBot(bot)
+            val saved: com.qitong.gateway.yuanbao.YuanbaoBot = if (id > 0) {
+                database.getYuanbaoBotById(id) ?: bot
+            } else {
+                database.getYuanbaoBots().lastOrNull { it.name == bot.name } ?: bot
+            }
+            if (saved.enabled && saved.appKey.isNotBlank() && saved.appSecret.isNotBlank()) com.qitong.gateway.yuanbao.YuanbaoBotManager.startBot(saved)
+            else com.qitong.gateway.yuanbao.YuanbaoBotManager.stopBot(saved.id)
+            AdminApi.ok(call, mapOf("id" to saved.id, "hasSecret" to saved.appSecret.isNotBlank()), "元宝Bot已保存")
+        }
+        delete("/api/yuanbao/bots/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            com.qitong.gateway.yuanbao.YuanbaoBotManager.stopBot(id)
+            database.deleteYuanbaoBot(id)
+            AdminApi.ok(call, null, "已删除")
+        }
+        post("/api/yuanbao/bots/{id}/restart") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            com.qitong.gateway.yuanbao.YuanbaoBotManager.restartBot(id)
+            AdminApi.ok(call, null, "已重连")
+        }
+        post("/api/yuanbao/bots/{id}/toggle") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val bot = database.getYuanbaoBotById(id) ?: run { AdminApi.fail(call, "机器人不存在", 404); return@post }
+            val nowOn = !bot.enabled
+            database.saveYuanbaoBot(bot.copy(enabled = nowOn))
+            if (nowOn) com.qitong.gateway.yuanbao.YuanbaoBotManager.startBot(bot.copy(enabled = true))
+            else com.qitong.gateway.yuanbao.YuanbaoBotManager.stopBot(id)
+            AdminApi.ok(call, mapOf("enabled" to nowOn), if (nowOn) "已启用" else "已停用")
+        }
+        get("/api/yuanbao/logs") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, database.getYuanbaoLogs(limit = 200), "ok")
+        }
+        post("/api/yuanbao/logs/clear") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            database.clearYuanbaoLogs()
+            AdminApi.ok(call, null, "日志已清空")
+        }
         // QQ 动态概览（流动面板数据源）
         get("/api/qq/overview") {
             val u = call.requireAuth(database) ?: return@get
@@ -1608,7 +1705,7 @@ fun Application.moduleWeb(database: Database) {
             database.clearQqBrainMemories(openid)
             AdminApi.ok(call, null, "记忆已清空")
         }
-        // ★ v1.118 微信用户长期记忆（管理员管理）
+        // ★ v1.119 微信用户长期记忆（管理员管理）
         get("/api/weixin/users/memory") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
@@ -1623,7 +1720,7 @@ fun Application.moduleWeb(database: Database) {
             database.clearWxBrainMemories(openid)
             AdminApi.ok(call, null, "记忆已清空")
         }
-        // ★ v1.118 群级公共记忆（管理员管理）
+        // ★ v1.119 群级公共记忆（管理员管理）
         get("/api/groups/memory") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
@@ -1904,7 +2001,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.118"))
+                put("version", JsonPrimitive("1.119"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2656,7 +2753,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.118"))
+                    put("version", JsonPrimitive("1.119"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()
