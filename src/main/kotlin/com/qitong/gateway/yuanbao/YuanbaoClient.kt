@@ -164,8 +164,11 @@ class YuanbaoClient(
                     val (code, msg) = YuanbaoProto.decodeAuthBindRsp(payload)
                     if (code == 0) {
                         onStatus("在线", "认证成功")
-                        // 推送一条 sync_information（保持对齐官方插件行为，非必需）
-                        sendBiz(w, "sync_information", "ybBot", ByteArray(0))
+                        // ★ v1.119 关键：连接后必须同步命令列表 + 查询机器人信息，元宝后台才激活消息回调
+                        val syncData = YuanbaoProto.encodeSyncInformation()
+                        sendBiz(w, "sync_information", "yuanbao_openclaw_proxy", syncData)
+                        val qbiData = YuanbaoProto.encodeQueryBotInfo(botUid)
+                        sendBiz(w, "query_bot_info", "yuanbao_openclaw_proxy", qbiData)
                     } else {
                         onStatus("认证失败", "auth-bind code=$code msg=$msg")
                         w.close(1000, "auth-fail")
@@ -173,25 +176,71 @@ class YuanbaoClient(
                 }
                 head.cmd == "ping" -> { /* ping 由 OkHttp pingInterval 兜底 + 服务端回包忽略 */ }
                 head.cmd == "kickout" -> { onStatus("被踢下线", "kickout") }
-                head.cmdType == 2 -> {  // Push
+                head.cmd == "sync_information" -> {
+                    // sync 响应（Response 或 Push 都可能）
+                    runCatching {
+                        val (sc, sm) = YuanbaoProto.decodeSyncInformationRsp(payload)
+                        if (sc != 0) onStatus("在线", "命令同步警告 code=$sc $sm")
+                        else println("[Yuanbao] sync_information OK code=$sc")
+                    }
+                }
+                head.cmd == "query_bot_info" -> {
+                    runCatching {
+                        val (qc, qm) = YuanbaoProto.decodeQueryBotInfoRsp(payload)
+                        println("[Yuanbao] query_bot_info OK code=$qc ownerId=$qm")
+                    }
+                }
+                head.cmdType == 2 -> {  // Push（PushMsg 包着真正的 cmd 和 data）
                     val push = YuanbaoProto.decodePushMsg(payload)
-                    if (push.cmd == "inbound_message_push" || push.data.isNotEmpty()) {
-                        val inbound = YuanbaoProto.decodeInboundMessagePush(push.data)
-                        if (inbound != null && (inbound.text.isNotBlank() || inbound.imageDesc.isNotBlank())) {
-                            // 转成对外 YuanbaoInbound（对齐微信 WeixinMessage 语义）
-                            onMessage(
-                                YuanbaoInbound(
-                                    msgId = inbound.msgId,
-                                    fromAccount = inbound.fromAccount,
-                                    toAccount = inbound.toAccount,
-                                    senderNickname = inbound.senderNickname,
-                                    groupCode = inbound.groupCode,
-                                    groupName = inbound.groupName,
-                                    isGroup = inbound.clawMsgType == 1 || inbound.groupCode.isNotBlank(),
-                                    text = inbound.text,
-                                    imageDesc = inbound.imageDesc
+                    // 业务命令分发：sync_information / query_bot_info 响应 or inbound 消息推送
+                    when (push.cmd) {
+                        "sync_information" -> runCatching {
+                            val (sc, sm) = YuanbaoProto.decodeSyncInformationRsp(push.data)
+                            println("[Yuanbao] sync_information RSP code=$sc msg=$sm")
+                            if (sc != 0) onStatus("在线", "命令同步警告 code=$sc")
+                        }
+                        "query_bot_info" -> runCatching {
+                            val (qc, qm) = YuanbaoProto.decodeQueryBotInfoRsp(push.data)
+                            println("[Yuanbao] query_bot_info RSP code=$qc ownerId=$qm")
+                        }
+                        "inbound_message_push" -> {
+                            val inbound = YuanbaoProto.decodeInboundMessagePush(push.data)
+                            if (inbound != null && (inbound.text.isNotBlank() || inbound.imageDesc.isNotBlank())) {
+                                onMessage(
+                                    YuanbaoInbound(
+                                        msgId = inbound.msgId,
+                                        fromAccount = inbound.fromAccount,
+                                        toAccount = inbound.toAccount,
+                                        senderNickname = inbound.senderNickname,
+                                        groupCode = inbound.groupCode,
+                                        groupName = inbound.groupName,
+                                        isGroup = inbound.clawMsgType == 1 || inbound.groupCode.isNotBlank(),
+                                        text = inbound.text,
+                                        imageDesc = inbound.imageDesc
+                                    )
                                 )
-                            )
+                            }
+                        }
+                        else -> {
+                            // 未知 cmd 但 data 非空，尝试按 Inbound 解（容错）
+                            if (push.data.isNotEmpty()) {
+                                val inbound = YuanbaoProto.decodeInboundMessagePush(push.data)
+                                if (inbound != null && (inbound.text.isNotBlank() || inbound.imageDesc.isNotBlank())) {
+                                    onMessage(
+                                        YuanbaoInbound(
+                                            msgId = inbound.msgId,
+                                            fromAccount = inbound.fromAccount,
+                                            toAccount = inbound.toAccount,
+                                            senderNickname = inbound.senderNickname,
+                                            groupCode = inbound.groupCode,
+                                            groupName = inbound.groupName,
+                                            isGroup = inbound.clawMsgType == 1 || inbound.groupCode.isNotBlank(),
+                                            text = inbound.text,
+                                            imageDesc = inbound.imageDesc
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
                 }

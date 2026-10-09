@@ -295,4 +295,73 @@ object YuanbaoProto {
         }
         return w.toBytes()
     }
+
+    // ---------- ★ v1.119 命令同步（关键！元宝后台靠这个激活 bot 消息回调） ----------
+
+    /** SyncInformationReq：syncType=1 COMMANDS + commandData（bot_commands 列表） */
+    fun encodeSyncInformation(botVersion: String = "2026.9.9", pluginVersion: String = "2.18.3"): ByteArray {
+        val w = Writer()
+        w.uint32(1, 1)  // syncType = SYNC_INFORMATION_TYPE_COMMANDS
+        w.string(2, botVersion)
+        w.string(3, pluginVersion)
+        // commandData (field 11) — 传一组命令让元宝后台注册 bot 能力
+        w.message(11) {
+            val cd = Writer()
+            // botCommands (field 1): 内置命令列表
+            listOf(
+                "help" to "查看帮助",
+                "status" to "查看网关状态",
+                "balance" to "查询余额",
+                "bind" to "绑定网关账号",
+                "persona" to "切换人格",
+                "remind" to "设置提醒",
+                "todo" to "待办管理",
+                "health" to "全功能体检"
+            ).forEachIndexed { i, (name, desc) ->
+                cd.message(1) {
+                    val c = Writer()
+                    c.string(1, "/$name")
+                    c.string(2, desc)
+                    c.toBytes()
+                }
+            }
+            cd.toBytes()
+        }
+        return w.toBytes()
+    }
+
+    /** QueryBotInfoReq：查询机器人信息（验证 bot 身份） */
+    fun encodeQueryBotInfo(botId: String): ByteArray {
+        val w = Writer()
+        w.string(1, botId)
+        return w.toBytes()
+    }
+
+    /** 解析 SyncInformationRsp（code/message） */
+    fun decodeSyncInformationRsp(data: ByteArray): Pair<Int, String> {
+        var code = 0; var msg = ""
+        parse(data) { f, wt, r ->
+            when (f) {
+                1 -> code = r.readInt32()
+                2 -> msg = r.readString()
+                else -> return@parse false
+            }
+            true
+        }
+        return code to msg
+    }
+
+    /** 解析 QueryBotInfoRsp（code/ownerId） */
+    fun decodeQueryBotInfoRsp(data: ByteArray): Pair<Int, String> {
+        var code = 0; var ownerId = ""
+        parse(data) { f, wt, r ->
+            when (f) {
+                1 -> code = r.readInt32()
+                2 -> ownerId = r.readString()
+                else -> return@parse false
+            }
+            true
+        }
+        return code to ownerId
+    }
 }
