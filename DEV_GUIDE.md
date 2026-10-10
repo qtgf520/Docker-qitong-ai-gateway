@@ -228,6 +228,9 @@ git push origin master
 | 26 | **GitHub API 建 Release 401 Bad credentials** | remote URL 是 `qtgf520:token@` 格式，正则把用户名+token 一起当 token | 解析 remote 用 `https://(?:[^:]+:)?([^@]+)@github` 只取冒号后 token |
 | 27 | **版本号漏改 build.gradle.kts** | 只改 Main/Models/WebUi 的版本，jar 文件名还是旧版 | 发版前 grep 全部版本位置：Main.kt(3处)+Models.kt+WebUi VER+build.gradle.kts version |
 | 28 | **聊天页 CSS 全屏贴合** | 只改 .chat-layout 高度不够，父容器 .content 有 padding/卡片留白 | `.content:has(#chatLayout){padding:0!important}` + `#view-chat .chat-layout{height:calc(100dvh-52px)}`；移动端减底部导航 116px |
+| 29 | **前端序列化 data class 输出 toString** | content_blocks 返回 `ContentBlock(...)` 而非 JSON，前端拿不到结构 | encodeElement 不认识自定义 data class；必须提供 toMap() 递归转换后再塞进 Map/List |
+| 30 | **注释残留外部项目名** | 从别处借鉴/迁移代码后注释留着来源名，被用户抓到骂 | 借鉴代码落地后全局 grep 来源名（Operit/AAswordman 等）清零，统一改自研描述 |
+| 31 | **内网 git push 要密码** | gitdev 仓库用 GIT_SSH_COMMAND 不带密码会卡在 password 提示 | `SSHPASS='Git@2026qitong' GIT_SSH_COMMAND='sshpass -e ssh -o StrictHostKeyChecking=no' git push ...` |
 
 ---
 
