@@ -231,6 +231,8 @@ git push origin master
 | 29 | **前端序列化 data class 输出 toString** | content_blocks 返回 `ContentBlock(...)` 而非 JSON，前端拿不到结构 | encodeElement 不认识自定义 data class；必须提供 toMap() 递归转换后再塞进 Map/List |
 | 30 | **注释残留外部项目名** | 从别处借鉴/迁移代码后注释留着来源名，被用户抓到骂 | 借鉴代码落地后全局 grep 来源名（Operit/AAswordman 等）清零，统一改自研描述 |
 | 31 | **内网 git push 要密码** | gitdev 仓库用 GIT_SSH_COMMAND 不带密码会卡在 password 提示 | `SSHPASS='Git@2026qitong' GIT_SSH_COMMAND='sshpass -e ssh -o StrictHostKeyChecking=no' git push ...` |
+| 32 | **onclick 多层引号嵌套炸 SyntaxError** | 复制按钮 onclick 里 JSON.stringify+unescapeHtml 引号地狱，node --check 直接报错 | 全局存储 `_msgCopyStore.push(content)` + onclick 只传索引 `copyChatMsg(i)` |
+| 33 | **Markdown 任务清单被无序列表吞** | `- [x]` 被 md-ul 正则先匹配吃掉，任务清单渲染为 0 | 任务清单正则在无序/有序列表**之前**处理 |
 
 ---
 
