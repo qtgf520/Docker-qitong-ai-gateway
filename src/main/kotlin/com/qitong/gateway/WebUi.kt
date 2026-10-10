@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v1.121"
+    private const val VER = "v1.122"
 
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -441,6 +441,20 @@ input[type=range]{accent-color:var(--primary)}
 .chat-reason.open .cr-body{display:block}
 .bubble pre{background:#1e1e2e;color:#e6e6e6;border-radius:8px;padding:10px 12px;margin:6px 0;overflow-x:auto;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}
 .bubble code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+/* ★ v1.122 增强 Markdown 渲染样式：标题/表格/列表/引用/任务/斜体 */
+.md-h{margin:8px 0 4px;line-height:1.4}
+h1.md-h{font-size:17px}h2.md-h{font-size:16px}h3.md-h{font-size:15px}h4.md-h,h5.md-h,h6.md-h{font-size:14px}
+.md-table{margin:6px 0;overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
+.md-table table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:280px}
+.md-table th{background:var(--surface2);font-weight:600;text-align:left}
+.md-table th,.md-table td{padding:6px 10px;border-bottom:1px solid var(--border)}
+.md-table tr:last-child td{border-bottom:none}
+.md-quote{margin:6px 0;padding:6px 12px;border-left:3px solid var(--primary);background:rgba(var(--primary-rgb),.06);border-radius:0 8px 8px 0;color:var(--muted);font-size:13px}
+.md-ul,.md-ol{margin:4px 0;padding-left:22px}
+.md-ul li,.md-ol li{margin:2px 0;line-height:1.6}
+.md-task{display:flex;align-items:flex-start;gap:8px;margin:3px 0;font-size:13px}
+.md-task input{width:15px;height:15px;margin-top:3px;accent-color:var(--primary)}
+.bubble .ic{background:rgba(120,120,120,.14);border-radius:4px;padding:1px 5px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .bubble img{max-width:200px;border-radius:8px;margin:4px 0;display:block}
 .bubble .att-chip{display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:3px 8px;font-size:12px;margin:2px 0}
 .chat-attach-preview{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}

@@ -441,6 +441,17 @@ window._renderBlocks = function(blocks){
   }
   return out;
 };
+window._msgCopyStore = [];
+window.copyChatMsg = function(i){
+  var c = window._msgCopyStore[i];
+  if(c == null){ toast('内容为空', false); return; }
+  copyText(c, '已复制');
+};
+window.unescapeHtml = function(str){
+  var d = document.createElement('div');
+  d.innerHTML = str;
+  return d.textContent || d.innerText || '';
+};
 window._renderMsgContent = function(m){
   if(m && m.content_blocks && m.content_blocks.length) return window._renderBlocks(m.content_blocks);
   return renderMd((m && m.content) || '');
@@ -456,7 +467,13 @@ window.loadConvMsgs = function(){
      ? '<span style="opacity:.7;font-size:11px;margin-left:6px"><button class="btn-ghost btn-sm" style="padding:0 6px" onclick="editMsg('+m.id+')" title="编辑这条消息">✏️</button></span>'
      : (m.role==='assistant' ? '<span style="opacity:.7;font-size:11px;margin-left:6px"><button class="btn-ghost btn-sm" style="padding:0 6px" onclick="regenFrom(this)" data-mid="'+m.id+'" title="在此重新生成（分叉）">🔄</button></span>' : '');
     if(m.role==='user') return '<div class="msg-row user"><div class="bubble">'+window._renderMsgContent(m)+ops+'<div class="msg-time">'+t+'</div></div></div>';
-    return '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble chat-msg-structured">'+window._renderMsgContent(m)+ops+'<div class="msg-time">'+t+'</div></div></div>';
+    var ci = -1;
+    if(m.content){
+     ci = window._msgCopyStore.length;
+     window._msgCopyStore.push(m.content);
+    }
+    var copyBtn = (ci >= 0 ? '<span style="opacity:.7;font-size:11px;margin-left:6px"><button class="btn-ghost btn-sm" style="padding:0 6px" onclick="copyChatMsg('+ci+')" title="复制这条回复">📋</button></span>' : '');
+    return '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble chat-msg-structured">'+window._renderMsgContent(m)+ops+copyBtn+'<div class="msg-time">'+t+'</div></div></div>';
    }).join('') || '<div class="msg-row system"><div class="bubble">空对话</div></div>';
    var e3 = $('chatMsgs'); if(e3) e3.scrollTop = e3.scrollHeight;
   }
@@ -546,10 +563,11 @@ window.toggleThink = function(){
 // 轻量 Markdown 渲染：转义 HTML -> 代码壳(复制/下载) -> think剥离 -> 图片 -> 换行
 window._codeStore = window._codeStore || [];
 var CODE_EXT = {js:'.js',javascript:'.js',ts:'.ts',typescript:'.ts',python:'.py',py:'.py',bash:'.sh',sh:'.sh',shell:'.sh',html:'.html',css:'.css',json:'.json',java:'.java',kotlin:'.kt',kt:'.kt',sql:'.sql',go:'.go',rust:'.rs',rs:'.rs',c:'.c',cpp:'.cpp',yaml:'.yml',yml:'.yml',md:'.md',markdown:'.md',xml:'.xml',dockerfile:'.Dockerfile'};
+// ★ v1.122 增强版 Markdown 渲染：代码壳/加粗/斜体/标题/列表/表格/引用/链接/任务清单/图片/换行
 function renderMd(t){
  var codes = [];
  var s = String(t||'');
- // 先抽离代码块（避免 esc 破坏）
+ // 0) 先抽离代码块（避免 esc 破坏）
  s = s.replace(/```([\w+#.-]*)[^\S\n]*\n?([\s\S]*?)```/g, function(m, lang, code){
   codes.push({lang:(lang||'text').toLowerCase(), code:code.replace(/\n+$/,'')});
   return '\u0000C' + (codes.length-1) + '\u0000';
@@ -557,14 +575,70 @@ function renderMd(t){
  s = esc(s);
  // 保险：剥离残余 think 标签
  s = s.replace(/&lt;think&gt;[\s\S]*?(&lt;\/think&gt;|$)/g, '');
+ // 表格（整段提取：| a | b | 型表格）
+ s = s.replace(/((?:\|[^\n]*\|\s*\n)+)/g, function(m){
+  var lines = m.trim().split(/\n/).map(function(l){ return l.trim(); });
+  if(lines.length < 2) return m;
+  // 第二行是分隔线 --- 才算表格
+  var sep = lines[1] || '';
+  if(!/^\|?[\s:|-]+\|?$/.test(sep) || sep.indexOf('-') < 0) return m;
+  var html = '<div class="md-table"><table>';
+  lines.forEach(function(line, idx){
+   if(idx === 1) return; // 跳过分隔线
+   var cells = line.replace(/^\||\|$/g,'').split('|').map(function(c){ return c.trim(); });
+   var tag = idx === 0 ? 'th' : 'td';
+   html += '<tr>' + cells.map(function(c){
+    c = c.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+    c = c.replace(/`([^`\n]+)`/g, '<code class="ic">$1</code>');
+    c = c.replace(/\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    return '<'+tag+'>'+c+'</'+tag+'>';
+   }).join('') + '</tr>';
+  });
+  return html + '</table></div>';
+ });
+ // 任务清单 - [x] / - [ ]（必须在 ul/ol 之前处理，否则被列表吞掉）
+ s = s.replace(/^[\s]*[-*]\s*\[([ xX])\]\s+(.+)$/gm, function(m, done, txt){
+  var checked = (done === 'x' || done === 'X') ? 'checked' : '';
+  return '<div class="md-task"><input type="checkbox" disabled ' + checked + '> <span>' + txt + '</span></div>';
+ });
+ // 标题 # ~ ######
+ s = s.replace(/^#{1,6}\s+(.+)$/gm, function(m, txt){
+  var n = (m.match(/^#+/) || [''])[0].length;
+  return '<h' + n + ' class="md-h">' + txt + '</h' + n + '>';
+ });
+ // 引用块 > xxx
+ s = s.replace(/^&gt;\s?(.+)$/gm, '<blockquote class="md-quote">$1</blockquote>');
+ // 无序列表 - / * / + （多行合并成 ul）
+ s = s.replace(/((?:^[\s]*[-*+]\s+.+\n?)+)/gm, function(m){
+  var items = m.split(/\n/).map(function(l){ return l.replace(/^[\s]*[-*+]\s+/, ''); }).filter(Boolean);
+  return '<ul class="md-ul">' + items.map(function(it){
+   it = it.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+   it = it.replace(/`([^`\n]+)`/g, '<code class="ic">$1</code>');
+   it = it.replace(/\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+   return '<li>' + it + '</li>';
+  }).join('') + '</ul>';
+ });
+ // 有序列表 1. 2. 3.
+ s = s.replace(/((?:^[\s]*\d+\.\s+.+\n?)+)/gm, function(m){
+  var items = m.split(/\n/).map(function(l){ return l.replace(/^[\s]*\d+\.\s+/, ''); }).filter(Boolean);
+  return '<ol class="md-ol">' + items.map(function(it){
+   it = it.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+   it = it.replace(/`([^`\n]+)`/g, '<code class="ic">$1</code>');
+   return '<li>' + it + '</li>';
+  }).join('') + '</ol>';
+ });
  // 行内 `code`
  s = s.replace(/`([^`\n]+)`/g, '<code class="ic">$1</code>');
- // 图片 URL
+ // 链接 [text](url)
+ s = s.replace(/\[([^\[\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+ // 图片 URL（png/jpg/gif/webp/svg）
  s = s.replace(/(https?:\/\/[^\s<>\)]+\.(png|jpe?g|gif|webp|svg))/gi, '<img src="$1" alt="img" style="max-width:100%;border-radius:6px">');
  // /uploads/ 本地图片
  s = s.replace(/(\/uploads\/[^\s<>\)]+)/g, '<img src="$1" alt="img" style="max-width:100%;border-radius:6px">');
  // 加粗
  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+ // 斜体
+ s = s.replace(/(?<![*\w])\*([^*\n]+)\*(?![*\w])/g, '<i>$1</i>');
  // 换行
  s = s.replace(/\n/g, '<br>');
  // 还原代码壳
