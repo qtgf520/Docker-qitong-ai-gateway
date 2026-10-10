@@ -384,6 +384,67 @@ window.openConv = function(id){
  closeChatSide();
  loadConvMsgs();
 };
+
+// ★ v1.121 结构化流水渲染：思考/工具/结果/答案折叠卡片（Operit 式）
+window._renderBlocks = function(blocks){
+  if(!blocks || !blocks.length) return '';
+  var out = '';
+  for(var i=0;i<blocks.length;i++){
+    var b = blocks[i];
+    if(!b) continue;
+    if(b.kind === 'text'){
+      out += b.content ? renderMd(b.content) : '';
+    } else if(b.kind === 'group'){
+      var kids = b.children||[];
+      var toolN = 0, thinkN = 0, searchN = 0;
+      for(var k=0;k<kids.length;k++){
+        var kt = kids[k].tagName||'';
+        if(kt==='tool') toolN++;
+        if(kt==='think'||kt==='thinking') thinkN++;
+        if(kt==='search') searchN++;
+      }
+      var gtitle = '';
+      if(b.groupType==='search_only') gtitle = '🔍 搜索 ('+searchN+')';
+      else if(b.groupType==='tools_only') gtitle = '🔧 工具调用 ('+toolN+')';
+      else gtitle = '💭 思考'+(toolN>0?' · 🔧 工具 ('+toolN+')':'');
+      out += '<section class="structured-group">'
+        + '<div class="sg-row" onclick="this.parentNode.classList.toggle(\'open\')"><span class="sg-caret">▸</span><span class="sg-title">'+gtitle+'</span><span class="sg-caret2">展开/收起</span></div>'
+        + '<div class="sg-body">'+window._renderBlocks(kids)+'</div></section>';
+    } else {
+      var tag = b.tagName||'';
+      var content = b.content||'';
+      if(tag==='think'||tag==='thinking'){
+        out += '<section class="structured-think">'
+          + '<div class="st-row" onclick="this.parentNode.parentNode.classList.toggle(\'open\')"><span class="sg-caret">▸</span><span class="sg-title">💭 思考过程</span><span class="sg-caret2">'+(b.closed===false?'⏳':'展开/收起')+'</span></div>'
+          + '<div class="st-body">'+renderMd(content)+'</div></section>';
+      } else if(tag==='tool'){
+        var tname = (b.attrs && b.attrs.name) ? b.attrs.name : '工具';
+        out += '<section class="structured-tool">'
+          + '<div class="st-tool-row" onclick="this.parentNode.parentNode.classList.toggle(\'open\')"><span class="tool-ic">🔧</span><span class="tool-name">'+esc(tname)+'</span><span class="sg-caret2">调用参数</span></div>'
+          + '<div class="st-tool-body"><pre>'+esc(content)+'</pre></div></section>';
+      } else if(tag==='tool_result'){
+        var tname2 = (b.attrs && b.attrs.name) ? b.attrs.name : '';
+        out += '<section class="structured-tool-result">'
+          + '<div class="st-tool-row" onclick="this.parentNode.parentNode.classList.toggle(\'open\')"><span class="tool-ic">📦</span><span class="tool-name">'+(b.attrs && b.attrs.status ? '结果 '+esc(b.attrs.status) : '结果')+'</span><span class="sg-caret2">'+(b.attrs && b.attrs.name ? esc(tname2) : '展开/收起')+'</span></div>'
+          + '<div class="st-body">'+renderMd(content)+'</div></section>';
+      } else if(tag==='search'){
+        out += '<section class="structured-tool">'
+          + '<div class="st-tool-row"><span class="tool-ic">🔍</span><span class="tool-name">搜索</span></div>'
+          + '<div class="st-body">'+renderMd(content)+'</div></section>';
+      } else if(tag==='details'||tag==='detail'){
+        out += '<details class="structured-details"><summary>'+(b.attrs && b.attrs.title ? esc(b.attrs.title) : '详情')+'</summary>'+renderMd(content)+'</details>';
+      } else {
+        // 未知标签：渲染原始 XML（保留信息）
+        out += b.xml ? renderMd(b.xml) : '';
+      }
+    }
+  }
+  return out;
+};
+window._renderMsgContent = function(m){
+  if(m && m.content_blocks && m.content_blocks.length) return window._renderBlocks(m.content_blocks);
+  return renderMd((m && m.content) || '');
+};
 window.loadConvMsgs = function(){
  api('/api/conversations/'+(state.currentChatConv||0)).then(function(r){
   if(r.code === 0){
@@ -394,8 +455,8 @@ window.loadConvMsgs = function(){
     var ops = m.role==='user'
      ? '<span style="opacity:.7;font-size:11px;margin-left:6px"><button class="btn-ghost btn-sm" style="padding:0 6px" onclick="editMsg('+m.id+')" title="编辑这条消息">✏️</button></span>'
      : (m.role==='assistant' ? '<span style="opacity:.7;font-size:11px;margin-left:6px"><button class="btn-ghost btn-sm" style="padding:0 6px" onclick="regenFrom(this)" data-mid="'+m.id+'" title="在此重新生成（分叉）">🔄</button></span>' : '');
-    if(m.role==='user') return '<div class="msg-row user"><div class="bubble">'+renderMd(m.content)+ops+'<div class="msg-time">'+t+'</div></div></div>';
-    return '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble">'+renderMd(m.content)+ops+'<div class="msg-time">'+t+'</div></div></div>';
+    if(m.role==='user') return '<div class="msg-row user"><div class="bubble">'+window._renderMsgContent(m)+ops+'<div class="msg-time">'+t+'</div></div></div>';
+    return '<div class="msg-row assistant"><div class="chat-ava">🤖</div><div class="bubble chat-msg-structured">'+window._renderMsgContent(m)+ops+'<div class="msg-time">'+t+'</div></div></div>';
    }).join('') || '<div class="msg-row system"><div class="bubble">空对话</div></div>';
    var e3 = $('chatMsgs'); if(e3) e3.scrollTop = e3.scrollHeight;
   }
@@ -592,7 +653,15 @@ api('/api/chat', { method:'POST', body: { conversationId: convId, content: sendT
    if(r.code === 0 && r.data){
     var reply = r.data.reply || '(无响应)';
     var reasoning = r.data.reasoning || '';
+    var blocks = r.data.content_blocks || null;
     var html = '';
+    if(blocks && blocks.length){
+     // ★ v1.121 结构化流水：思考/工具/结果/答案折叠卡片
+     col.innerHTML = window._renderBlocks(blocks)+'<div class="msg-time">'+fmtTime2(Date.now())+'</div>';
+     msgs.scrollTop = msgs.scrollHeight;
+     if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, 300); }
+     return;
+    }
     if(reasoning){
      html += '<div class="chat-reason" onclick="this.classList.toggle(\'open\')">💭 思考过程（点击展开）<div class="cr-body">'+esc(reasoning)+'</div></div>';
     }

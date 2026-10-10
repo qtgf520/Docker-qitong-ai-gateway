@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v1.120"
+    private const val VER = "v1.121"
 
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -394,6 +394,38 @@ input[type=range]{accent-color:var(--primary)}
 .chat-att{width:40px;height:40px;border-radius:22px;border:1px solid var(--border);background:var(--surface);color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;font-size:16px}
 .chat-att:hover{background:var(--surface2)}
 .chat-reason{margin:0 0 6px;padding:6px 10px;background:rgba(120,120,120,.08);border:1px dashed var(--border);border-radius:10px;font-size:12px;color:var(--muted);cursor:pointer;max-width:72%}
+/* ★ v1.121 结构化流水卡片：思考/工具/结果折叠（Operit 式） */
+.structured-group,.structured-think,.structured-tool,.structured-tool-result{margin:2px 0;border-radius:10px;overflow:hidden;max-width:100%}
+.structured-group{border:1px solid var(--border);background:var(--surface2);font-size:12.5px}
+.sg-row{display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:pointer;user-select:none;transition:.12s}
+.sg-row:hover{background:rgba(var(--primary-rgb),.08)}
+.sg-caret{display:inline-block;transition:transform .18s;color:var(--muted);font-size:10px}
+.structured-group.open .sg-caret{transform:rotate(90deg)}
+.sg-title{flex:1;font-weight:600;color:var(--text);font-size:12.5px}
+.sg-caret2{font-size:11px;color:var(--muted);opacity:.85}
+.sg-body{display:none;padding:2px 10px 10px;border-top:1px dashed var(--border);margin-top:0}
+.structured-group.open .sg-body{display:block}
+.structured-think{border:1px solid rgba(var(--primary-rgb),.28);background:rgba(var(--primary-rgb),.06)}
+.structured-think .st-row{display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:pointer;user-select:none}
+.structured-think .st-row:hover{background:rgba(var(--primary-rgb),.09)}
+.stretched-think, .st-body{display:none;padding:8px 12px;border-top:1px dashed rgba(var(--primary-rgb),.25);max-height:280px;overflow-y:auto;white-space:pre-wrap;line-height:1.6;font-size:12.5px;color:var(--text)}
+.structured-think.open .st-body{display:block}
+.structured-think.open .sg-caret{transform:rotate(90deg)}
+.structured-tool{border:1px solid var(--border);background:var(--surface)}
+.st-tool-row{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;user-select:none;font-size:12.5px;transition:.12s}
+.st-tool-row:hover{background:var(--surface2)}
+.tool-ic{font-size:13px}
+.tool-name{font-weight:600;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-tool-body{display:none;padding:6px 10px;border-top:1px dashed var(--border)}
+.st-tool-body pre{margin:0;background:var(--inset);border-radius:6px;padding:8px;font-size:11.5px;white-space:pre-wrap;word-break:break-all;color:var(--text);max-height:220px;overflow-y:auto}
+.structured-tool.open .st-tool-body{display:block}
+.structured-tool.open .sg-caret{transform:rotate(90deg)}
+.structured-tool-result{border:1px solid var(--border);background:rgba(120,120,120,.05)}
+.structured-tool-result .st-body{display:none}
+.structured-tool-result.open .st-body{display:block}
+.structured-tool-result.open .sg-caret{transform:rotate(90deg)}
+.structured-details{max-width:100%;margin:4px 0;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12.5px;background:var(--surface2)}
+.chat-msg-structured .bubble > *{max-width:100%}
 .chat-toggle{flex-shrink:0;padding:6px 12px;border-radius:16px;border:1px solid var(--border);background:var(--surface);color:var(--muted);font-size:12px;cursor:pointer;transition:.15s}
 .chat-toggle:hover{border-color:var(--primary);color:var(--text)}
 .chat-toggle.on{border-color:var(--primary);background:rgba(var(--primary-rgb),.14);color:var(--primary)}

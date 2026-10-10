@@ -760,7 +760,14 @@ private fun providerToMap(p: Provider) = mapOf(
         "conversation" to (database.getConversationById(id)?.let {
             mapOf("id" to it.id, "title" to it.title, "createdAt" to it.createdAt, "updatedAt" to it.updatedAt)
         }),
-        "messages" to database.getMessagesByConversation(id)
+        "messages" to database.getMessagesByConversation(id).map {
+            mapOf(
+                "id" to it.id, "conversationId" to it.conversationId, "role" to it.role,
+                "content" to it.content, "modelId" to it.modelId, "createdAt" to it.createdAt,
+                "parentId" to it.parentId,
+                "content_blocks" to (if (it.role == "assistant") com.qitong.gateway.chat.StructuredBlocks.parseToBlockMaps(it.content) else null)
+            )
+        }
     )
 
     fun deleteConversation(database: Database, id: Long) {
@@ -1022,11 +1029,13 @@ private fun providerToMap(p: Provider) = mapOf(
             }
         }
 
+        val finalReply = lastResult ?: "所有上游模型均不可用，请检查服务商配置"
         return mapOf(
             "conversationId" to conversationId,
-            "reply" to (lastResult ?: "所有上游模型均不可用，请检查服务商配置"),
+            "reply" to finalReply,
             "reasoning" to (lastReasoning ?: ""),
-            "skills" to skillResults
+            "skills" to skillResults,
+            "content_blocks" to com.qitong.gateway.chat.StructuredBlocks.parseToBlockMaps(finalReply)
         ).also {
             // ★ 操作日志全记录：每次 AI 对话都记录（管理员可查）
             if (userId > 0) {

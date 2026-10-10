@@ -1479,6 +1479,8 @@ class Database(private val dbPath: String) {
     /** ★ v1.104 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.121", "聊天理解链结构化流水渲染（思考→工具→结果→答案）", "助手回复里的思考过程/工具调用/工具结果/最终答案自动拆成折叠卡片按顺序铺开（💭思考卡/🔧工具调用卡/📦结果卡，点击展开收起）；多轮工具自动成组「思考与工具(N)」；打开旧会话自动对历史消息结构化；纯自研内容解析器（thinking/think/tool/tool_result/search/details），无外部依赖"),
+            Triple("v1.120", "聊天界面全新改版（全屏贴合）", "左上角☰三横线展开/关闭会话列表抽屉；聊天区撑满整个可视区不再中间留白；消息气泡圆角优化+用户气泡主色半透明+输入框胶囊样式；移动端会话抽屉84vw紧凑撑满避开底部导航"),
             Triple("v1.119", "元宝Bot接入（腾讯元宝开放平台）", "后台「机器人→元宝Bot」填 AppKey/AppSecret 接入腾讯元宝，WS 直连收发消息（私聊+群聊）；协议自研（sign-token HMAC 认证+AuthBind+Protobuf 编解码+心跳）；收到消息自动调网关 qtai-sj 完整沙盒 Agent 循环，支持查余额/网关状态/体检/绑定账号等全功能；动态预览/机器人列表/运行日志+掉线看门狗"),
             Triple("v1.118", "技能/工具用户自管理", "QQ/微信发「添加技能 名称|触发词|回复内容」创建自己的技能，「我的技能/删除技能 编号/停用技能 编号」管理；qtai-sj 新增 skill_my/add/del/toggle（普通用户可加自己的技能，管理员可管公共）；三端自动生效；技能归属隔离"),
             Triple("v1.117", "机器人全接口远程化", "网关全部功能远程可查可改：新增 provider_list/add/update/delete/enable/disable、model_set_name/price/public/authorized/delete、api_key_list/create/delete、user_list/set_balance/set_role/delete、config_get/set、announcement_list/add/delete、ticket_reply/close 等智能体管理函数；QQ/微信/qtai-sj 三通道共用；权限模型：管理员全量读写，普通用户只读自己的，公告人人可读"),
