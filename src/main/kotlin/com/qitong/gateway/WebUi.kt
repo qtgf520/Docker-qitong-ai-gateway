@@ -394,7 +394,7 @@ input[type=range]{accent-color:var(--primary)}
 .chat-att{width:40px;height:40px;border-radius:22px;border:1px solid var(--border);background:var(--surface);color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;font-size:16px}
 .chat-att:hover{background:var(--surface2)}
 .chat-reason{margin:0 0 6px;padding:6px 10px;background:rgba(120,120,120,.08);border:1px dashed var(--border);border-radius:10px;font-size:12px;color:var(--muted);cursor:pointer;max-width:72%}
-/* ★ v1.121 结构化流水卡片：思考/工具/结果折叠（Operit 式） */
+/* ★ v1.121 结构化流水卡片：思考/工具/结果折叠（智能折叠式） */
 .structured-group,.structured-think,.structured-tool,.structured-tool-result{margin:2px 0;border-radius:10px;overflow:hidden;max-width:100%}
 .structured-group{border:1px solid var(--border);background:var(--surface2);font-size:12.5px}
 .sg-row{display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:pointer;user-select:none;transition:.12s}

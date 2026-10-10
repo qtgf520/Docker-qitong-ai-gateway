@@ -525,7 +525,7 @@ object QqBotManager {
         val builtin = matchBuiltin(text, groupOpenid)
         if (builtin != null) {
             when (builtin.first) {
-                // ★ v1.113 人格/角色卡切换（Operit 角色卡精髓：多角色对话）
+                // ★ v1.113 人格/角色卡切换（多角色对话）
                 "persona_switch" -> {
                     val name = builtin.second.trim().lowercase()
                     val roleCards = mapOf(
@@ -550,7 +550,7 @@ object QqBotManager {
                     send(if (cur.isNullOrBlank()) "当前人格：默认（綦桐小助理）\n发「切换人格 程序员/知心姐姐/翻译官/老师」试试不同角色" else "当前人格：\n$cur\n\n发「切换人格 默认」恢复默认")
                     return
                 }
-                // ★ v1.114 功能快捷面板（Operit 工具箱精髓：常用操作一目了然）
+                // ★ v1.114 功能快捷面板（常用操作一目了然）
                 "features" -> {
                     val bound = db.getQqBoundUser(userOpenid)
                     val isAdmin = (bound?.role == "admin" || bound?.role == "agent") ||

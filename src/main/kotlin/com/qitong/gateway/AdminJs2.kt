@@ -385,7 +385,7 @@ window.openConv = function(id){
  loadConvMsgs();
 };
 
-// ★ v1.121 结构化流水渲染：思考/工具/结果/答案折叠卡片（Operit 式）
+// ★ v1.121 结构化流水渲染：思考/工具/结果/答案折叠卡片（智能折叠式）
 window._renderBlocks = function(blocks){
   if(!blocks || !blocks.length) return '';
   var out = '';

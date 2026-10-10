@@ -1,12 +1,12 @@
 package com.qitong.gateway.chat
 
 /**
- * ★ v1.121 结构化消息块 —— 对齐 Operit 的「思考→工具→结果→答案」流水渲染模型（自研实现）
+ * ★ v1.121 结构化消息块 —— 「思考→工具→结果→答案」流水渲染模型（自研实现）
  *
  * 把助手回复（可能含 <thinking>/<think>/<tool>/<tool_result>/<search>/<details> 等 XML 标签）
  * 解析成扁平块，再按「思考与工具」语义分组，前端据此渲染成折叠卡片流水。
  *
- * 纯 Kotlin 实现：手写流式 XML 切分（替代 Operit JNI 的 NativeXmlSplitter）+ 递归分组。
+ * 纯 Kotlin 实现：手写流式 XML 切分（自研流式 XML 切分器）+ 递归分组。
  */
 
 /** 块类型：文本 或 XML 标签 */
@@ -24,7 +24,7 @@ data class ContentBlock(
     val children: List<ContentBlock>? = null
 )
 
-/** Operit 对齐的渲染偏好 */
+/** 结构化渲染偏好 */
 object StructuredBlocks {
 
     private val READ_ONLY_TOOLS = setOf(
