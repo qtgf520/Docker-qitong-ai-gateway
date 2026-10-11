@@ -24,7 +24,7 @@ loaders.models = function(){
     '<td>'+priceTxt+'</td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td>'+
     '<td style="font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+auTxt+'</td>'+
     '<td class="md-health" style="min-width:90px"><span class="badge gray">未测</span></td>'+
-    '<td>'+enBtn+'</td>'+
+    '<td>'+(m.supportsVision?'<span title="支持图片理解">🖼</span> ':'')+(m.supportsAudio?'<span title="支持语音">🎤</span> ':'')+(m.supportsVideo?'<span title="支持视频">🎬</span> ':'')+enBtn+'</td>'+
     '<td style="white-space:nowrap"><button class="btn-ghost btn-sm md-test-btn" onclick="testOneModel('+m.providerId+',\''+esc(m.modelId)+'\',\''+esc(key)+'\')">测速</button> '+
     '<button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
   }).join('');
@@ -171,10 +171,17 @@ window.editModel = function(id){
    '<div class="form-row"><label>上下文窗口</label><input id="mdCtx" class="input" type="number" value="'+(m.contextWindow||4096)+'"></div>',
    '<div class="form-row"><label>单价（元/百万Token，0=自动默认价）</label><input id="mdPrice" class="input" type="number" step="0.1" value="'+(m.price||0)+'"><small style="color:var(--muted)">如 gpt-4o 默认 ¥15/M，留0自动按内置价格表；自定义价格=对该模型独立收费</small></div>',
    auRow,
-   '<div class="form-row"><label><input type="checkbox" id="mdEnabled"'+(m.isEnabled!==false?' checked':'')+'>启用</label> <label style="margin-left:12px"><input type="checkbox" id="mdPublic"'+(m.isPublic?' checked':'')+'>公用（所有用户可见可用）</label> <label style="margin-left:12px"><input type="checkbox" id="mdDefault"'+(m.isDefault?' checked':'')+'>默认</label></div>'
+   '<div class="form-row"><label><input type="checkbox" id="mdEnabled"'+(m.isEnabled!==false?' checked':'')+'>启用</label> <label style="margin-left:12px"><input type="checkbox" id="mdPublic"'+(m.isPublic?' checked':'')+'>公用（所有用户可见可用）</label> <label style="margin-left:12px"><input type="checkbox" id="mdDefault"'+(m.isDefault?' checked':'')+'>默认</label></div>'+
+   '<div class="form-row"><label style="font-size:12px;color:var(--muted)">多模态能力（影响自动切换：多模态请求优先选支持该能力的模型）</label><div>'+
+   '<label style="margin-right:12px"><input type="checkbox" id="mdVision"'+(m.supportsVision?' checked':'')+'> 🖼 图片理解</label>'+
+   '<label style="margin-right:12px"><input type="checkbox" id="mdAudio"'+(m.supportsAudio?' checked':'')+'> 🎤 语音</label>'+
+   '<label><input type="checkbox" id="mdVideo"'+(m.supportsVideo?' checked':'')+'> 🎬 视频</label></div></div>'
   ].join('');
   openModal(id ? '编辑模型' : '添加模型', html, function(){
-   var body = { id:id||0, providerId:parseInt($('mdProv').value)||0, modelId:$('mdId').value.trim(), displayName:$('mdName').value.trim()||$('mdId').value.trim(), customAlias:$('mdAlias').value.trim(), contextWindow:parseInt($('mdCtx').value)||4096, price:parseFloat($('mdPrice').value)||0, isEnabled:$('mdEnabled').checked, isPublic:$('mdPublic').checked, isDefault:$('mdDefault').checked, authorizedUsers: JSON.stringify(Array.from($('mdAu')?$('mdAu').selectedOptions:[]).map(function(o){ return parseInt(o.value); })) };
+   var body = { id:id||0, providerId:parseInt($('mdProv').value)||0, modelId:$('mdId').value.trim(), displayName:$('mdName').value.trim()||$('mdId').value.trim(), customAlias:$('mdAlias').value.trim(), contextWindow:parseInt($('mdCtx').value)||4096, price:parseFloat($('mdPrice').value)||0, isEnabled:$('mdEnabled').checked, isPublic:$('mdPublic').checked, isDefault:$('mdDefault').checked, authorizedUsers: JSON.stringify(Array.from($('mdAu')?$('mdAu').selectedOptions:[]).map(function(o){ return parseInt(o.value); })),
+    supportsVision: $('mdVision') ? $('mdVision').checked : false,
+    supportsAudio: $('mdAudio') ? $('mdAudio').checked : false,
+    supportsVideo: $('mdVideo') ? $('mdVideo').checked : false };
    if(!body.modelId){ toast('请填写模型ID', false); return; }
    api('/api/models', { method:'POST', body: body }).then(function(r){
     if(r.code === 0){ toast('保存成功', true); closeModal(); loaders.models(); } else toast(r.msg, false);

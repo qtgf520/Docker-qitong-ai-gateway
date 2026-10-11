@@ -76,6 +76,9 @@ class Database(private val dbPath: String) {
                     custom_alias TEXT NOT NULL DEFAULT '',
                     use_proxy INTEGER NOT NULL DEFAULT 1,
                     context_window INTEGER NOT NULL DEFAULT 4096,
+                    supports_vision INTEGER NOT NULL DEFAULT 0,
+                    supports_audio INTEGER NOT NULL DEFAULT 0,
+                    supports_video INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY(provider_id) REFERENCES providers(id) ON DELETE CASCADE
                 )"""
             )
@@ -186,6 +189,9 @@ class Database(private val dbPath: String) {
             try { st.executeUpdate("ALTER TABLE models ADD COLUMN price REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
             // ★ v1.105 模型授权用户（JSON数组：被授权可单独使用该定制模型的用户ID列表；配合公用/私有实现"定制给某些人+独立收费+共享"）
             try { st.executeUpdate("ALTER TABLE models ADD COLUMN authorized_users TEXT NOT NULL DEFAULT '[]'") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE models ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE models ADD COLUMN supports_audio INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE models ADD COLUMN supports_video INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE routing_rule ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE api_keys ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'") } catch (_: Exception) {}
@@ -726,7 +732,10 @@ class Database(private val dbPath: String) {
         price = (r["price"] as? Number)?.toDouble() ?: 0.0,
         authorizedUsers = (r["authorized_users"] as? String ?: "[]").let { s ->
             try { kotlinx.serialization.json.Json.decodeFromString<List<Long>>(s) } catch (_: Exception) { emptyList() }
-        }
+        },
+        supportsVision = (r["supports_vision"] as? Number)?.toInt() == 1,
+        supportsAudio = (r["supports_audio"] as? Number)?.toInt() == 1,
+        supportsVideo = (r["supports_video"] as? Number)?.toInt() == 1
     )
 
     private fun rowToRoute(r: Map<String, Any?>) = RoutingRule(
@@ -805,8 +814,8 @@ class Database(private val dbPath: String) {
     fun addModel(m: AiModel): Long {
         val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUsers)
         stmt(
-            "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window,owner_id,is_public,price,authorized_users) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized
+            "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window,owner_id,is_public,price,authorized_users,supports_vision,supports_audio,supports_video) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0
         )
         return lastInsertId()
     }
@@ -814,8 +823,8 @@ class Database(private val dbPath: String) {
     fun updateModel(m: AiModel) {
         val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUsers)
         stmt(
-            "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=?,owner_id=?,is_public=?,price=?,authorized_users=? WHERE id=?",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, m.id
+            "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=?,owner_id=?,is_public=?,price=?,authorized_users=?,supports_vision=?,supports_audio=?,supports_video=? WHERE id=?",
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0, m.id
         )
     }
 
@@ -1477,8 +1486,16 @@ class Database(private val dbPath: String) {
         }
 
     /** ★ v1.104 每次启动补齐更新日志（不再只空表播种）：与 README CHANGELOG 保持全量同步，最新在上 */
+
+    // ★ v1.123 多模态迁移：为旧库 models 表补 supports_vision/audio/video 列
+    fun migrateMultimodal() {
+        runCatching { stmt("ALTER TABLE models ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0") }
+        runCatching { stmt("ALTER TABLE models ADD COLUMN supports_audio INTEGER NOT NULL DEFAULT 0") }
+        runCatching { stmt("ALTER TABLE models ADD COLUMN supports_video INTEGER NOT NULL DEFAULT 0") }
+    }
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.123", "性能监控实时化 + 多模态自动切换（图片/语音/视频）", "首页性能监控每10秒自动刷新（内存/线程/GC/流量/缓存命中率）；模型编辑页新增图片理解🖼/语音🎤/视频🎬三能力勾选+列表标识；发送图片/语音/视频请求自动识别模态（支持OpenAI多模态格式），故障转移优先选支持该模态的模型；旧库自动补三列"),
             Triple("v1.122", "聊天 Markdown 渲染全面增强 + 消息一键复制", "标题/表格/无序有序列表/任务清单(- [x])/引用块/行内代码/斜体/链接全部原生渲染；每条助手回复右上角加📋一键复制按钮（含代码/表格原文）；表格引用任务配套样式（主色边框、hover高亮、响应式滚动）"),
             Triple("v1.121", "聊天理解链结构化流水渲染（思考→工具→结果→答案）", "助手回复里的思考过程/工具调用/工具结果/最终答案自动拆成折叠卡片按顺序铺开（💭思考卡/🔧工具调用卡/📦结果卡，点击展开收起）；多轮工具自动成组「思考与工具(N)」；打开旧会话自动对历史消息结构化；纯自研内容解析器（thinking/think/tool/tool_result/search/details），无外部依赖"),
             Triple("v1.120", "聊天界面全新改版（全屏贴合）", "左上角☰三横线展开/关闭会话列表抽屉；聊天区撑满整个可视区不再中间留白；消息气泡圆角优化+用户气泡主色半透明+输入框胶囊样式；移动端会话抽屉84vw紧凑撑满避开底部导航"),

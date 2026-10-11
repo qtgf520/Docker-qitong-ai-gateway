@@ -45,7 +45,10 @@ data class AiModel(
     val ownerId: Long = 0,                 // 0=系统资源, >0=用户私有
     val isPublic: Boolean = false,         // 是否公用（公用=所有用户可见）
     val price: Double = 0.0,               // 单价（元/百万Token，0=按默认价格表）
-    val authorizedUsers: List<Long> = emptyList()  // ★ v1.105 授权用户ID列表（定制模型只对这些人+属主+公用可见）
+    val authorizedUsers: List<Long> = emptyList(),  // ★ v1.105 授权用户ID列表（定制模型只对这些人+属主+公用可见）
+    val supportsVision: Boolean = false,   // ★ v1.123 多模态：图片理解
+    val supportsAudio: Boolean = false,    // ★ v1.123 多模态：语音/音频
+    val supportsVideo: Boolean = false     // ★ v1.123 多模态：视频
 )
 
 /** 会话（对齐 conversations 表） */
@@ -186,7 +189,7 @@ data class GatewayConfig(
 data class GatewayStatus(
     val status: String = "ok",
     val service: String = "qitong-ai-gateway-docker",
-    val version: String = "1.122",
+    val version: String = "1.123",
     val running: Boolean = true,
     val port: Int,
     val failover: Boolean,

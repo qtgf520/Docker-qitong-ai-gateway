@@ -341,7 +341,10 @@ private fun providerToMap(p: Provider) = mapOf(
                 body["authorizedUsers"]?.jsonPrimitive?.content?.let { s ->
                     kotlinx.serialization.json.Json.decodeFromString<List<Long>>(s)
                 } ?: emptyList()
-            }.getOrElse { emptyList() }
+            }.getOrElse { emptyList() },
+            supportsVision = body["supportsVision"]?.let { parseBool(it) } ?: false,
+            supportsAudio = body["supportsAudio"]?.let { parseBool(it) } ?: false,
+            supportsVideo = body["supportsVideo"]?.let { parseBool(it) } ?: false
         )
         return if (id > 0) {
             database.updateModel(m); id

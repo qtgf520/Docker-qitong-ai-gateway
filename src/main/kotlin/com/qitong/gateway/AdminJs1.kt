@@ -256,27 +256,40 @@ loaders.dashboard = function(){
    // 接续后台测速任务：首页也显示实时进度条（与测速页一致）
    checkHomeSpeed();
    // ★ v1.111 网关性能监控：内存/线程/GC/请求量/缓存命中（st.perf 由 /api/stats 返回）
-   if(st.perf){
-    var pc = $('perfCard');
-    if(pc){
-     var p = st.perf;
-     var cacheHitRate = p.cacheTotal > 0 ? Math.round(p.cacheHits / p.cacheTotal * 100) : 0;
-     var memPct = p.memMaxMB > 0 ? Math.round(p.memUsedMB / p.memMaxMB * 100) : 0;
-     var memColor = memPct > 80 ? 'var(--red)' : (memPct > 60 ? 'var(--amber)' : 'var(--green)');
-     pc.innerHTML = '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr);margin:0">' +
-      '<div class="stat"><div class="num" style="font-size:18px;color:' + memColor + '">' + p.memUsedMB + ' MB</div><div class="lbl">内存使用（' + memPct + '%）</div></div>' +
-      '<div class="stat"><div class="num" style="font-size:18px">' + p.memMaxMB + ' MB</div><div class="lbl">最大堆</div></div>' +
-      '<div class="stat"><div class="num" style="font-size:18px">' + p.threads + '</div><div class="lbl">线程数</div></div>' +
-      '<div class="stat"><div class="num" style="font-size:18px">' + p.gcCount + '</div><div class="lbl">GC次数</div></div>' +
-      '<div class="stat"><div class="num" style="font-size:18px;color:var(--cyan)">' + p.reqUploadMB + ' / ' + p.reqDownloadMB + ' MB</div><div class="lbl">上下行流量</div></div>' +
-      '<div class="stat"><div class="num" style="font-size:18px;color:var(--green)">' + p.cacheTotal + ' 条</div><div class="lbl">响应缓存</div></div>' +
-      '<div class="stat"><div class="num" style="font-size:18px;color:var(--cyan)">' + cacheHitRate + '%</div><div class="lbl">缓存命中率</div></div>' +
-      '<div class="stat"><div class="num" style="font-size:18px">' + p.heapUsedMB + ' MB</div><div class="lbl">堆使用</div></div>' +
-     '</div>';
-    }
-   }
+   renderPerfCard(st.perf);
+   startPerfTimer();
   });
 };
+// ★ v1.123 性能监控实时化：封装渲染 + 每 10s 轮询刷新（离开首页自动停）
+var _perfTimer = null;
+function renderPerfCard(p){
+   var pc = $('perfCard');
+   if(!pc || !p) return;
+   var cacheHitRate = p.cacheTotal > 0 ? Math.round(p.cacheHits / p.cacheTotal * 100) : 0;
+   var memPct = p.memMaxMB > 0 ? Math.round(p.memUsedMB / p.memMaxMB * 100) : 0;
+   var memColor = memPct > 80 ? 'var(--red)' : (memPct > 60 ? 'var(--amber)' : 'var(--green)');
+   pc.innerHTML = '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr);margin:0">' +
+    '<div class="stat"><div class="num" style="font-size:18px;color:' + memColor + '">' + p.memUsedMB + ' MB</div><div class="lbl">内存使用（' + memPct + '%）</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px">' + p.memMaxMB + ' MB</div><div class="lbl">最大堆</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px">' + p.threads + '</div><div class="lbl">线程数</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px">' + p.gcCount + '</div><div class="lbl">GC次数</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px;color:var(--cyan)">' + p.reqUploadMB + ' / ' + p.reqDownloadMB + ' MB</div><div class="lbl">上下行流量</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px;color:var(--green)">' + p.cacheTotal + ' 条</div><div class="lbl">响应缓存</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px;color:var(--cyan)">' + cacheHitRate + '%</div><div class="lbl">缓存命中率</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px">' + p.heapUsedMB + ' MB</div><div class="lbl">堆使用</div></div>' +
+   '</div>';
+}
+function startPerfTimer(){
+   if(_perfTimer) clearInterval(_perfTimer);
+   _perfTimer = setInterval(function(){
+    if(!$('view-dashboard') || !document.getElementById('view-dashboard') || !$('view-dashboard').classList.contains('active')){
+     clearInterval(_perfTimer); _perfTimer = null; return;
+    }
+    api('/api/stats').then(function(r){
+     if(r.code === 0 && r.data && r.data.perf){ renderPerfCard(r.data.perf); }
+    });
+   }, 10000);
+}
 // 首页实时测速进度（轮询 /api/speedtest/progress，效果对齐测速页）
 var homeSpeedTimer = null;
 function checkHomeSpeed(){

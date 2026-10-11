@@ -152,12 +152,40 @@ class GatewayProxy(private val database: Database) {
         return sorted.firstOrNull()?.modelId ?: "qtai-sj"
     }
 
+    /** ★ v1.123 检测请求模态：扫描 messages 里的内容类型 */
+    private fun detectModality(body: kotlinx.serialization.json.JsonObject): String {
+        try {
+            val msgs = body["messages"]?.jsonArray ?: return ""
+            for (msg in msgs) {
+                val content = msg.jsonObject["content"] ?: continue
+                val s = content.jsonPrimitive?.content ?: ""
+                if (s.contains("data:image/", true) || s.contains("image_url", true)) return "vision"
+                if (s.contains("data:audio/", true) || s.contains("input_audio", true)) return "audio"
+                if (s.contains("data:video/", true) || s.contains("video_url", true)) return "video"
+                val arr = content.jsonArray ?: continue
+                for (item in arr) {
+                    val obj = item.jsonObject
+                    val type = obj["type"]?.jsonPrimitive?.content ?: ""
+                    if (type == "image_url") return "vision"
+                    if (type == "input_audio") return "audio"
+                    if (type == "video_url") return "video"
+                    val text = obj["text"]?.jsonPrimitive?.content ?: ""
+                    if (text.contains("data:image/", true)) return "vision"
+                    if (text.contains("data:audio/", true)) return "audio"
+                    if (text.contains("data:video/", true)) return "video"
+                }
+            }
+        } catch (_: Exception) {}
+        return ""
+    }
+
     /** 构建故障转移尝试列表（强制池优先 + 健康排序）——用户级池优先，回退全局池 */
     fun buildAttemptModels(
         models: List<AiModel>,
         modelId: String,
         providerId: Long? = null,
-        userId: Long = 0L
+        userId: Long = 0L,
+        modality: String = ""   // ★ v1.123 多模态：vision/audio/video，空=纯文本
     ): List<AiModel> {
         // 强制故障池：用户自己的池优先；用户无池时**不回退全局池**（qtai-sj 按用户独立，不跑全部）
         val forcedPool = if (userId > 0) {
@@ -199,7 +227,19 @@ class GatewayProxy(private val database: Database) {
             m.modelId == modelId && (providerId == null || m.providerId == providerId)
         }
         val others = available.filter { it.modelId != (primary?.modelId) || it.providerId != (primary?.providerId) }
-        val sortedOthers = GatewayScheduler.getSortedModels(others)
+        var sortedOthers = GatewayScheduler.getSortedModels(others)
+        // ★ v1.123 多模态自动切换：图片/语音/视频请求，支持对应模态的模型优先（故障转移不会跳去纯文本模型）
+        if (modality.isNotBlank()) {
+            val (mm, rest) = sortedOthers.partition { m ->
+                when (modality) {
+                    "vision" -> m.supportsVision
+                    "audio" -> m.supportsAudio
+                    "video" -> m.supportsVideo
+                    else -> false
+                }
+            }
+            sortedOthers = mm + rest
+        }
         return (listOfNotNull(primary) + sortedOthers).distinctBy { it.providerId to it.modelId }
     }
 
@@ -315,6 +355,8 @@ class GatewayProxy(private val database: Database) {
 
         val bodyStr = String(rawBytes, Charsets.UTF_8)
         val body = try { json.parseToJsonElement(bodyStr).jsonObject } catch (_: Exception) { buildJsonObject { } }
+        // ★ v1.123 多模态检测：请求含图片/音频/视频时识别模态，故障转移按模态优先
+        val modality = detectModality(body)
 
         // 解析模型ID
         var modelId = body["model"]?.jsonPrimitive?.content ?: body["prompt"]?.let { "text-completion" } ?: ""
@@ -344,7 +386,7 @@ class GatewayProxy(private val database: Database) {
         modelId = resolvedModelId
 
         // 构建尝试列表（用户级池优先）
-        val attemptModels = buildAttemptModels(models, modelId, targetProviderOverride, ownerId)
+        val attemptModels = buildAttemptModels(models, modelId, targetProviderOverride, ownerId, modality)
 
         if (attemptModels.isEmpty()) {
             respondJson(call, openAIError(404, "No available model", "not_found"), 404)
