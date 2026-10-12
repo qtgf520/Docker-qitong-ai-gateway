@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.123
+ * 綦桐AI网关 · Docker 服务器版 v1.124
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.123    ║
+        ║   綦桐AI网关 · Docker Server v1.124    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -195,7 +195,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.123"))
+                put("version", JsonPrimitive("1.124"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -654,6 +654,35 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", AdminApi.getStats(database, u))
             }, 200)
+        }
+        // ★ v1.124 系统监控（实时快照：CPU/内存/磁盘/网络/负载）
+        get("/api/monitor") {
+            call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, com.qitong.gateway.monitor.SystemMonitor.snapshot(), "ok")
+        }
+        // ★ v1.124 备份中心：列表 / 执行备份 / 恢复
+        get("/api/backups") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, mapOf("list" to com.qitong.gateway.monitor.BackupManager.listBackups()), "ok")
+        }
+        post("/api/backups") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            runCatching {
+                val path = com.qitong.gateway.monitor.BackupManager.backup(database.jdbcUrl())
+                AdminApi.ok(call, mapOf("path" to path), "备份完成")
+            }.getOrElse { e -> AdminApi.fail(call, "备份失败：${e.message}", 500) }
+        }
+        post("/api/backups/restore") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val name = body["name"]?.jsonPrimitive?.content ?: ""
+            if (name.isBlank()) { AdminApi.fail(call, "备份名不能为空", 400); return@post }
+            val ok = runCatching { com.qitong.gateway.monitor.BackupManager.restore(name, database.dbPath()) }.getOrDefault(false)
+            if (ok) AdminApi.ok(call, null, "已恢复，重启容器生效")
+            else AdminApi.fail(call, "恢复失败（备份文件不存在）", 400)
         }
 
         // 密钥
@@ -2002,7 +2031,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.123"))
+                put("version", JsonPrimitive("1.124"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2754,7 +2783,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.123"))
+                    put("version", JsonPrimitive("1.124"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

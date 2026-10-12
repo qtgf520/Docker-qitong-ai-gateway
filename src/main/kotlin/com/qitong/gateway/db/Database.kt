@@ -12,6 +12,11 @@ import java.sql.Statement
  * 数据访问层 —— 使用 JDBC + SQLite 对齐原 APP 的 Room 数据库（7表 + users + config + api_keys）
  */
 class Database(private val dbPath: String) {
+    /** ★ v1.124 供备份模块读取数据库文件路径 */
+    fun dbPath(): String = dbPath
+
+    /** ★ v1.124 JDBC URL（备份用） */
+    fun jdbcUrl(): String = "jdbc:sqlite:$dbPath"
 
     @Volatile
     private var connRef: Connection? = null
@@ -1495,6 +1500,7 @@ class Database(private val dbPath: String) {
     }
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.124", "系统监控 + 备份中心", "新增「系统监控」页实时展示 CPU/负载/JVM内存/磁盘/网络/线程（每3秒刷新）；「备份中心」一键 SQLite 在线一致性备份 + 列表 + 恢复（重启生效），自动保留最近10份；纯 JVM 实现零外部依赖"),
             Triple("v1.123", "性能监控实时化 + 多模态自动切换（图片/语音/视频）", "首页性能监控每10秒自动刷新（内存/线程/GC/流量/缓存命中率）；模型编辑页新增图片理解🖼/语音🎤/视频🎬三能力勾选+列表标识；发送图片/语音/视频请求自动识别模态（支持OpenAI多模态格式），故障转移优先选支持该模态的模型；旧库自动补三列"),
             Triple("v1.122", "聊天 Markdown 渲染全面增强 + 消息一键复制", "标题/表格/无序有序列表/任务清单(- [x])/引用块/行内代码/斜体/链接全部原生渲染；每条助手回复右上角加📋一键复制按钮（含代码/表格原文）；表格引用任务配套样式（主色边框、hover高亮、响应式滚动）"),
             Triple("v1.121", "聊天理解链结构化流水渲染（思考→工具→结果→答案）", "助手回复里的思考过程/工具调用/工具结果/最终答案自动拆成折叠卡片按顺序铺开（💭思考卡/🔧工具调用卡/📦结果卡，点击展开收起）；多轮工具自动成组「思考与工具(N)」；打开旧会话自动对历史消息结构化；纯自研内容解析器（thinking/think/tool/tool_result/search/details），无外部依赖"),
