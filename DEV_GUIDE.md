@@ -236,6 +236,8 @@ git push origin master
 | 34 | **失败补丁脚本被 git add 误提交** | 补丁脚本 assert 失败但文件还在工作区，git add -A 全带上 | 每次 git add 前 rm -f qt_*.py 临时脚本；误提交用 git rm --cached + commit --amend 修正 |
 | 35 | **opencode 接网关要 env 变量方式传 key** | 配置里写死 key 会进工作区/泄露 | provider options.apiKey 用 `{env:QITONG_GATEWAY_KEY}`，运行时 export；配置 json 只留占位 |
 | 36 | **本地库迁移正式服务商** | 本地空库没模型，qtai-sj 返回 No available model（链路通但无模型） | 从正式库导出 providers+models 为 JSON，本地按 id 映射重插（6服务商+159模型一次过） |
+| 37 | **Kotlin private 类被 public 函数暴露** | 加限流统计时 public fun 参数用了 private class Bucket → 编译报 exposes its private-in-class parameter type | 内部辅助函数（recordRpm/recordTpm/rpmInWindow等）全部 private，仅留对外入口 public（如 recordTokens(String)） |
+| 38 | **页面去重要查干净残留** | 删了独立「系统监控」页后 loaders.monitor/view-monitor/data-page 残留导致切页报错 | 删菜单+视图+loader 三件套后用 grep 复查 `loaders.monitor|view-monitor|data-page="monitor"` 应为 0 |
 
 ---
 
