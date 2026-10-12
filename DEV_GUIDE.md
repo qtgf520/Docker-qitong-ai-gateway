@@ -234,6 +234,8 @@ git push origin master
 | 32 | **onclick 多层引号嵌套炸 SyntaxError** | 复制按钮 onclick 里 JSON.stringify+unescapeHtml 引号地狱，node --check 直接报错 | 全局存储 `_msgCopyStore.push(content)` + onclick 只传索引 `copyChatMsg(i)` |
 | 33 | **Markdown 任务清单被无序列表吞** | `- [x]` 被 md-ul 正则先匹配吃掉，任务清单渲染为 0 | 任务清单正则在无序/有序列表**之前**处理 |
 | 34 | **失败补丁脚本被 git add 误提交** | 补丁脚本 assert 失败但文件还在工作区，git add -A 全带上 | 每次 git add 前 rm -f qt_*.py 临时脚本；误提交用 git rm --cached + commit --amend 修正 |
+| 35 | **opencode 接网关要 env 变量方式传 key** | 配置里写死 key 会进工作区/泄露 | provider options.apiKey 用 `{env:QITONG_GATEWAY_KEY}`，运行时 export；配置 json 只留占位 |
+| 36 | **本地库迁移正式服务商** | 本地空库没模型，qtai-sj 返回 No available model（链路通但无模型） | 从正式库导出 providers+models 为 JSON，本地按 id 映射重插（6服务商+159模型一次过） |
 
 ---
 
