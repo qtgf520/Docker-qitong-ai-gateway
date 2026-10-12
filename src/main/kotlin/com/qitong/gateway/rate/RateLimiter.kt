@@ -17,6 +17,11 @@ object RateLimiter {
         var lastSec = 0L
         val daily = AtomicLong(0)
         var lastDay = 0L
+        // ★ v1.125 RPM/TPM 支持（借鉴通用限流模型自研）：分钟窗口 + token 累计
+        val minWindow = LongArray(60)   // 每分钟请求数（环形分钟窗）
+        var lastMin = 0L
+        val tpmWindow = LongArray(60)   // 每分钟 token 数
+        var lastTpmMin = 0L
     }
 
     private val buckets = ConcurrentHashMap<String, Bucket>()
@@ -57,6 +62,57 @@ object RateLimiter {
         b.window[(now % 60).toInt()]++
         b.daily.incrementAndGet()
     }
+    /** ★ v1.125 RPM 记录（每分钟请求数） */
+    private fun recordRpm(b: Bucket) {
+        val now = System.currentTimeMillis() / 1000
+        val min = now / 60
+        if (min != b.lastMin) {
+            val diff = ((min - b.lastMin) % 60).toInt().coerceIn(0, 59)
+            for (i in 0 until diff) {
+                val idx = ((b.lastMin + 1 + i) % 60).toInt()
+                b.minWindow[idx] = 0
+            }
+            b.lastMin = min
+        }
+        b.minWindow[(min % 60).toInt()]++
+    }
+    /** ★ v1.125 TPM 记录（每分钟 token 数） */
+    private fun recordTpm(b: Bucket, tokens: Int) {
+        if (tokens <= 0) return
+        val now = System.currentTimeMillis() / 1000
+        val min = now / 60
+        if (min != b.lastTpmMin) {
+            val diff = ((min - b.lastTpmMin) % 60).toInt().coerceIn(0, 59)
+            for (i in 0 until diff) {
+                val idx = ((b.lastTpmMin + 1 + i) % 60).toInt()
+                b.tpmWindow[idx] = 0
+            }
+            b.lastTpmMin = min
+        }
+        b.tpmWindow[(min % 60).toInt()] += tokens
+    }
+    /** ★ v1.125 分钟窗内 RPM 计数 */
+    private fun rpmInWindow(b: Bucket): Long {
+        val now = System.currentTimeMillis() / 1000
+        val min = now / 60
+        var sum = 0L
+        for (i in 59 downTo 0) {
+            val m = min - i
+            sum += b.minWindow[(m % 60).toInt()]
+        }
+        return sum
+    }
+    /** ★ v1.125 分钟窗内 TPM 计数 */
+    private fun tpmInWindow(b: Bucket): Long {
+        val now = System.currentTimeMillis() / 1000
+        val min = now / 60
+        var sum = 0L
+        for (i in 59 downTo 0) {
+            val m = min - i
+            sum += b.tpmWindow[(m % 60).toInt()]
+        }
+        return sum
+    }
 
     /**
      * 检查是否允许请求
@@ -81,9 +137,26 @@ object RateLimiter {
         if (dailyLimit > 0 && b.daily.get() >= dailyLimit) {
             return "今日调用已达上限（$dailyLimit 次），请明天再试或联系管理员提升配额"
         }
+        // ★ v1.125 RPM 检查（每分钟请求数，默认 600）
+        val rpmLimit = database.getUserConfig(ownerId, "rate_rpm", "").toIntOrNull() ?: 600
+        if (rpmLimit > 0) {
+            if (rpmInWindow(b) >= rpmLimit) return "请求过于频繁（每分钟限 $rpmLimit 次），请稍后再试"
+        }
+        // ★ v1.125 TPM 检查（每分钟 token 数，默认 100000）
+        val tpmLimit = database.getUserConfig(ownerId, "rate_tpm", "").toIntOrNull() ?: 100000
+        if (tpmLimit > 0) {
+            if (tpmInWindow(b) >= tpmLimit) return "Token 用量已达每分钟上限（$tpmLimit），请稍后再试"
+        }
         // 通过 → 记录
         record(b)
+        recordRpm(b)
         return null
+    }
+    /** ★ v1.125 请求完成后记录 token 用量（供 TPM 限流） */
+    fun recordTokens(apiKey: String, tokens: Int) {
+        if (tokens <= 0) return
+        val b = bucket(apiKey)
+        recordTpm(b, tokens)
     }
 
     /** 重置某 Key 限流（删除时用） */

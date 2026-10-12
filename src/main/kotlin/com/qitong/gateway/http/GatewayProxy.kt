@@ -731,6 +731,10 @@ class GatewayProxy(private val database: Database) {
 
             // 用量统计（含商业化扣费）
             recordUsage(targetModel, modelId, uploadBytes, downloadBytes, ownerUser, promptTokens, completionTokens, totalTokens, apiKeyLabel)
+            // ★ v1.125 TPM 限流：记录实际 token 用量（供 per-minute token 限流）
+            if (apiKeyLabel.isNotBlank() && totalTokens > 0) {
+                com.qitong.gateway.rate.RateLimiter.recordTokens(apiKeyLabel, totalTokens)
+            }
             response.close()
             return true
         } else {

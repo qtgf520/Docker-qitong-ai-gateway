@@ -173,44 +173,47 @@ loaders.dashboard = function(){
    '<div class="form-row"><label>本地地址</label><div class="addr-line" onclick="copyAddr(this)">http://localhost:' + gwPort + '/v1 <span class="copy-tag">复制</span></div></div>' +
    '<div class="form-row"><label>服务器地址（IP）</label><div class="addr-line" onclick="copyAddr(this)">http://' + esc(ip) + ':' + gwPort + '/v1 <span class="copy-tag">复制</span></div></div>' +
    domainLine + '</div>';
-  box.innerHTML = [
-   addrHtml,
-   '<div class="card" id="announceCard"><h3>公告</h3><div style="color:var(--muted);padding:8px;font-size:13px">加载中...</div></div>',
-   '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">' +
-    '<div class="stat"><div class="num" style="font-size:20px">' + fmtUptime(st.uptime || 0) + '</div><div class="lbl">运行时长</div></div>' +
-    '<div class="stat"><div class="num" style="font-size:20px">' + (st.pipelineSorted||[]).length + '</div><div class="lbl">可用模型</div></div>' +
-    '<div class="stat"><div class="num" style="font-size:20px;color:' + ((st.healthCache||[]).filter(function(x){return x.isHealthy;}).length / Math.max((st.healthCache||[]).length,1) * 100 > 50 ? 'var(--green)' : 'var(--amber)') + '">' + Math.round((st.healthCache||[]).filter(function(x){return x.isHealthy;}).length / Math.max((st.healthCache||[]).length,1) * 100) + '%</div><div class="lbl">健康率</div></div>' +
-    '<div class="stat"><div class="num" style="font-size:20px">' + (st.autoFailover ? '已开启' : '已关闭') + '</div><div class="lbl">故障转移</div></div>' +
-   '</div>',
-   '<div class="grid grid-2" style="gap:16px;margin-top:4px">',
-    '<div class="card" id="gwCtrlCard"><h3>网关控制</h3><div style="display:flex;gap:10px;align-items:center">' +
-     '<span id="gwDot" class="dot ' + (st.running ? '' : 'off') + '"></span>' +
-     '<span id="gwState" style="font-weight:700;color:' + (st.running ? 'var(--green)' : 'var(--red)') + '">' + (st.running ? '运行中' : '已停止') + '</span>' +
-     '<button class="btn" id="gwToggleBtn" onclick="toggleGateway()">' + (st.running ? '暂停' : '启动') + '</button>' +
-    '</div><div style="margin-top:8px;font-size:12px;color:var(--muted)">强制模型：' + esc(st.activeModel || 'qtai-sj') + (runtimeMid ? '　·　<span style="color:var(--cyan)">实际命中：' + esc(runtimeMid) + '</span>' : '') + '</div></div>',
-    '<div class="card" id="autoSpeedCard"><h3>自动测速</h3><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
-     '<button class="btn" id="autoSpeedBtn" onclick="toggleAutoSpeed()">' + (st.autoSpeedTest ? '停止自动测速' : '启动自动测速') + '</button>' +
-     '<button class="btn-ghost" onclick="runHomeSpeedTest()">立即测速</button>' +
-     '<select id="speedInterval" class="input" style="width:130px" onchange="saveSpeedInterval()">' +
-      '<option value="5"' + (st.speedIntervalMin==5?' selected':'') + '>5分钟</option>' +
-      '<option value="15"' + (st.speedIntervalMin==15?' selected':'') + '>15分钟</option>' +
-      '<option value="30"' + (st.speedIntervalMin==30?' selected':'') + '>30分钟</option>' +
-      '<option value="60"' + (st.speedIntervalMin==60?' selected':'') + '>1小时</option>' +
-      '<option value="120"' + (st.speedIntervalMin==120?' selected':'') + '>2小时</option>' +
-      '<option value="240"' + (st.speedIntervalMin==240?' selected':'') + '>4小时</option>' +
-     '</select><span style="font-size:11px;color:var(--muted)" id="speedScopeTag"></span></div>' +
-     '<div id="homeSpeedProg" style="display:none;margin-top:10px"></div>' +
-     '<div style="margin-top:6px;font-size:12px;color:var(--cyan)" id="dashCountdown"></div></div>',
-   '</div>',
-   // ★ v1.111 网关性能监控（运行时监控）：内存/线程/GC/请求量/缓存命中
-   '<div class="card" id="perfCard"><h3>网关性能监控</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中…</div></div>',
-   '</div>',
-   '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥' + ((st.balance||0)).toFixed(2) + '</div><div class="lbl">我的余额</div></div><div class="stat"><div class="num" style="font-size:18px">' + esc(st.role||'') + '</div><div class="lbl">当前身份</div></div></div></div>',
-   poolHtml,
-   '<div class="card"><h3>模型排行榜 <span style="font-size:12px;color:var(--muted)">（点击 灯加入/移出强制故障池，多选支持自动故障转移）</span></h3><div class="table-wrap"><table><thead><tr><th>池</th><th>#</th><th>模型ID</th><th>服务商</th><th>TTFT</th><th>TPS</th><th>总耗时</th><th>状态</th><th>强制池</th></tr></thead><tbody>' +
-    (rankRows || '<tr><td colspan="9" style="text-align:center;color:var(--muted)">暂无启用模型，请先在服务商页添加并同步</td></tr>') +
-   '</tbody></table></div></div>'
-  ].join('');
+box.innerHTML = [
+    addrHtml,
+    '<div class="card" id="announceCard"><h3>公告</h3><div style="color:var(--muted);padding:8px;font-size:13px">加载中...</div></div>',
+    '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">' +
+     '<div class="stat"><div class="num" style="font-size:20px">' + fmtUptime(st.uptime || 0) + '</div><div class="lbl">运行时长</div></div>' +
+     '<div class="stat"><div class="num" style="font-size:20px">' + (st.pipelineSorted||[]).length + '</div><div class="lbl">可用模型</div></div>' +
+     '<div class="stat"><div class="num" style="font-size:20px;color:' + ((st.healthCache||[]).filter(function(x){return x.isHealthy;}).length / Math.max((st.healthCache||[]).length,1) * 100 > 50 ? 'var(--green)' : 'var(--amber)') + '">' + Math.round((st.healthCache||[]).filter(function(x){return x.isHealthy;}).length / Math.max((st.healthCache||[]).length,1) * 100) + '%</div><div class="lbl">健康率</div></div>' +
+     '<div class="stat"><div class="num" style="font-size:20px">' + (st.autoFailover ? '已开启' : '已关闭') + '</div><div class="lbl">故障转移</div></div>' +
+    '</div>',
+    '<div class="grid grid-2" style="gap:16px;margin-top:4px">',
+     '<div class="card" id="gwCtrlCard"><h3>网关控制</h3><div style="display:flex;gap:10px;align-items:center">' +
+      '<span id="gwDot" class="dot ' + (st.running ? '' : 'off') + '"></span>' +
+      '<span id="gwState" style="font-weight:700;color:' + (st.running ? 'var(--green)' : 'var(--red)') + '">' + (st.running ? '运行中' : '已停止') + '</span>' +
+      '<button class="btn" id="gwToggleBtn" onclick="toggleGateway()">' + (st.running ? '暂停' : '启动') + '</button>' +
+     '</div><div style="margin-top:8px;font-size:12px;color:var(--muted)">强制模型：' + esc(st.activeModel || 'qtai-sj') + (runtimeMid ? '　·　<span style="color:var(--cyan)">实际命中：' + esc(runtimeMid) + '</span>' : '') + '</div></div>',
+     '<div class="card" id="autoSpeedCard"><h3>自动测速</h3><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+      '<button class="btn" id="autoSpeedBtn" onclick="toggleAutoSpeed()">' + (st.autoSpeedTest ? '停止自动测速' : '启动自动测速') + '</button>' +
+      '<button class="btn-ghost" onclick="runHomeSpeedTest()">立即测速</button>' +
+      '<select id="speedInterval" class="input" style="width:130px" onchange="saveSpeedInterval()">' +
+       '<option value="5"' + (st.speedIntervalMin==5?' selected':'') + '>5分钟</option>' +
+       '<option value="15"' + (st.speedIntervalMin==15?' selected':'') + '>15分钟</option>' +
+       '<option value="30"' + (st.speedIntervalMin==30?' selected':'') + '>30分钟</option>' +
+       '<option value="60"' + (st.speedIntervalMin==60?' selected':'') + '>1小时</option>' +
+       '<option value="120"' + (st.speedIntervalMin==120?' selected':'') + '>2小时</option>' +
+       '<option value="240"' + (st.speedIntervalMin==240?' selected':'') + '>4小时</option>' +
+      '</select><span style="font-size:11px;color:var(--muted)" id="speedScopeTag"></span></div>' +
+      '<div id="homeSpeedProg" style="display:none;margin-top:10px"></div>' +
+      '<div style="margin-top:6px;font-size:12px;color:var(--cyan)" id="dashCountdown"></div></div>',
+    '</div>',
+    // ★ v1.125 系统动态 + 性能监控（首页一体，不再独立页）
+    '<div class="card" id="perfCard"><h3>系统状态 · 实时监控</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中…</div></div>',
+    '<div class="card"><h3>⚡ 系统动态</h3><div id="sysFeed" style="max-height:200px;overflow-y:auto;font-size:12.5px;color:var(--muted)">加载中…</div></div>',
+    '</div>',
+    '<div class="card bal-card"><div class="grid grid-3" style="margin:0"><div class="stat"><div class="num" style="color:var(--green)">¥' + ((st.balance||0)).toFixed(2) + '</div><div class="lbl">我的余额</div></div><div class="stat"><div class="num" style="font-size:18px">' + esc(st.role||'') + '</div><div class="lbl">当前身份</div></div></div></div>',
+    poolHtml,
+    '<div class="card"><h3>模型排行榜 <span style="font-size:12px;color:var(--muted)">（点击 灯加入/移出强制故障池，多选支持自动故障转移）</span></h3><div class="table-wrap"><table><thead><tr><th>池</th><th>#</th><th>模型ID</th><th>服务商</th><th>TTFT</th><th>TPS</th><th>总耗时</th><th>状态</th><th>强制池</th></tr></thead><tbody>' +
+     (rankRows || '<tr><td colspan="9" style="text-align:center;color:var(--muted)">暂无启用模型，请先在服务商页添加并同步</td></tr>') +
+    '</tbody></table></div></div>'
+   ].join('');
+   // ★ v1.125 系统动态实时流（调用/故障转移/测速事件）
+   startSysFeed();
   // 加载公告填充公告卡片
   api('/api/announcements').then(function(ar){
    if(ar && ar.code === 0){
@@ -262,23 +265,39 @@ loaders.dashboard = function(){
 };
 // ★ v1.123 性能监控实时化：封装渲染 + 每 10s 轮询刷新（离开首页自动停）
 var _perfTimer = null;
+var _lastSys = null;
 function renderPerfCard(p){
    var pc = $('perfCard');
    if(!pc || !p) return;
    var cacheHitRate = p.cacheTotal > 0 ? Math.round(p.cacheHits / p.cacheTotal * 100) : 0;
    var memPct = p.memMaxMB > 0 ? Math.round(p.memUsedMB / p.memMaxMB * 100) : 0;
    var memColor = memPct > 80 ? 'var(--red)' : (memPct > 60 ? 'var(--amber)' : 'var(--green)');
+   var s = _lastSys || {};
+   var cpuTxt = s.cpu != null ? s.cpu + '%' : '—';
+   var cpuColor = s.cpu > 80 ? 'var(--red)' : (s.cpu > 60 ? 'var(--amber)' : 'var(--green)');
+   var diskPct = s.diskTotalMB > 0 ? Math.round(s.diskUsedMB / s.diskTotalMB * 100) : 0;
+   var diskColor = diskPct > 85 ? 'var(--red)' : (diskPct > 70 ? 'var(--amber)' : 'var(--green)');
+   var diskTxt = s.diskTotalMB ? (s.diskUsedMB + ' MB / ' + diskPct + '%') : '—';
+   var netTxt = s.netInKB != null ? ('↓' + s.netInKB + ' ↑' + s.netOutKB + ' KB/s') : '—';
    pc.innerHTML = '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr);margin:0">' +
-    '<div class="stat"><div class="num" style="font-size:18px;color:' + memColor + '">' + p.memUsedMB + ' MB</div><div class="lbl">内存使用（' + memPct + '%）</div></div>' +
-    '<div class="stat"><div class="num" style="font-size:18px">' + p.memMaxMB + ' MB</div><div class="lbl">最大堆</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px;color:' + cpuColor + '">' + cpuTxt + '</div><div class="lbl">CPU 使用率' + (s.load1!=null ? ' · 负载 '+s.load1 : '') + '</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px;color:' + memColor + '">' + p.memUsedMB + ' MB</div><div class="lbl">JVM 内存（' + memPct + '% / 最大 '+p.memMaxMB+' MB）</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px;color:' + diskColor + '">' + diskTxt + '</div><div class="lbl">磁盘占用</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:15px;color:var(--cyan)">' + netTxt + '</div><div class="lbl">网络（上下行）</div></div>' +
     '<div class="stat"><div class="num" style="font-size:18px">' + p.threads + '</div><div class="lbl">线程数</div></div>' +
     '<div class="stat"><div class="num" style="font-size:18px">' + p.gcCount + '</div><div class="lbl">GC次数</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:18px;color:var(--green)">' + p.cacheTotal + ' 条 · ' + cacheHitRate + '%</div><div class="lbl">响应缓存</div></div>' +
     '<div class="stat"><div class="num" style="font-size:18px;color:var(--cyan)">' + p.reqUploadMB + ' / ' + p.reqDownloadMB + ' MB</div><div class="lbl">上下行流量</div></div>' +
-    '<div class="stat"><div class="num" style="font-size:18px;color:var(--green)">' + p.cacheTotal + ' 条</div><div class="lbl">响应缓存</div></div>' +
-    '<div class="stat"><div class="num" style="font-size:18px;color:var(--cyan)">' + cacheHitRate + '%</div><div class="lbl">缓存命中率</div></div>' +
-    '<div class="stat"><div class="num" style="font-size:18px">' + p.heapUsedMB + ' MB</div><div class="lbl">堆使用</div></div>' +
    '</div>';
 }
+// 拉取系统监控数据（合并到 perfCard）
+function refreshSys(){
+   api('/api/monitor').then(function(r){
+    if(r.code===0 && r.data){ _lastSys = r.data; renderPerfCard(window._lastPerf || {}); }
+   });
+}
+// 记录最近一次 perf，供 refreshSys 合并渲染
+window._lastPerf = null;
 function startPerfTimer(){
    if(_perfTimer) clearInterval(_perfTimer);
    _perfTimer = setInterval(function(){
@@ -286,10 +305,59 @@ function startPerfTimer(){
      clearInterval(_perfTimer); _perfTimer = null; return;
     }
     api('/api/stats').then(function(r){
-     if(r.code === 0 && r.data && r.data.perf){ renderPerfCard(r.data.perf); }
+     if(r.code === 0 && r.data && r.data.perf){ window._lastPerf = r.data.perf; renderPerfCard(r.data.perf); }
     });
    }, 10000);
+   // ★ v1.125 系统监控合并刷新（CPU/磁盘/网络）
+   refreshSys();
+   var _sysT = setInterval(function(){
+    if(!$('view-dashboard') || !$('view-dashboard').classList.contains('active')){ clearInterval(_sysT); return; }
+    refreshSys();
+   }, 5000);
 }
+
+// ★ v1.125 系统动态实时流（调用量/故障转移/测速事件，滚动展示）
+var _sysFeedTimer = null;
+function startSysFeed(){
+  var feed = $('sysFeed');
+  if(!feed) return;
+  feed.innerHTML = '<div style="color:var(--muted)">系统运行中，实时事件将显示在这里…</div>';
+  if(_sysFeedTimer) clearInterval(_sysFeedTimer);
+  function push(txt, cls){
+    var f = $('sysFeed'); if(!f) return;
+    var d = new Date();
+    var ts = String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+    var row = document.createElement('div');
+    row.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--border);font-size:12px;color:'+(cls||'var(--muted)');
+    row.innerHTML = '<span style="color:var(--cyan);font-family:monospace">'+ts+'</span> ' + txt;
+    f.insertBefore(row, f.firstChild);
+    while(f.children.length > 30) f.removeChild(f.lastChild);
+  }
+  _sysFeedTimer = setInterval(function(){
+    if(!$('view-dashboard') || !$('view-dashboard').classList.contains('active')){ clearInterval(_sysFeedTimer); _sysFeedTimer=null; return; }
+    api('/api/status').then(function(r){
+      if(r.code!==0 || !r.data) return;
+      var st = r.data;
+      var rt = st.runtimeActiveMid || st.runtimeActive || '';
+      if(rt && window._lastFeedRt !== rt){
+        window._lastFeedRt = rt;
+        push('⚡ 模型切换 → <b style="color:var(--green)">'+esc(rt)+'</b>（自动故障转移）');
+      }
+      if(st.lastSpeedTestAt && window._lastSpeedAt !== st.lastSpeedTestAt){
+        window._lastSpeedAt = st.lastSpeedTestAt;
+        var pass = (st.healthCache||[]).filter(function(x){return x.isHealthy;}).length;
+        push('📊 自动测速完成：'+pass+'/'+(st.healthCache||[]).length+' 个模型正常');
+      }
+      if(st.uptime && st.uptime < 120 && window._bootPushed !== st.uptime){
+        window._bootPushed = st.uptime;
+        push('🚀 网关已启动（运行 '+(st.uptime||0)+'s）', 'var(--green)');
+      }
+    });
+  }, 6000);
+  // 立即来一条
+  setTimeout(function(){ push('👋 欢迎回到綦桐AI网关控制台'); }, 300);
+}
+
 // 首页实时测速进度（轮询 /api/speedtest/progress，效果对齐测速页）
 var homeSpeedTimer = null;
 function checkHomeSpeed(){
