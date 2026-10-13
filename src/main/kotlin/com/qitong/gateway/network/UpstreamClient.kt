@@ -32,7 +32,7 @@ object UpstreamClient {
     private fun createClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(0, TimeUnit.SECONDS)
+            .readTimeout(300, TimeUnit.SECONDS)   // ★ v1.126 流式读超时兜底：上游 5 分钟无数据=死链判失败（原 0=无限卡死）
             .writeTimeout(120, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .callTimeout(0, TimeUnit.SECONDS)
@@ -101,7 +101,7 @@ object UpstreamClient {
     private fun createDirectClient(): OkHttpClient {
         return OkHttpClient.Builder()
             .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(0, TimeUnit.SECONDS)
+            .readTimeout(300, TimeUnit.SECONDS)   // ★ v1.126 流式读超时兜底
             .writeTimeout(120, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .callTimeout(0, TimeUnit.SECONDS)

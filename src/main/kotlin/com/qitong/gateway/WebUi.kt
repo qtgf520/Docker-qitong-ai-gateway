@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v1.125"
+    private const val VER = "v1.126"
 
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -138,6 +138,7 @@ ${adminCss()}
       <div class="nav-group">概览</div>
       <a data-page="dashboard" class="active"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><b>首页</b></a>
       <a data-page="usage"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><b>用量统计</b></a>
+      <a data-page="prices"><svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><b>模型价格表</b></a>
       <a data-page="backups"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 9 9 9 9 0 0 1-9 9 9 9 0 0 1-7.9-5"/><polyline points="13 8 17 12 13 16"/></svg><b>备份中心</b></a>
       <div class="nav-group">模型接入</div>
       <a data-page="providers"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/></svg><b>服务商</b></a>
@@ -179,6 +180,7 @@ ${adminCss()}
     <div id="view-yuanbao" class="view"></div>
     <div id="view-rules" class="view"></div>
     <div id="view-usage" class="view"></div>
+    <div id="view-prices" class="view"></div>
     <div id="view-backups" class="view"></div>
     <div id="view-tickets" class="view"></div>
     <div id="view-terminal" class="view"></div>

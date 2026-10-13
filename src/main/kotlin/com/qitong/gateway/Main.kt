@@ -100,7 +100,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.125
+ * 綦桐AI网关 · Docker 服务器版 v1.126
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +112,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.125    ║
+        ║   綦桐AI网关 · Docker Server v1.126    ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -122,6 +122,15 @@ fun main(args: Array<String>) {
     val database = Database(dbPath)
     // ★ v85 播种更新历史（首次启动写入，前端/QQ/微信/qtai-sj 可查）
     runCatching { database.migrateMultimodal() }
+    // ★ v1.126 启动时恢复自动测速（config 持久化，重启后协程要跟着起来）
+    runCatching {
+        val autoOn = database.getConfig("auto_speedtest", "false").toBoolean()
+        if (autoOn) {
+            val interval = database.getConfig("speed_interval_min", "240").toIntOrNull() ?: 240
+            com.qitong.gateway.http.GatewayProxy.setAutoSpeedTest(true, interval, database)
+            println("[Gateway] 自动测速已恢复（每 ${interval} 分钟）")
+        }
+    }
     runCatching { database.seedUpdateLogsIfEmpty() }
     // ★ v1.104 SSH 配置持久化：启动时绑定 DB（加载已保存的 SSH 连接，重启不丢）
     runCatching { com.qitong.gateway.http.TerminalManager.bindSshDb(database) }
@@ -195,7 +204,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.125"))
+                put("version", JsonPrimitive("1.126"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -655,7 +664,16 @@ fun Application.moduleWeb(database: Database) {
                 put("data", AdminApi.getStats(database, u))
             }, 200)
         }
-        // ★ v1.124 系统监控（实时快照：CPU/内存/磁盘/网络/负载）
+                // ★ v1.126 全部模型价格表（前端「模型价格表」菜单）
+        get("/api/prices") {
+            call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, mapOf(
+                "defaultPrice" to com.qitong.gateway.http.PricingTable.DEFAULT_PRICE,
+                "outputMultiplier" to com.qitong.gateway.http.PricingTable.OUTPUT_MULTIPLIER,
+                "table" to com.qitong.gateway.http.PricingTable.table()
+            ), "ok")
+        }
+        // ★ v1.126 系统监控（实时快照：CPU/内存/磁盘/网络/负载）
         get("/api/monitor") {
             call.requireAuth(database) ?: return@get
             AdminApi.ok(call, com.qitong.gateway.monitor.SystemMonitor.snapshot(), "ok")
@@ -2031,7 +2049,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.125"))
+                put("version", JsonPrimitive("1.126"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2783,7 +2801,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.125"))
+                    put("version", JsonPrimitive("1.126"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

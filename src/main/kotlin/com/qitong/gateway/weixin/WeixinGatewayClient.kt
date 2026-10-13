@@ -60,8 +60,8 @@ class WeixinGatewayClient(
                         runCatching { onMessage(parsed) }
                     }
                 } else {
-                    // 长轮询正常返回（即使无消息）→ 保持 ONLINE，不重复推送"在线（无新消息）"避免刷屏
-                    if (backoffMs > 2000L) onStatusChange(WeixinBotStatus.ONLINE, "在线")
+                    // 长轮询正常返回（即使无消息）→ 保持 ONLINE（★ v1.126 首次成功也置 ONLINE，不再一直"启动中"）
+                    onStatusChange(WeixinBotStatus.ONLINE, "在线")
                 }
                 backoffMs = 2000L // 成功后重置退避
             } catch (e: Exception) {

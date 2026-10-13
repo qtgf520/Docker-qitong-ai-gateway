@@ -278,21 +278,25 @@ class GatewayProxy(private val database: Database) {
     fun sanitizeRequestBody(bodyStr: String): String {
         return try {
             var sb = bodyStr
-            sb = sb.replace(Regex("\"temperature\"\\s*:\\s*([\\d.]+)")) { m ->
+            // ★ v1.126 兼容性：请求体剥离 safety 相关字段（传给不认识的模型会报错）
+            sb = sb.replace(Regex("\\\"safety[^,}]*[,}]+"), "")
+            sb = sb.replace(Regex("\\\"safetySettings\\\"\\s*:\\s*\\[[^]]*\\]\\s*,?"), "")
+            sb = sb.replace(Regex("\\\"generationConfig\\\"\\s*:\\s*\\{[^}]*\\}\\s*,?"), "")
+            sb = sb.replace(Regex("\\\"temperature\\\"\\s*:\\s*([\\d.]+)")) { m ->
                 val v = m.groupValues[1].toDoubleOrNull()
-                if (v != null && v != v.coerceIn(0.0, 1.1049)) "\"temperature\":${v.coerceIn(0.0, 1.1049)}" else m.value
+                if (v != null && v != v.coerceIn(0.0, 1.1049)) "\\\"temperature\\\":${v.coerceIn(0.0, 1.1049)}" else m.value
             }
-            sb = sb.replace(Regex("\"top_p\"\\s*:\\s*([\\d.]+)")) { m ->
+            sb = sb.replace(Regex("\\\"top_p\\\"\\s*:\\s*([\\d.]+)")) { m ->
                 val v = m.groupValues[1].toDoubleOrNull()
-                if (v != null && v != v.coerceIn(0.0, 1.0)) "\"top_p\":${v.coerceIn(0.0, 1.0)}" else m.value
+                if (v != null && v != v.coerceIn(0.0, 1.0)) "\\\"top_p\\\":${v.coerceIn(0.0, 1.0)}" else m.value
             }
-            sb = sb.replace(Regex("\"(presence_penalty|frequency_penalty)\"\\s*:\\s*([-\\d.]+)")) { m ->
+            sb = sb.replace(Regex("\\\"(presence_penalty|frequency_penalty)\\\"\\s*:\\s*([-\\d.]+)")) { m ->
                 val v = m.groupValues[2].toDoubleOrNull()
-                if (v != null && v != v.coerceIn(-2.0, 2.0)) "\"${m.groupValues[1]}\":${v.coerceIn(-2.0, 2.0)}" else m.value
+                if (v != null && v != v.coerceIn(-2.0, 2.0)) "\\\"${m.groupValues[1]}\\\":${v.coerceIn(-2.0, 2.0)}" else m.value
             }
-            sb = sb.replace(Regex("\"max_tokens\"\\s*:\\s*(\\d+)")) { m ->
+            sb = sb.replace(Regex("\\\"max_tokens\\\"\\s*:\\s*(\\d+)")) { m ->
                 val v = m.groupValues[1].toIntOrNull()
-                if (v != null && v != v.coerceIn(1, 128000)) "\"max_tokens\":${v.coerceIn(1, 128000)}" else m.value
+                if (v != null && v != v.coerceIn(1, 128000)) "\\\"max_tokens\\\":${v.coerceIn(1, 128000)}" else m.value
             }
             sb
         } catch (_: Exception) { bodyStr }
@@ -478,16 +482,25 @@ class GatewayProxy(private val database: Database) {
 
             attemptedModels.add(targetModel.modelId)
             try {
-                val success = forwardToUpstream(call, provider, targetModel, bodyStr, body, modelId, stream, path, ownerUser, apiKeyLabel)
+                // ★ v1.126 每次上游尝试加 320s 总超时（流式读超时 300s + 余量）：上游挂起直接判失败走下一模型，杜绝卡死
+                val success = kotlinx.coroutines.withTimeoutOrNull(320_000L) {
+                    forwardToUpstream(call, provider, targetModel, bodyStr, body, modelId, stream, path, ownerUser, apiKeyLabel)
+                } ?: run {
+                    lastError = "上游响应超时（${targetModel.modelId}）"
+                    lastStatusCode = 504
+                    GatewayScheduler.markModelFailed(targetModel.modelId, targetModel.providerId)
+                    GatewayScheduler.recordModelResult(targetModel.modelId, targetModel.providerId, false)
+                    false
+                }
                 if (success) {
                     // 记录实际命中的模型，首页灯跟随它
                     lastServedKey = "${targetModel.providerId}::${targetModel.modelId}"
                     lastServedAt = System.currentTimeMillis()
                     return
                 }
-                // 非流式失败时记录错误并切换到下一模型
+                // 非流式失败时记录错误并切换到下一模型（间隔缩短到 150ms，切换更流畅）
                 if (idx < attemptModels.size - 1) {
-                    kotlinx.coroutines.delay(300)
+                    kotlinx.coroutines.delay(150)
                 }
             } catch (e: Exception) {
                 lastError = e.message

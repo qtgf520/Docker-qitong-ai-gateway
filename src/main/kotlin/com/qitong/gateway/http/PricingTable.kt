@@ -71,8 +71,44 @@ object PricingTable {
         "qwen2.5-coder-7b" to 2.0,
         "deepseek-coder" to 3.0,
         "grok-2" to 4.2,
-        "grok-3" to 10.5
+        "grok-3" to 10.5,
+        "grok-4" to 15.0,
+        "grok-code" to 12.0,
+        // ★ v1.126 补充主流模型
+        "gpt-5" to 50.0,
+        "gpt-5-mini" to 15.0,
+        "gpt-5-nano" to 5.0,
+        "gpt-4.1" to 15.0,
+        "gpt-4.1-mini" to 1.2,
+        "o4-mini" to 17.5,
+        "claude-opus-4" to 140.0,
+        "claude-sonnet-4" to 23.4,
+        "claude-haiku-4" to 6.5,
+        "gemini-3-pro" to 35.0,
+        "gemini-3-flash" to 5.5,
+        "gemini-2.5-flash-lite" to 2.0,
+        "deepseek-v3.1" to 3.0,
+        "deepseek-v4" to 3.0,
+        "deepseek-v4-flash" to 1.5,
+        "kimi-k3" to 4.0,
+        "glm-5" to 5.0,
+        "glm-5.2" to 5.0,
+        "qwen3-max" to 15.0,
+        "qwen3-flash" to 2.0,
+        "llama-4-405b" to 12.0,
+        "llama-4-maverick" to 10.0,
+        "llama-4-scout" to 5.0,
+        "mistral-3-7b" to 2.0
     )
+
+    /** ★ v1.126 全表导出（前端价格表菜单用）：modelId → 输入价/输出价 */
+    fun table(): Map<String, Map<String, Any?>> = table.mapValues { (_, inPrice) ->
+        mapOf(
+            "input" to inPrice,
+            "output" to inPrice * OUTPUT_MULTIPLIER,
+            "default" to (inPrice == DEFAULT_PRICE)
+        )
+    }
 
     /** 按模型ID查默认输入价（元/百万token），未收录返回默认价 */
     fun priceOf(modelId: String): Double {

@@ -5,6 +5,38 @@ package com.qitong.gateway
  */
 object AdminJs10 {
     fun js(): String = """
+
+// ===== 模型价格表（全部模型默认价，元/百万token） =====
+loaders.prices = function(){
+ var box = $('view-prices');
+ if(!box) return;
+ box.innerHTML = '<div class="card"><h3>💰 模型默认价格表</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中…</div></div>';
+ api('/api/prices').then(function(r){
+  if(r.code !== 0){ box.innerHTML = '<div class="card"><h3>💰 模型默认价格表</h3><div style="color:var(--red);padding:10px">加载失败</div></div>'; return; }
+  var d = r.data || {};
+  var tbl = d.table || {};
+  var rows = Object.keys(tbl).map(function(mid){
+   var p = tbl[mid] || {};
+   return '<tr>' +
+    '<td style="font-family:ui-monospace,monospace">'+esc(mid)+'</td>' +
+    '<td>¥'+p.input+'</td>' +
+    '<td>¥'+p.output+'</td>' +
+    '<td>'+(p.default?'<span class="badge gray">默认价</span>':'<span class="badge green">已收录</span>')+'</td>' +
+   '</tr>';
+  }).join('');
+  var html =
+   '<div class="grid grid-3" style="margin-bottom:14px">' +
+    '<div class="stat"><div class="num" style="font-size:20px">¥'+d.defaultPrice+'</div><div class="lbl">默认价（未收录模型，元/百万token 输入）</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:20px">'+d.outputMultiplier+'x</div><div class="lbl">输出价 = 输入价 × 倍数</div></div>' +
+    '<div class="stat"><div class="num" style="font-size:20px">'+Object.keys(tbl).length+' 款</div><div class="lbl">已收录模型</div></div>' +
+   '</div>' +
+   '<div class="card"><h3>全部模型价格（按输入/输出计费）</h3><div class="table-wrap"><table><thead><tr><th>模型</th><th>输入价（元/百万token）</th><th>输出价（元/百万token）</th><th>状态</th></tr></thead><tbody>' +
+    (rows || '<tr><td colspan="4" style="text-align:center;color:var(--muted)">价格表为空</td></tr>') +
+   '</tbody></table></div>' +
+   '<div style="font-size:11px;color:var(--muted);margin-top:8px">💰 价格单位：元 / 百万 Token（输入价）。模型可单独设置自定义单价（编辑模型时设置），自定义价优先于默认价。未收录模型统一按默认价计费。</div></div>';
+  box.innerHTML = html;
+ });
+};
 // ===== 备份中心（一键备份/恢复，仅管理员） =====
 loaders.backups = function(){
  var box = $('view-backups');
