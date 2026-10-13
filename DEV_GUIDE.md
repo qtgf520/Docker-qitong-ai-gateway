@@ -238,6 +238,9 @@ git push origin master
 | 36 | **本地库迁移正式服务商** | 本地空库没模型，qtai-sj 返回 No available model（链路通但无模型） | 从正式库导出 providers+models 为 JSON，本地按 id 映射重插（6服务商+159模型一次过） |
 | 37 | **Kotlin private 类被 public 函数暴露** | 加限流统计时 public fun 参数用了 private class Bucket → 编译报 exposes its private-in-class parameter type | 内部辅助函数（recordRpm/recordTpm/rpmInWindow等）全部 private，仅留对外入口 public（如 recordTokens(String)） |
 | 38 | **页面去重要查干净残留** | 删了独立「系统监控」页后 loaders.monitor/view-monitor/data-page 残留导致切页报错 | 删菜单+视图+loader 三件套后用 grep 复查 `loaders.monitor|view-monitor|data-page="monitor"` 应为 0 |
+| 39 | **流式 readTimeout(0)=无限等待卡死** | 上游挂起不吐数据客户端无限等，故障转移也救不回→用户卡顿/卡断 | 流式客户端 readTimeout 300s 兜底 + 每次上游尝试 withTimeoutOrNull 320s 判失败切下一模型 |
+| 40 | **微信长轮询首轮成功不置 ONLINE** | `if (backoffMs > 2000L)` 才置 ONLINE，首次启动永远"启动中" | 长轮询无异常返回即置 ONLINE（去掉 backoffMs 条件） |
+| 41 | **sanitizeRequestBody 拼接坏 JSON** | 想加 safety 剥离时 bodyStr2+sb 两个 JSON 拼接→坏 JSON | 直接对同一 sb 变量做所有替换，返回单个完整 JSON |
 
 ---
 
