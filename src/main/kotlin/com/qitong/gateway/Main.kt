@@ -20,6 +20,8 @@ import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.defaultheaders.DefaultHeaders
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveText
+import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -28,9 +30,14 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.http.content.staticResources
 import io.ktor.server.http.content.staticFiles
+import io.ktor.utils.io.writeFully
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 
 /** 登录失败计数（按IP，暴力破解告警用） */
@@ -100,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.128
+ * 綦桐AI网关 · Docker 服务器版 v1.128b
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -112,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.128    ║
+        ║   綦桐AI网关 · Docker Server v1.128b   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -204,7 +211,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.128"))
+                put("version", JsonPrimitive("1.128b"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -2049,7 +2056,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.128"))
+                put("version", JsonPrimitive("1.128b"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2770,6 +2777,53 @@ fun Application.moduleWeb(database: Database) {
             val body = call.receive<JsonObject>()
             AdminApi.ok(call, AdminApi.chat(database, body, u), "完成")
         }
+        // ★ v1.128b 内置聊天 SSE 流式代理：后台登录鉴权 → 回环转发网关(127.0.0.1:18889) → SSE 字节透传
+        // 解决 v1.127 前端用 qt_token 直调 /v1/chat/completions 因网关只认 sk- API Key 而 401 的问题
+        // 回环请求(127.0.0.1)命中 isLocalRequest 放行免 key，天然安全
+        post("/api/chat/stream") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.id <= 0) { AdminApi.fail(call, "未登录", 401); return@post }
+            val rawBody = call.receiveText()
+            runCatching {
+                val gatewayPort = database.getConfig("gateway_port", "18889")
+                val upstreamUrl = "http://127.0.0.1:$gatewayPort/v1/chat/completions"
+                val client = com.qitong.gateway.network.UpstreamClient.getClient(useProxy = false, stream = true)
+                val req = okhttp3.Request.Builder()
+                    .url(upstreamUrl)
+                    .post(rawBody.toByteArray(Charsets.UTF_8).toRequestBody("application/json".toMediaType()))
+                    .header("Accept", "text/event-stream")
+                    .build()
+                val resp = client.newCall(req).execute()
+                if (!resp.isSuccessful) {
+                    val code = resp.code
+                    resp.close()
+                    AdminApi.fail(call, "网关转发失败 HTTP $code", 502)
+                    return@post
+                }
+                val source = resp.body?.source()
+                if (source == null) { resp.close(); AdminApi.fail(call, "网关无响应", 502); return@post }
+                // 流式 SSE 透传
+                call.response.headers.append("Content-Type", "text/event-stream; charset=utf-8")
+                call.response.headers.append("Cache-Control", "no-cache")
+                call.response.headers.append("Connection", "keep-alive")
+                try {
+                    call.respondBytesWriter(ContentType.Text.EventStream, HttpStatusCode.OK) {
+                        val buf = ByteArray(8192)
+                        var n: Int
+                        source.timeout().timeout(300, java.util.concurrent.TimeUnit.SECONDS)
+                        while (true) {
+                            n = runCatching { source.read(buf) }.getOrNull() ?: -1
+                            if (n < 0) break
+                            if (n > 0) { runCatching { writeFully(buf, 0, n); flush() } }
+                        }
+                    }
+                } finally {
+                    resp.close()
+                }
+            }.onFailure { e ->
+                AdminApi.fail(call, "流式转发失败: ${e.message}", 500)
+            }
+        }
         // 上传图片/文件（base64），返回可访问 URL
         post("/api/upload") {
             val u = call.requireAuth(database) ?: return@post
@@ -2801,7 +2855,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.128"))
+                    put("version", JsonPrimitive("1.128b"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

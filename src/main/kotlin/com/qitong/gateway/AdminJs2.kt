@@ -750,10 +750,11 @@ window.sendChat = function(){
     wb = col.querySelector('.chat-wait-bubble');
    }, 60);
   }
-  fetch('/v1/chat/completions', {
+  // ★ v1.128b SSE 流式：改走后台代理 /api/chat/stream（qt_token 鉴权 → 回环转发网关 → SSE 透传），修复 v1.127 直调网关 401
+  fetch('/api/chat/stream', {
    method: 'POST',
    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-   body: JSON.stringify({ model: model, messages: [{ role: 'user', content: sendText }], stream: true, thinking: window._thinkOn() })
+   body: JSON.stringify({ model: model, messages: [{ role: 'user', content: sendText }], stream: true, thinking: window._thinkOn(), conversationId: convId })
   }).then(function(res){
    if(!res.ok || !res.body){
     col.innerHTML = '<div class="bubble">⚠️ 流式请求失败（'+(res.status||'')+'）</div>';
