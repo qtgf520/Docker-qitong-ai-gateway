@@ -729,37 +729,79 @@ window.sendChat = function(){
  var col = aRow.querySelector('.assistant-col');
  msgs.scrollTop = msgs.scrollHeight;
  input.value = ''; state.chatAttachments=[]; renderAttachPreview();
-api('/api/chat', { method:'POST', body: { conversationId: convId, content: sendText, model: model, thinking: window._thinkOn() } }).then(function(r){
-   if(!col) return;
-   if(r.code === 0 && r.data){
-    var reply = r.data.reply || '(无响应)';
-    var reasoning = r.data.reasoning || '';
-    var blocks = r.data.content_blocks || null;
+// ★ v1.127 SSE 流式：直接调网关 /v1/chat/completions stream=true，逐字渲染
+  col.innerHTML = '<div class="bubble chat-wait-bubble">⏳ 思考中…</div><div class="msg-time">'+fmtTime2(Date.now())+'</div>';
+  msgs.scrollTop = msgs.scrollHeight;
+  var wb = col.querySelector('.chat-wait-bubble');
+  var fullText = '';
+  var reasoningText = '';
+  var renderTimer = null;
+  function scheduleRender(){
+   if(renderTimer) return;
+   renderTimer = setTimeout(function(){
+    renderTimer = null;
     var html = '';
-    if(blocks && blocks.length){
-     // ★ v1.121 结构化流水：思考/工具/结果/答案折叠卡片
-     col.innerHTML = window._renderBlocks(blocks)+'<div class="msg-time">'+fmtTime2(Date.now())+'</div>';
-     msgs.scrollTop = msgs.scrollHeight;
-     if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, 300); }
-     return;
+    if(reasoningText && !fullText){
+     html += '<div class="chat-reason" onclick="this.classList.toggle(\'open\')">💭 思考过程（点击展开）<div class="cr-body">'+esc(reasoningText)+'</div></div>';
     }
-    if(reasoning){
-     html += '<div class="chat-reason" onclick="this.classList.toggle(\'open\')">💭 思考过程（点击展开）<div class="cr-body">'+esc(reasoning)+'</div></div>';
-    }
-    html += '<div class="bubble chat-wait-bubble">思考中...</div><div class="msg-time">'+fmtTime2(Date.now())+'</div>';
+    html += '<div class="bubble">'+renderMd(fullText)+(fullText?'':'▍')+'</div><div class="msg-time">'+fmtTime2(Date.now())+'</div>';
     col.innerHTML = html;
-    var wb = col.querySelector('.chat-wait-bubble');
-    var full = reply; var i = 0;
-    var tick = setInterval(function(){
-     i += 2;
-     if(wb){ wb.innerHTML = renderMd(full.slice(0,i)) + (i<full.length?'▍':''); msgs.scrollTop = msgs.scrollHeight; }
-     if(i >= full.length){ clearInterval(tick); if(wb) wb.innerHTML = renderMd(full); msgs.scrollTop = msgs.scrollHeight; }
-    }, 16);
-    if(convId === 0){ state.currentChatConv = r.data.conversationId; setTimeout(function(){ loaders.chat(); }, full.length * 2 + 200); }
-   } else {
-    col.innerHTML = '<div class="bubble">⚠️ '+(r.msg||'请求失败，请重试')+'</div>';
+    msgs.scrollTop = msgs.scrollHeight;
+    wb = col.querySelector('.chat-wait-bubble');
+   }, 60);
+  }
+  fetch('/v1/chat/completions', {
+   method: 'POST',
+   headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+   body: JSON.stringify({ model: model, messages: [{ role: 'user', content: sendText }], stream: true, thinking: window._thinkOn() })
+  }).then(function(res){
+   if(!res.ok || !res.body){
+    col.innerHTML = '<div class="bubble">⚠️ 流式请求失败（'+(res.status||'')+'）</div>';
+    window._chatBusy = false; return;
    }
-  }).finally(function(){ window._chatBusy = false; });
+   var reader = res.body.getReader();
+   var decoder = new TextDecoder();
+   var buffer = '';
+   function pump(){
+    return reader.read().then(function(r){
+     if(r.done){ finish(); return; }
+     buffer += decoder.decode(r.value, { stream: true });
+     var parts = buffer.split('\n\n');
+     buffer = parts.pop();
+     parts.forEach(function(p){
+      var line = p.trim();
+      if(!line.startsWith('data:')) return;
+      var data = line.slice(5).trim();
+      if(data === '[DONE]'){ finish(); return; }
+      try{
+       var obj = JSON.parse(data);
+       var delta = (obj.choices && obj.choices[0] && obj.choices[0].delta) || {};
+       var c = delta.content || '';
+       var rsn = delta.reasoning_content || delta.reasoning || '';
+       if(rsn) reasoningText += rsn;
+       if(c){ fullText += c; scheduleRender(); }
+      }catch(e){}
+     });
+     return pump();
+    });
+   }
+   function finish(){
+    if(fullText){
+     col.innerHTML = window._renderMsgContent({ content: fullText, content_blocks: null }) + '<div class="msg-time">'+fmtTime2(Date.now())+'</div>';
+     msgs.scrollTop = msgs.scrollHeight;
+    }
+    window._chatBusy = false;
+    if(convId === 0){
+     api('/api/chat', { method:'POST', body: { conversationId: 0, content: sendText, model: model, thinking: window._thinkOn() } }).then(function(r){
+      if(r.code === 0 && r.data && r.data.conversationId){ state.currentChatConv = r.data.conversationId; loaders.chat(); }
+     });
+    }
+   }
+   return pump();
+  }).catch(function(err){
+   col.innerHTML = '<div class="bubble">⚠️ 流式请求异常：'+esc(err.message)+'</div>';
+   window._chatBusy = false;
+  });
 };
 window.newChat = function(){
  state.currentChatConv = 0;
