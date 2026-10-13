@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v1.127"
+    private const val VER = "v1.128"
 
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -248,7 +248,7 @@ html,body{height:100%}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);overflow-x:hidden;-webkit-font-smoothing:antialiased}
 #app{min-height:100vh;display:flex;flex-direction:column}
 /* ===== 顶栏 ===== */
-.topbar{position:fixed;top:0;left:0;right:0;height:52px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 14px;z-index:1000;max-width:100vw;overflow:hidden}
+.topbar{position:fixed;top:10px;left:16px;right:16px;height:52px;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.18),0 1px 3px rgba(0,0,0,.12);display:flex;align-items:center;padding:0 14px;z-index:1000;max-width:calc(100vw - 32px);overflow:hidden;transition:box-shadow .2s ease}
 .burger{background:none;border:0;color:var(--muted);cursor:pointer;padding:6px 8px;margin-right:4px}
 .burger svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
 .topbar-title{font-size:14px;font-weight:600;color:var(--text)}
@@ -268,7 +268,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .mask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:950}
 .mask.show{display:block}
 /* ===== 侧边栏（默认收起，三道杠展开悬浮最前） ===== */
-.sidebar{position:fixed;top:52px;left:0;bottom:0;width:212px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;z-index:951;transform:translateX(-100%);transition:transform .24s ease;box-shadow:6px 0 28px rgba(0,0,0,.22);display:flex;flex-direction:column;-webkit-overflow-scrolling:touch}
+.sidebar{position:fixed;top:72px;left:0;bottom:0;width:212px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;z-index:951;transform:translateX(-100%);transition:transform .24s ease;box-shadow:6px 0 28px rgba(0,0,0,.22);display:flex;flex-direction:column;-webkit-overflow-scrolling:touch}
 .sidebar nav{flex:1;overflow-y:auto;padding-bottom:24px;-webkit-overflow-scrolling:touch}
 .sidebar.open{transform:translateX(0)}
 .side-brand{padding:16px 18px 14px;font-size:14px;font-weight:700;color:var(--text);border-bottom:1px solid var(--border)}
@@ -279,14 +279,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .sidebar nav a:hover{background:var(--surface2);color:var(--text)}
 .sidebar nav a.active{background:var(--surface2);color:var(--primary);border-left-color:var(--primary);font-weight:600}
 /* ===== 内容区（全宽，侧边栏悬浮） ===== */
-.content{margin-left:0;padding:68px 24px 24px;flex:1;min-height:100vh;max-width:100vw;transition:padding .22s ease}
+.content{margin-left:0;padding:78px 24px 24px;flex:1;min-height:100vh;max-width:100vw;transition:padding .22s ease}
 .view{display:none}
 .view.active{display:block}
-/* ★ v1.120b DeepSeek式聊天：顶部留出 topbar(52px) 不被遮挡，聊天占满下方可视区 */
-.content:has(#chatLayout){padding:52px 0 0!important}
+/* ★ v1.120b DeepSeek式聊天：顶部留出 topbar(62px 含悬浮边距) 不被遮挡，聊天占满下方可视区 */
+.content:has(#chatLayout){padding:62px 0 0!important}
 #view-chat{height:100%}
-#view-chat .chat-layout{height:calc(100dvh - 52px);min-height:0;border-radius:0}
-[data-nav="side"] #view-chat .chat-layout{height:calc(100dvh - 52px)}
+#view-chat .chat-layout{height:calc(100dvh - 62px);min-height:0;border-radius:0}
+[data-nav="side"] #view-chat .chat-layout{height:calc(100dvh - 62px)}
 /* ===== 卡片 ===== */
 .card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:14px;max-width:100%;box-sizing:border-box;overflow:hidden}
 .card h3{font-size:13px;margin-bottom:12px;color:var(--text);font-weight:600}
@@ -483,7 +483,7 @@ h1.md-h{font-size:17px}h2.md-h{font-size:16px}h3.md-h{font-size:15px}h4.md-h,h5.
 .cmdk-item .cmdk-hint{font-size:11px;color:var(--muted)}
 .cmdk-foot{padding:8px 16px;font-size:11px;color:var(--muted);border-top:1px solid var(--border)}
 /* ===== Toast ===== */
-.toast{position:fixed;top:62px;right:14px;padding:10px 16px;border-radius:7px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:13px;z-index:1500;opacity:0;transition:.25s;pointer-events:none;max-width:80vw;box-shadow:var(--shadow)}
+.toast{position:fixed;top:74px;right:14px;padding:10px 16px;border-radius:7px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:13px;z-index:1500;opacity:0;transition:.25s;pointer-events:none;max-width:80vw;box-shadow:var(--shadow)}
 .toast.show{opacity:1}
 .toast.ok{border-left:3px solid var(--green)}
 .toast.err{border-left:3px solid var(--red)}
@@ -493,12 +493,12 @@ h1.md-h{font-size:17px}h2.md-h{font-size:16px}h3.md-h{font-size:15px}h4.md-h,h5.
 @media(max-width:1200px){.grid-3{grid-template-columns:repeat(2,1fr)}.grid-4{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:768px){
   .burger{display:block}
-  .sidebar{transform:translateX(-100%)}
+  .sidebar{transform:translateX(-100%);top:72px}
   .sidebar.open{transform:translateX(0)}
   /* ★ v1.104 修复：底部导航(约52px)遮挡侧边栏最后一项「关于我们」——底部留出空间 */
   .sidebar{padding-bottom:58px}
   .sidebar nav{padding-bottom:80px}
-  .content{margin-left:0;padding:64px 14px 76px;max-width:100%}
+  .content{margin-left:0;padding:74px 14px 76px;max-width:100%}
   .grid-3,.grid-2,.grid-4{grid-template-columns:1fr}
   .bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:1000}
   .bottom-nav a{flex:1;display:flex;flex-direction:column;align-items:center;padding:7px 2px;color:var(--muted);text-decoration:none;font-size:10px;gap:2px}
@@ -508,9 +508,9 @@ h1.md-h{font-size:17px}h2.md-h{font-size:16px}h3.md-h{font-size:15px}h4.md-h,h5.
   .topbar-right{flex-shrink:0}
   .topbar-title .ver{display:none}
   .user-name{display:none}
-  /* 移动端聊天：顶部留 topbar(52px) + 底部贴 bottom-nav(52px)，抽屉会话列表 */
-  .content:has(#chatLayout){padding:52px 0 52px!important}
-  #view-chat .chat-layout{height:calc(100dvh - 104px);min-height:0;border-radius:0}
+  /* 移动端聊天：顶部留悬浮 topbar(62px) + 底部贴 bottom-nav(52px)，抽屉会话列表 */
+  .content:has(#chatLayout){padding:62px 0 52px!important}
+  #view-chat .chat-layout{height:calc(100dvh - 114px);min-height:0;border-radius:0}
   .chat-layout{height:100%;min-height:0}
   .chat-side{width:84vw;max-width:300px}
   .chat-main .chat-toolbar select{width:130px!important;font-size:11px!important}

@@ -230,7 +230,7 @@ git push origin master
 | 28 | **聊天页 CSS 全屏贴合** | 只改 .chat-layout 高度不够，父容器 .content 有 padding/卡片留白 | `.content:has(#chatLayout){padding:0!important}` + `#view-chat .chat-layout{height:calc(100dvh-52px)}`；移动端减底部导航 116px |
 | 29 | **前端序列化 data class 输出 toString** | content_blocks 返回 `ContentBlock(...)` 而非 JSON，前端拿不到结构 | encodeElement 不认识自定义 data class；必须提供 toMap() 递归转换后再塞进 Map/List |
 | 30 | **注释残留外部项目名** | 从别处借鉴/迁移代码后注释留着来源名，被用户抓到骂 | 借鉴代码落地后全局 grep 来源名（Operit/AAswordman 等）清零，统一改自研描述 |
-| 31 | **内网 git push 要密码** | gitdev 仓库用 GIT_SSH_COMMAND 不带密码会卡在 password 提示 | `SSHPASS='Git@2026qitong' GIT_SSH_COMMAND='sshpass -e ssh -o StrictHostKeyChecking=no' git push ...` |
+| 31 | **内网 git push 要密码** | gitdev 仓库用 GIT_SSH_COMMAND 不带密码会卡在 password 提示 | `SSHPASS=<内网git密码> GIT_SSH_COMMAND='sshpass -e ssh -o StrictHostKeyChecking=no' git push ...` |
 | 32 | **onclick 多层引号嵌套炸 SyntaxError** | 复制按钮 onclick 里 JSON.stringify+unescapeHtml 引号地狱，node --check 直接报错 | 全局存储 `_msgCopyStore.push(content)` + onclick 只传索引 `copyChatMsg(i)` |
 | 33 | **Markdown 任务清单被无序列表吞** | `- [x]` 被 md-ul 正则先匹配吃掉，任务清单渲染为 0 | 任务清单正则在无序/有序列表**之前**处理 |
 | 34 | **失败补丁脚本被 git add 误提交** | 补丁脚本 assert 失败但文件还在工作区，git add -A 全带上 | 每次 git add 前 rm -f qt_*.py 临时脚本；误提交用 git rm --cached + commit --amend 修正 |
@@ -241,6 +241,8 @@ git push origin master
 | 39 | **流式 readTimeout(0)=无限等待卡死** | 上游挂起不吐数据客户端无限等，故障转移也救不回→用户卡顿/卡断 | 流式客户端 readTimeout 300s 兜底 + 每次上游尝试 withTimeoutOrNull 320s 判失败切下一模型 |
 | 40 | **微信长轮询首轮成功不置 ONLINE** | `if (backoffMs > 2000L)` 才置 ONLINE，首次启动永远"启动中" | 长轮询无异常返回即置 ONLINE（去掉 backoffMs 条件） |
 | 41 | **sanitizeRequestBody 拼接坏 JSON** | 想加 safety 剥离时 bodyStr2+sb 两个 JSON 拼接→坏 JSON | 直接对同一 sb 变量做所有替换，返回单个完整 JSON |
+| 42 | **内网 git 仓库路径是 /home/gitdev/** | 误以为 gitdev 仓库在 /home/git/，ls-remote 报 not a repository（gitdev 是纯 git 账号不能执行 shell） | 正确路径 `ssh://gitdev@qitong.pve.jili5.cn:6062/home/gitdev/docker-qitong-111.git`；探测用 for 循环 ls-remote 对比 HEAD |
+| 43 | **DEV_GUIDE 存真实密码被开源包带出** | 踩坑 31 样例写了内网 git 密码明文，git archive 打开源包把密码带出去，红线违规 | DEV_GUIDE 任何样例只写 `<内网git密码>` 占位不写真值；发版前 grep 全包敏感词（内网git密码 / 服务器密码 / 证书口令 / github令牌 模式）清零 |
 
 ---
 
