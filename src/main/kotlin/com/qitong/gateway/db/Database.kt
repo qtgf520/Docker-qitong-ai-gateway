@@ -1500,6 +1500,7 @@ class Database(private val dbPath: String) {
     }
     fun seedUpdateLogsIfEmpty() {
         val logs = listOf(
+            Triple("v1.129", "玻璃拟态 UI 细节升级 + 导航滑动指示器", "开发者更新的玻璃拟态 UI 细节安全移植：侧栏/底栏新增 pill 滑动指示器（navInd/bnavInd，弹性跟随当前页）；玻璃圆角升级（卡片18px/modal22px/按钮输入框全999px胶囊）；细胶囊滚动条美化；不动布局结构，保留全屏贴合与聊天401修复"),
             Triple("v1.128b", "修复内置聊天 401 流式失败", "内置聊天发消息报「流式请求失败（401）」：v1.127 前端直调网关 /v1/chat/completions 用了后台登录 token，而网关只认 sk- API Key。新增 /api/chat/stream 后端 SSE 流式代理（后台登录鉴权→回环转发网关→SSE 字节透传），前端改走新接口，保留打字机流式+思考实时展示"),
             Triple("v1.128", "悬浮胶囊玻璃顶栏", "顶栏悬浮胶囊化（顶部10px留白+左右16px边距+圆角+阴影）；侧边栏/内容区/聊天/toast 全端联动适配；保留聊天顶部不被遮挡、底部输入框贴导航"),
             Triple("v1.127", "内置聊天 SSE 流式流水", "内置聊天改为流式输出（fetch ReadableStream 逐字渲染，打字机效果）；流式中实时展示思考过程折叠（reasoning_content分块累积）；流式完成后自动落库（新会话自动生成ID），历史消息仍走结构化渲染；60ms防抖渲染长回复不卡顿"),
