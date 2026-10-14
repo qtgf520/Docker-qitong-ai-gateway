@@ -1582,8 +1582,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
                     val cleanText = cleanFunctionTags(content)
-                    // ★ v1.130 结果已实时推送 → 要求模型基于结果继续决策/收尾（不重复已展示）
-                    val newPrompt = cleanText + "\n\n【沙盒执行结果（内部参考，已实时推送给用户）】\n" + results + "\n\n请基于以上真实执行结果继续工作：\n- 如果任务已完成 → 直接输出给用户的最终答复（包含关键结果/数据/结论，不要用『已完成请查看』这种空话）\n- 如果需要更多操作 → 继续调用函数\n- 不要输出任何函数调用语法，只输出对用户说的话"
+                    // ★ v1.131 结果已实时推送 → 模型只做决策不复述（龙虾式：过程已展示，最终别重复）
+                    val newPrompt = cleanText + "\n\n【工具执行结果（内部参考，已实时推送给用户，用户已经看到了）】\n" + results + "\n\n请基于以上真实执行结果**继续决策**，不要复述任何已展示的结果/数据：\n- 如果任务已完成且无需再调用工具 → 直接回复一句**简短、自然、像真人**的收尾（如「✅ 搞定，结果都在上面了～」或「搞定！数据已发你，还要我继续查别的吗？」），**严禁重复粘贴结果内容**\n- 如果需要更多操作 → 继续调用函数（输出 [[沙盒:函数名(参数=值)]]）\n- 不要输出任何函数调用语法（除继续调用外），只输出对用户说的话"
                     hist.add("assistant" to cleanText)
                     // ★ v60 收敛不重复：结果已实时推送→不再把 results 拼回最终回复！
                     //   继续让模型基于结果生成简短收尾/AI意见（不重复已展示的结果/数字）
@@ -1629,7 +1629,46 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 if (loopGuard > 0 && content.isNotBlank()) {
                     // ★ v55 返回前必清洗 XML 标签（防畸形格式泄漏给用户）
                     val cleaned = cleanFunctionTags(content)
+                    // ★ v1.131 龙虾式收敛：执行过工具（loopGuard>0）→ 最终强制模型生成简短收尾，绝不复述已推送的结果
+                    try {
+                        val closeBody = JSONObject()
+                            .put("model", bot.aiModel)
+                            .put("messages", JSONArray()
+                                .put(JSONObject().put("role", "system").put("content", sysFull))
+                                .put(JSONObject().put("role", "user").put("content", userText))
+                                .put(JSONObject().put("role", "assistant").put("content", cleaned))
+                                .put(JSONObject().put("role", "user").put("content",
+                                    "工具结果已经实时推送给用户了。现在请只回复一句**简短、自然、像真人**的收尾或你的看法（一句话即可，不要复述刚才的结果/数字/数据，不要用『已完成请查看』这类空话）。")))
+                            .toString()
+                        val closeReq = Request.Builder()
+                            .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
+                            .addHeader("Content-Type", "application/json")
+                            .post(closeBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                            .build()
+                        val closeCall = http.newCall(closeReq)
+                        activeCalls[userOpenid] = closeCall
+                        val closeContent = try {
+                            closeCall.execute().use { respC ->
+                                if (!respC.isSuccessful) null
+                                else JSONObject(respC.body?.string().orEmpty())
+                                    .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                    ?.optString("content")?.trim().orEmpty()
+                            }
+                        } finally {
+                            if (activeCalls[userOpenid] === closeCall) activeCalls.remove(userOpenid)
+                        }
+                        if (!closeContent.isNullOrBlank() && closeContent.length > 2) {
+                            val closeCleaned = cleanFunctionTags(closeContent)
+                            hist.add("assistant" to cleaned)
+                            hist.add("assistant" to closeCleaned)
+                            while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                            return closeCleaned
+                        }
+                    } catch (_: Exception) {
+                        // 收敛失败降级：返回清洗后的原始内容（不再追加 results）
+                    }
                     hist.add("assistant" to cleaned)
+                    while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                     return cleaned
                 }
                 // ★ v55 非沙盒循环路径也清洗（如解析不到调用时的直接返回）

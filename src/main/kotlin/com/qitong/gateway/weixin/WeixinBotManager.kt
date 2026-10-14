@@ -636,7 +636,7 @@ object WeixinBotManager {
                             .put(JSONObject().put("role", "user").put("content", userText))
                             .put(JSONObject().put("role", "assistant").put("content", cleanText))
                             .put(JSONObject().put("role", "user").put("content",
-                                "【工具执行结果（内部参考，已实时推送给用户）】\n$results\n\n请基于以上真实执行结果继续工作：\n- 任务完成→直接输出给用户的最终答复（包含关键结果/数据/结论，不要用空话）\n- 还需更多操作→继续调用工具\n- 不要输出函数调用语法，只输出对用户说的话"))) .toString()
+                                "【工具执行结果（内部参考，已实时推送给用户，用户已经看到了）】\n$results\n\n请基于以上真实执行结果**继续决策**，不要复述任何已展示的结果/数据：\n- 任务已完成且无需再调用工具 → 直接回复一句**简短、自然、像真人**的收尾（如「✅ 搞定，结果都在上面了～」「搞定！数据已发你，还要我继续查别的吗？」），**严禁重复粘贴结果内容**\n- 还需更多操作 → 继续调用工具（输出 [[沙盒:函数名(参数=值)]]）\n- 不要输出函数调用语法（除继续调用外），只输出对用户说的话"))) .toString()
                     val nextReq = Request.Builder()
                         .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
                         .addHeader("Content-Type", "application/json")
@@ -695,7 +695,7 @@ object WeixinBotManager {
                             .put(JSONObject().put("role", "user").put("content", userText))
                             .put(JSONObject().put("role", "assistant").put("content", cleanFunctionTags(content)))
                             .put(JSONObject().put("role", "user").put("content",
-                                "工具结果已经实时推送给用户了。现在请只回复一句简短的收尾或你的看法（不要复述刚才的结果/数字/数据，一句话即可）。"))) .toString()
+                                "工具结果已经实时推送给用户了。现在请只回复一句**简短、自然、像真人**的收尾或你的看法（一句话即可，不要复述刚才的结果/数字/数据，不要用『已完成请查看』这类空话）。"))) .toString()
                     val closeReq = Request.Builder()
                         .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
                         .addHeader("Content-Type", "application/json")
