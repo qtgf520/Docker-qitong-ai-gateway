@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v1.129"
+    private const val VER = "v1.128b"
 
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -135,7 +135,6 @@ ${adminCss()}
   <aside class="sidebar" id="sidebar">
     <div class="side-brand">綦桐AI网关<div class="side-brand-sub">AI API Gateway Console</div></div>
     <nav>
-      <i class="nav-ind" id="navInd" aria-hidden="true"></i>
       <div class="nav-group">概览</div>
       <a data-page="dashboard" class="active"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><b>首页</b></a>
       <a data-page="usage"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><b>用量统计</b></a>
@@ -198,7 +197,6 @@ ${adminCss()}
   </main>
   <!-- 底部导航（移动端）· 精简为4个核心 -->
   <nav class="bottom-nav" id="bottomNav">
-    <i class="bnav-ind" id="bnavInd" aria-hidden="true"></i>
     <a data-page="dashboard" class="active"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><b>首页</b></a>
     <a data-page="providers"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/></svg><b>服务商</b></a>
     <a data-page="models"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg><b>模型</b></a>
@@ -271,18 +269,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .mask.show{display:block}
 /* ===== 侧边栏（默认收起，三道杠展开悬浮最前） ===== */
 .sidebar{position:fixed;top:72px;left:0;bottom:0;width:212px;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;z-index:951;transform:translateX(-100%);transition:transform .24s ease;box-shadow:6px 0 28px rgba(0,0,0,.22);display:flex;flex-direction:column;-webkit-overflow-scrolling:touch}
-.sidebar nav{flex:1;overflow-y:auto;padding-bottom:24px;-webkit-overflow-scrolling:touch;position:relative}
+.sidebar nav{flex:1;overflow-y:auto;padding-bottom:24px;-webkit-overflow-scrolling:touch}
 .sidebar.open{transform:translateX(0)}
 .side-brand{padding:16px 18px 14px;font-size:14px;font-weight:700;color:var(--text);border-bottom:1px solid var(--border)}
 .side-brand-sub{font-size:10px;color:var(--muted);font-weight:400;margin-top:2px;letter-spacing:.3px}
-/* ★ v1.129 导航滑动指示器（pill 滑块跟随当前页） */
-.nav-ind{position:absolute;left:10px;right:10px;height:36px;border-radius:999px;background:rgba(var(--primary-rgb),.14);box-shadow:inset 0 0 0 1px rgba(var(--primary-rgb),.28);top:46px;opacity:0;transition:top .38s cubic-bezier(.34,1.35,.4,1),height .28s cubic-bezier(.34,1.35,.4,1),opacity .2s;pointer-events:none;z-index:0}
-.sidebar nav a,.sidebar nav .nav-group{position:relative;z-index:1}
 .nav-group{padding:14px 18px 5px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
-.sidebar nav a{display:flex;align-items:center;gap:10px;padding:8px 18px;color:var(--muted);text-decoration:none;font-size:13px;cursor:pointer;transition:.12s;border-left:2px solid transparent;border-radius:0}
+.sidebar nav a{display:flex;align-items:center;gap:10px;padding:8px 18px;color:var(--muted);text-decoration:none;font-size:13px;cursor:pointer;transition:.12s;border-left:2px solid transparent}
 .sidebar nav a svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .sidebar nav a:hover{background:var(--surface2);color:var(--text)}
-.sidebar nav a.active{background:transparent;color:var(--primary);border-left-color:var(--primary);font-weight:600}
+.sidebar nav a.active{background:var(--surface2);color:var(--primary);border-left-color:var(--primary);font-weight:600}
 /* ===== 内容区（全宽，侧边栏悬浮） ===== */
 .content{margin-left:0;padding:78px 24px 24px;flex:1;min-height:100vh;max-width:100vw;transition:padding .22s ease}
 .view{display:none}
@@ -492,20 +487,8 @@ h1.md-h{font-size:17px}h2.md-h{font-size:16px}h3.md-h{font-size:15px}h4.md-h,h5.
 .toast.show{opacity:1}
 .toast.ok{border-left:3px solid var(--green)}
 .toast.err{border-left:3px solid var(--red)}
-/* ★ v1.129 细胶囊滚动条（贴合玻璃质感） */
-*{scrollbar-width:thin;scrollbar-color:rgba(128,134,150,.38) transparent}
-::-webkit-scrollbar{width:9px;height:9px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:rgba(128,134,150,.35);border-radius:999px;border:2px solid transparent;background-clip:padding-box}
-::-webkit-scrollbar-thumb:hover{background:rgba(128,134,150,.6);background-clip:padding-box;border:2px solid transparent}
-.sidebar::-webkit-scrollbar{width:6px}
-.modal-box::-webkit-scrollbar,.chat-msgs::-webkit-scrollbar{width:7px}
 /* ===== 底部导航（移动端） ===== */
 .bottom-nav{display:none}
-/* ★ v1.129 底栏滑动指示器（仅移动端可见） */
-.bnav-ind{position:absolute;bottom:4px;height:28px;border-radius:999px;background:rgba(var(--primary-rgb),.14);box-shadow:inset 0 0 0 1px rgba(var(--primary-rgb),.28);opacity:0;transition:left .3s cubic-bezier(.34,1.35,.4,1),width .3s cubic-bezier(.34,1.35,.4,1),opacity .2s;pointer-events:none;z-index:0}
-.bottom-nav a,.bottom-nav .bnav-ind{position:relative}
-.bottom-nav a{z-index:1}
 /* ===== 响应式 ===== */
 @media(max-width:1200px){.grid-3{grid-template-columns:repeat(2,1fr)}.grid-4{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:768px){
@@ -518,7 +501,6 @@ h1.md-h{font-size:17px}h2.md-h{font-size:16px}h3.md-h{font-size:15px}h4.md-h,h5.
   .content{margin-left:0;padding:74px 14px 76px;max-width:100%}
   .grid-3,.grid-2,.grid-4{grid-template-columns:1fr}
   .bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:1000}
-  .bottom-nav .bnav-ind{display:block}
   .bottom-nav a{flex:1;display:flex;flex-direction:column;align-items:center;padding:7px 2px;color:var(--muted);text-decoration:none;font-size:10px;gap:2px}
   .bottom-nav a svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
   .bottom-nav a.active{color:var(--primary)}

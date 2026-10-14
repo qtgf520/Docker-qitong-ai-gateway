@@ -75,38 +75,8 @@ function switchView(pg){
   a.classList.toggle('active', a.getAttribute('data-page') === pg);
  });
  closeSidebar();
- moveNavInd(pg);
  var fn = loaders[pg]; if(fn) fn();
 }
-// ★ v1.129 导航滑动指示器：pill 滑块弹性滑到当前项（侧栏纵向 / 底栏横向）
-function moveNavInd(pg){
- var ind = $('navInd');
- if(ind){
-  var act = document.querySelector('.sidebar nav a[data-page="' + pg + '"]');
-  if(act && act.offsetTop > 0){
-   ind.style.top = act.offsetTop + 'px';
-   ind.style.height = act.offsetHeight + 'px';
-   ind.style.opacity = '1';
-  }
- }
- var bind = $('bnavInd');
- if(bind){
-  var bact = document.querySelector('.bottom-nav a[data-page="' + pg + '"]');
-  if(bact && bact.offsetWidth > 0){
-   bind.style.left = bact.offsetLeft + 'px';
-   bind.style.width = bact.offsetWidth + 'px';
-   bind.style.opacity = '1';
-  }
- }
-}
-window.addEventListener('resize', function(){
- var cur = document.querySelector('.view.active');
- moveNavInd(cur ? cur.id.replace('view-', '') : 'dashboard');
-});
-window.addEventListener('load', function(){ setTimeout(function(){
- var cur = document.querySelector('.view.active');
- moveNavInd(cur ? cur.id.replace('view-', '') : 'dashboard');
-}, 120); });
 function toggleSidebar(){
  var s=$('sidebar'), m=$('mask');
  if(s.classList.contains('open')){ s.classList.remove('open'); m.classList.remove('show'); }
