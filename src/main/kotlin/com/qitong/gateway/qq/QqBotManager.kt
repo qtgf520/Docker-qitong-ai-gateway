@@ -1097,8 +1097,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (cfg != null && !(cfg["aiEnabled"] as Boolean)) return
         if (onCooldown(userOpenid, 3)) return
 
-        // ★ v57 大模型对话前先推「正在思考」过程提示（不静默）
-        smartSend("🤔 正在思考…", false)
+        // ★ v1.130 真思考模式：不再预先推假的「思考中」，改为真实进展推送（askModel 内有调用才推💭/🔧/✅）
         // ★ v62 模型失败重试2次（避免「处理失败」——askModel 返回 null 时重试）
         var reply: String? = null
         for (attempt in 1..3) {
@@ -1528,24 +1527,34 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
                     if (calls.isEmpty()) break
+                    // ★ v1.130 龙虾式实时进展：每轮思考→调用→结果→下一步全程推送，不静默
                     if (!stepHintSent) { smartSend("🎯 正在处理您的请求，请稍候…", false); stepHintSent = true }
-                    // ★ v1.116 长时间任务进度提示：每 30s 推一次「还在处理」，不刷屏但让用户知道没卡死
-                    if (System.currentTimeMillis() - lastProgressAt > 30_000) {
-                        smartSend("⏳ 任务还在处理中（第 ${loopGuard} 轮），请稍候…", false)
+                    // ★ v1.130 实时推送本轮要调用的工具（龙虾式：先讲要干嘛）
+                    val fnNames = calls.map { it.first }.distinct()
+                    smartSend("💭 我正在进行第 ${loopGuard} 步：调用「${fnNames.joinToString("、")}」…", false)
+                    // ★ v1.130 长任务进度：每 10s 推一次「还在处理」，比原来 30s 更密，用户不再觉得卡死
+                    if (System.currentTimeMillis() - lastProgressAt > 10_000) {
+                        smartSend("⏳ 任务还在处理中（第 ${loopGuard} 轮），我继续干着，请稍候…", false)
                         lastProgressAt = System.currentTimeMillis()
                     }
                     val results = StringBuilder()
-                    // ★ v82 并行工具执行（Hermes 理念落地）：独立调用并发跑，结果按序汇总
-                    // ★ v1.110 静默：不再逐条推送「第N步/共M步」与「✅ fn结果」，全部折叠到最终答案
+                    // ★ v82 并行工具执行：独立调用并发跑，结果按序汇总
                     val totalSteps = calls.size
                     if (calls.size <= 1) {
                         val (fn, args) = calls[0]
                         val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
+                        // ★ v1.130 工具执行前推送细节（参数太长截断防刷屏）
+                        val argShow = if (argTxt.length > 80) argTxt.take(80) + "…" else argTxt
+                        if (argShow.isNotBlank()) smartSend("🔧 正在执行：$fn($argShow)", false)
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
                         results.append("【$fn 执行结果】\n$r")
+                        // ★ v1.130 结果实时推送（龙虾式：✅ 讲结果）
+                        val rShow = r.trim().replace('\n', ' ').take(120)
+                        smartSend("✅ $fn 完成：$rShow", false)
                         db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args", 0)
                     } else {
-                        // 多调用并行（一批内多个独立调用并发跑）
+                        // 多调用并行（★ v1.130 实时推送：先讲要并行做哪几步）
+                        smartSend("⚡ 我同时处理 ${calls.size} 件事：「${fnNames.joinToString("、")}」", false)
                         val executor = java.util.concurrent.Executors.newFixedThreadPool(calls.size.coerceAtMost(5))
                         try {
                             val futures = calls.map { (fn, args) ->
@@ -1558,9 +1567,13 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append(if (results.isEmpty()) "" else "\n").append("【$fn 执行结果】\n$r")
+                                    // ★ v1.130 每个结果实时推送
+                                    val rShow = r.trim().replace('\n', ' ').take(120)
+                                    smartSend("✅ $fn 完成：$rShow", false)
                                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] 并行执行", 0)
                                 } catch (e: Exception) {
                                     results.append(if (results.isEmpty()) "" else "\n").append("【工具执行异常】\n${e.message}")
+                                    smartSend("⚠️ 并行工具执行异常：${e.message}", false)
                                 }
                             }
                         } finally {
@@ -1569,8 +1582,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
                     val cleanText = cleanFunctionTags(content)
-                    // ★ v1.110 静默模式：结果未推送给用户 → 要求模型最终输出完整答案（不再"结果已展示，不要复述"）
-                    val newPrompt = cleanText + "\n\n【沙盒执行结果（内部参考，尚未向用户展示）】\n" + results + "\n\n请基于以上真实执行结果，给用户输出一份**完整、自然、像真人**的最终答复：\n- 如果任务已完成 → 直接输出最终答案（包含关键结果/数据/结论，不要用『已完成请查看』这种空话）\n- 如果需要更多操作 → 继续调用函数\n- 不要输出任何函数调用语法，只输出对用户说的话"
+                    // ★ v1.130 结果已实时推送 → 要求模型基于结果继续决策/收尾（不重复已展示）
+                    val newPrompt = cleanText + "\n\n【沙盒执行结果（内部参考，已实时推送给用户）】\n" + results + "\n\n请基于以上真实执行结果继续工作：\n- 如果任务已完成 → 直接输出给用户的最终答复（包含关键结果/数据/结论，不要用『已完成请查看』这种空话）\n- 如果需要更多操作 → 继续调用函数\n- 不要输出任何函数调用语法，只输出对用户说的话"
                     hist.add("assistant" to cleanText)
                     // ★ v60 收敛不重复：结果已实时推送→不再把 results 拼回最终回复！
                     //   继续让模型基于结果生成简短收尾/AI意见（不重复已展示的结果/数字）

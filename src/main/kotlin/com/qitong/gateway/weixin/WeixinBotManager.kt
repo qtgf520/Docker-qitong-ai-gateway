@@ -458,8 +458,7 @@ object WeixinBotManager {
         val last = lastReplyTs[msg.from] ?: 0L
         if (System.currentTimeMillis() - last < 3000) return
         lastReplyTs[msg.from] = System.currentTimeMillis()
-        // ★ v74 思考过程也推送（AI 自己讲在干嘛）——发送回调传给 askModel
-        send("🤔 收到，让我想想怎么帮你…")
+        // ★ v1.130 真思考模式：不再预先推假的「思考中」，改为真实进展推送（有工具调用才推💭/🔧/✅，无调用直接出答案）
         val reply = askModel(bot, msg, t, bound?.id ?: 0L) { thinkMsg -> d.addWeixinLog(bot.id, msg.from, "think", thinkMsg, 0); send(thinkMsg) }
         if (!reply.isNullOrBlank()) send(reply) else send("⚠️ 抱歉，我这边处理失败了，请再试一次")
         d.addWeixinLog(bot.id, msg.from, "ai", t, System.currentTimeMillis() - t0)
@@ -543,9 +542,9 @@ object WeixinBotManager {
                         break
                     }
                     loop++
-                    // ★ v1.116 长时间任务进度提示：每 30s 推一次「还在处理」，不刷屏但让用户知道没卡死
-                    if (System.currentTimeMillis() - lastProgressAt > 30_000) {
-                        send("⏳ 任务还在处理中（第 $loop 轮），请稍候…")
+                    // ★ v1.130 长任务进度：每 10s 推一次「还在处理」，比原来 30s 更密，用户不再觉得卡死
+                    if (System.currentTimeMillis() - lastProgressAt > 10_000) {
+                        send("⏳ 任务还在处理中（第 $loop 轮），我继续干着，请稍候…")
                         lastProgressAt = System.currentTimeMillis()
                     }
                     loop++
@@ -555,6 +554,8 @@ object WeixinBotManager {
                         if (noCallGuide < 2 && (content.contains("正在调用") || content.contains("调用沙盒") ||
                                 content.contains("准备调用") || content.contains("我需要调用") || content.contains("我来调用"))) {
                             noCallGuide++
+                            // ★ v1.130 引导前推送：让用户知道「模型假思考了，正在纠正」
+                            send("💭 我确认一下要调用哪个工具…")
                             val guideBody = JSONObject()
                                 .put("model", bot.aiModel)
                                 .put("messages", JSONArray()
@@ -580,18 +581,27 @@ object WeixinBotManager {
                         }
                         break
                     }
+                    // ★ v1.130 龙虾式实时进展：先讲要调用什么工具
+                    val fnNames = calls.map { it.first }.distinct()
+                    send("💭 我正在进行第 $loop 步：调用「${fnNames.joinToString("、")}」…")
                     val results = StringBuilder()
-                    // ★ v82 并行工具执行（Hermes PARALLEL 理念落地）：独立调用并发跑，结果按序汇总
-                    // ★ v1.104 进度增强：显示「第 N 步/共 M 步」让用户看到整体进度
+                    // ★ v82 并行工具执行（并行批处理）：独立调用并发跑，结果按序汇总
                     val totalSteps = calls.size
                     if (calls.size <= 1) {
-                        // 单调用直接执行（★v1.110 静默：不推过程，只回最终答案）
+                        // 单调用直接执行（★v1.130 实时推送细节）
                         val (fn, args) = calls[0]
+                        val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
+                        val argShow = if (argTxt.length > 80) argTxt.take(80) + "…" else argTxt
+                        if (argShow.isNotBlank()) send("🔧 正在执行：$fn($argShow)")
                         val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
                         results.append("【$fn 执行结果】\n$r\n")
+                        // ★ v1.130 结果实时推送
+                        val rShow = r.trim().replace('\n', ' ').take(120)
+                        send("✅ $fn 完成：$rShow")
                         executedCalls = true
                     } else {
-                        // 多调用并行（★v1.110 静默：不推「并行批处理」过程，只回最终答案）
+                        // 多调用并行（★v1.130 实时推送并行概况）
+                        send("⚡ 我同时处理 ${calls.size} 件事：「${fnNames.joinToString("、")}」")
                         val executor = java.util.concurrent.Executors.newFixedThreadPool(calls.size.coerceAtMost(5))
                         try {
                             val futures = calls.map { (fn, args) ->
@@ -604,9 +614,13 @@ object WeixinBotManager {
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append("【$fn 执行结果】\n$r\n")
+                                    // ★ v1.130 每个结果实时推送
+                                    val rShow = r.trim().replace('\n', ' ').take(120)
+                                    send("✅ $fn 完成：$rShow")
                                     executedCalls = true
                                 } catch (e: Exception) {
                                     results.append("【工具执行异常】\n${e.message}\n")
+                                    send("⚠️ 并行工具执行异常：${e.message}")
                                 }
                             }
                         } finally {
@@ -614,7 +628,7 @@ object WeixinBotManager {
                         }
                     }
                     val cleanText = cleanFunctionTags(content)
-                    // 结果回填给模型继续决策（★v1.110 静默：结果未展示给用户，要求模型输出完整最终答案）
+                    // ★ v1.130 结果已实时推送 → 要求模型基于结果继续决策/收尾（不重复已展示）
                     val nextBody = JSONObject()
                         .put("model", bot.aiModel)
                         .put("messages", JSONArray()
@@ -622,7 +636,7 @@ object WeixinBotManager {
                             .put(JSONObject().put("role", "user").put("content", userText))
                             .put(JSONObject().put("role", "assistant").put("content", cleanText))
                             .put(JSONObject().put("role", "user").put("content",
-                                "【工具执行结果（内部参考，尚未向用户展示）】\n$results\n\n请基于以上真实执行结果给用户输出**完整、自然、像真人**的最终答复：\n- 任务完成→直接输出最终答案（包含关键结果/数据/结论，不要用空话）\n- 还需更多操作→继续调用工具\n- 不要输出函数调用语法，只输出对用户说的话"))) .toString()
+                                "【工具执行结果（内部参考，已实时推送给用户）】\n$results\n\n请基于以上真实执行结果继续工作：\n- 任务完成→直接输出给用户的最终答复（包含关键结果/数据/结论，不要用空话）\n- 还需更多操作→继续调用工具\n- 不要输出函数调用语法，只输出对用户说的话"))) .toString()
                     val nextReq = Request.Builder()
                         .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
                         .addHeader("Content-Type", "application/json")

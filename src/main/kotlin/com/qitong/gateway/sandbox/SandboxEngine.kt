@@ -561,7 +561,7 @@ $KNOWLEDGE_JSON
                     } catch (e: Exception) { "❌ 搜索失败：${e.message}" }
                 }
                 "skill_learn" -> {
-                    // ★ v89 技能自动提炼（Hermes skill_manager 精髓：完成任务沉淀为可复用技能）
+                    // ★ v89 技能自动提炼（完成任务沉淀为可复用技能）
                     val name = args["name"] ?: ""
                     val trigger = args["trigger"] ?: ""
                     val content = args["content"] ?: ""
@@ -593,7 +593,7 @@ $KNOWLEDGE_JSON
                     }
                 }
                 "skill_auto_learn" -> {
-                    // ★ v92 自动提炼技能：模型完成任务后主动调用，把可复用步骤沉淀为技能（对齐 Hermes 自进化）
+                    // ★ v92 自动提炼技能：模型完成任务后主动调用，把可复用步骤沉淀为技能（自进化）
                     val name = args["name"]?.trim() ?: ""
                     val trigger = args["trigger"]?.trim() ?: ""
                     val content = args["content"]?.trim() ?: ""
