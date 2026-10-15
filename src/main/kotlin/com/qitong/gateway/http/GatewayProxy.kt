@@ -419,11 +419,15 @@ class GatewayProxy(private val database: Database) {
             val requestedModel = models.firstOrNull { it.modelId == modelId }
             val requestedPrice = requestedModel?.let { if (it.price > 0) it.price else PricingTable.priceOf(it.modelId).takeIf { p -> p > 0 } ?: PricingTable.DEFAULT_PRICE } ?: 0.0
             val requestedPaid = requestedPrice > 0
-            if (requestedPaid && ownerUser.quotaLimit <= 0) {
+            if (requestedPaid && (ownerUser.quotaLimit <= 0 || ownerUser.quotaUsed >= ownerUser.quotaLimit)) {
                 val bal = database.getUserBalance(ownerUser.id)
                 val estCost = 0.001 * requestedPrice * com.qitong.gateway.http.PricingTable.OUTPUT_MULTIPLIER
-                if (bal < estCost) {
-                    val hint = "您的余额不足（当前 ¥${"%.2f".format(bal)}），请先充值后再使用。模型 ${requestedModel!!.modelId} 为付费模型，需要余额才能调用。"
+                if (ownerUser.quotaLimit > 0 || bal < estCost) {
+                    val hint = if (ownerUser.quotaLimit > 0) {
+                        "您的套餐额度已用尽（已用 ${ownerUser.quotaUsed}/${ownerUser.quotaLimit} tokens），请升级套餐或充值后再使用。"
+                    } else {
+                        "您的余额不足（当前 ¥${"%.2f".format(bal)}），请先充值后再使用。模型 ${requestedModel!!.modelId} 为付费模型，需要余额才能调用。"
+                    }
                     if (stream) {
                         call.response.headers.append("Content-Type", "text/event-stream; charset=utf-8")
                         call.response.headers.append("Cache-Control", "no-cache")
