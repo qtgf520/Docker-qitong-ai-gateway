@@ -1134,8 +1134,14 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             }
             cur.append(line).append("\n")
             if (cur.length > maxLen) {
-                result.add(cur.toString().take(maxLen))
+                // 单行超长：硬切，保留剩余尾巴继续处理（v1.133 修复：原来 clear 丢尾巴导致长文截断）
+                var seg = cur.toString()
+                while (seg.length > maxLen) {
+                    result.add(seg.take(maxLen))
+                    seg = seg.substring(maxLen)
+                }
                 cur.clear()
+                cur.append(seg)
             }
         }
         if (cur.isNotEmpty()) result.add(cur.toString())
@@ -1518,7 +1524,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 // 只推一次「处理中」，中间步骤全部静默（最后结果由外层推）
                 var stepHintSent = false
                 var lastProgressAt = System.currentTimeMillis()
-                // ★ v1.132 假调用引导计数器（循环外，跨轮累积，最多引导 2 次）
+                // ★ v1.133 假调用引导计数器（循环外，跨轮累积，最多引导 2 次）
                 var noCallGuide = 0
                 while (sandboxOn && content.isNotBlank() && loopGuard < 20) {
                     loopGuard++
@@ -1528,7 +1534,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         break
                     }
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
-                    // ★ v1.132 修复假调用中断：模型只输出「正在调用xxx」描述但没输出严格标签 → 引导它输出真标签再执行（对齐微信 v77 noCallGuide）
+                    // ★ v1.133 修复假调用中断：模型只输出「正在调用xxx」描述但没输出严格标签 → 引导它输出真标签再执行（对齐微信 v77 noCallGuide）
                     if (calls.isEmpty()) {
                         if (noCallGuide < 2 && (content.contains("正在调用") || content.contains("调用沙盒") ||
                                 content.contains("准备调用") || content.contains("我需要调用") || content.contains("我来调用"))) {
@@ -1569,7 +1575,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         break
                     }
                     // ★ v1.130 龙虾式实时进展：每轮思考→调用→结果→下一步全程推送，不静默
-                    // ★ v1.132 真思考模式：不再预推假的「🎯 正在处理」——有真调用才推进展，无调用直接出答案
+                    // ★ v1.133 真思考模式：不再预推假的「🎯 正在处理」——有真调用才推进展，无调用直接出答案
                     // ★ v1.130 实时推送本轮要调用的工具（龙虾式：先讲要干嘛）
                     val fnNames = calls.map { it.first }.distinct()
                     smartSend("💭 我正在进行第 ${loopGuard} 步：调用「${fnNames.joinToString("、")}」…", false)
@@ -1587,7 +1593,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         // ★ v1.130 工具执行前推送细节（参数太长截断防刷屏）
                         val argShow = if (argTxt.length > 80) argTxt.take(80) + "…" else argTxt
                         if (argShow.isNotBlank()) smartSend("🔧 正在执行：$fn($argShow)", false)
-                        // ★ v1.132 单工具异常保护：execute 抛异常不再中断整个任务，记录错误继续下一步
+                        // ★ v1.133 单工具异常保护：execute 抛异常不再中断整个任务，记录错误继续下一步
                         val r = try {
                             com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
                         } catch (e: Exception) {
@@ -1629,8 +1635,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
                     val cleanText = cleanFunctionTags(content)
-                    // ★ v1.132 结果已实时推送 → 模型只做决策不复述（龙虾式：过程已展示，最终别重复）
-                    val newPrompt = cleanText + "\n\n【工具执行结果（内部参考，已实时推送给用户，用户已经看到了）】\n" + results + "\n\n请基于以上真实执行结果**继续决策**，不要复述任何已展示的结果/数据：\n- 如果任务已完成且无需再调用工具 → 直接回复一句**简短、自然、像真人**的收尾（如「✅ 搞定，结果都在上面了～」或「搞定！数据已发你，还要我继续查别的吗？」），**严禁重复粘贴结果内容**\n- 如果需要更多操作 → 继续调用函数（输出 [[沙盒:函数名(参数=值)]]）\n- 不要输出任何函数调用语法（除继续调用外），只输出对用户说的话"
+                    // ★ v1.133 结果已实时推送 → 模型只做决策不复述（龙虾式：过程已展示，最终别重复）
+                    val newPrompt = cleanText + "\n\n【工具执行结果（内部参考，已实时推送给用户，用户已经看到了）】\n" + results + "\n\n请基于以上真实执行结果**继续决策**，不要复述任何已展示的结果/数据：\n- 如果任务已完成且无需再调用工具 → 用你自己的话给出**完整、自然的最终答复**（可多句、可分段，把结论/分析/建议讲完整，该长则长；不要机械照抄已推送的原始数据，但可以总结、解读、补充你的看法）\n- 如果需要更多操作 → 继续调用函数（输出 [[沙盒:函数名(参数=值)]]）\n- 不要输出任何函数调用语法（除继续调用外），只输出对用户说的话"
                     hist.add("assistant" to cleanText)
                     // ★ v60 收敛不重复：结果已实时推送→不再把 results 拼回最终回复！
                     //   继续让模型基于结果生成简短收尾/AI意见（不重复已展示的结果/数字）
@@ -1669,7 +1675,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         content = "✅ 已完成以上任务，结果已实时推送。如需继续操作，直接告诉我～"
                         break
                     }
-                    // ★ v1.132 记录本轮执行到 hist：把「调用+结果」写进上下文，「接着弄」时模型能看到之前干了啥
+                    // ★ v1.133 记录本轮执行到 hist：把「调用+结果」写进上下文，「接着弄」时模型能看到之前干了啥
                     hist.add("assistant" to cleanText)
                     hist.add("user" to "【工具执行结果】\n$results")
                     content = nextContent
@@ -1679,9 +1685,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 if (loopGuard > 0 && content.isNotBlank()) {
                     // ★ v55 返回前必清洗 XML 标签（防畸形格式泄漏给用户）
                     val cleaned = cleanFunctionTags(content)
-                    // ★ v1.132 确保用户原始消息已入 hist（循环内可能漏记抛异常时兜底）
+                    // ★ v1.133 确保用户原始消息已入 hist（循环内可能漏记抛异常时兜底）
                     if (hist.none { it.second == userText }) hist.add("user" to userText)
-                    // ★ v1.132 龙虾式收敛：执行过工具（loopGuard>0）→ 最终强制模型生成简短收尾，绝不复述已推送的结果
+                    // ★ v1.133 龙虾式收敛：执行过工具（loopGuard>0）→ 最终强制模型生成简短收尾，绝不复述已推送的结果
                     try {
                         val closeBody = JSONObject()
                             .put("model", bot.aiModel)
@@ -1690,7 +1696,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 .put(JSONObject().put("role", "user").put("content", userText))
                                 .put(JSONObject().put("role", "assistant").put("content", cleaned))
                                 .put(JSONObject().put("role", "user").put("content",
-                                    "工具结果已经实时推送给用户了。现在请只回复一句**简短、自然、像真人**的收尾或你的看法（一句话即可，不要复述刚才的结果/数字/数据，不要用『已完成请查看』这类空话）。")))
+                                    "工具结果已经实时推送给用户了（用户已看到原始数据）。现在请给出**完整、有价值的最终答复**，像一个真正聪明的助理那样：该分析就分析、该总结就总结、该给建议就给建议，把话说完整、说清楚，不要人为压缩成一句话。**不要机械照抄**已推送的原始数字/数据，但可以用你自己的语言解读、总结、补充观点。禁止空话（如『已完成请查看』）。")))
                             .toString()
                         val closeReq = Request.Builder()
                             .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")

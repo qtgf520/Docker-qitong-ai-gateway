@@ -176,7 +176,7 @@ object WeixinBotManager {
             st.messagesHandled += 1
         }
         // ★ v71 微信大消息自动分段推送（消息上限约 2000 字符，超长切段逐条发不丢信息）
-        // ★ v1.132 发送异常保护：推送失败不中断 AI 思考/工具执行，记日志继续
+        // ★ v1.133 发送异常保护：推送失败不中断 AI 思考/工具执行，记日志继续
         val send = { text: String ->
             try {
                 val pieces = splitMessage(text)
@@ -542,7 +542,7 @@ object WeixinBotManager {
                     d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
                 var loop = 0
                 var noCallGuide = 0   // ★ v77 引导计数器：模型只输出描述不输出标签时引导它
-                // ★ v1.132 记录用户原始消息到 hist（循环内）——确保「接着弄」时模型能看到最初需求
+                // ★ v1.133 记录用户原始消息到 hist（循环内）——确保「接着弄」时模型能看到最初需求
                 var userTextLogged = false
                 while (loop < 20) {
                     // ★ v75 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考（对齐 QQ v64）
@@ -552,7 +552,7 @@ object WeixinBotManager {
                         break
                     }
                     loop++
-                    // ★ v1.132 修复双递增 bug：每轮只 +1，真正能跑满 20 轮（原来两个 loop++ → 每轮 +2 只跑 10 轮就被截断=「任务做一半卡住」元凶）
+                    // ★ v1.133 修复双递增 bug：每轮只 +1，真正能跑满 20 轮（原来两个 loop++ → 每轮 +2 只跑 10 轮就被截断=「任务做一半卡住」元凶）
                     // ★ v1.130 长任务进度：每 10s 推一次「还在处理」，比原来 30s 更密，用户不再觉得卡死
                     if (System.currentTimeMillis() - lastProgressAt > 10_000) {
                         send("⏳ 任务还在处理中（第 $loop 轮），我继续干着，请稍候…")
@@ -647,7 +647,7 @@ object WeixinBotManager {
                             .put(JSONObject().put("role", "user").put("content", userText))
                             .put(JSONObject().put("role", "assistant").put("content", cleanText))
                             .put(JSONObject().put("role", "user").put("content",
-                                "【工具执行结果（内部参考，已实时推送给用户，用户已经看到了）】\n$results\n\n请基于以上真实执行结果**继续决策**，不要复述任何已展示的结果/数据：\n- 任务已完成且无需再调用工具 → 直接回复一句**简短、自然、像真人**的收尾（如「✅ 搞定，结果都在上面了～」「搞定！数据已发你，还要我继续查别的吗？」），**严禁重复粘贴结果内容**\n- 还需更多操作 → 继续调用工具（输出 [[沙盒:函数名(参数=值)]]）\n- 不要输出函数调用语法（除继续调用外），只输出对用户说的话"))) .toString()
+                                "【工具执行结果（内部参考，已实时推送给用户，用户已经看到了）】\n$results\n\n请基于以上真实执行结果**继续决策**，不要复述任何已展示的结果/数据：\n- 如果任务已完成且无需再调用工具 → 用你自己的话给出**完整、自然的最终答复**（可多句、可分段，把结论/分析/建议讲完整，该长则长；不要机械照抄已推送的原始数据，但可以总结、解读、补充你的看法）\n- 还需更多操作 → 继续调用工具（输出 [[沙盒:函数名(参数=值)]]）\n- 不要输出函数调用语法（除继续调用外），只输出对用户说的话"))) .toString()
                     val nextReq = Request.Builder()
                         .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
                         .addHeader("Content-Type", "application/json")
@@ -672,7 +672,7 @@ object WeixinBotManager {
                         content = cleanText + "\n\n" + results
                         break
                     }
-                    // ★ v1.132 记录本轮执行到 hist：把「调用+结果」写进上下文，「接着弄」时模型能看到之前干了啥
+                    // ★ v1.133 记录本轮执行到 hist：把「调用+结果」写进上下文，「接着弄」时模型能看到之前干了啥
                     hist.add("assistant" to cleanText)
                     hist.add("user" to "【工具执行结果】\n$results")
                     content = nextContent
@@ -707,7 +707,7 @@ object WeixinBotManager {
                             .put(JSONObject().put("role", "user").put("content", userText))
                             .put(JSONObject().put("role", "assistant").put("content", cleanFunctionTags(content)))
                             .put(JSONObject().put("role", "user").put("content",
-                                "工具结果已经实时推送给用户了。现在请只回复一句**简短、自然、像真人**的收尾或你的看法（一句话即可，不要复述刚才的结果/数字/数据，不要用『已完成请查看』这类空话）。"))) .toString()
+                                "工具结果已经实时推送给用户了（用户已看到原始数据）。现在请给出**完整、有价值的最终答复**，像一个真正聪明的助理那样：该分析就分析、该总结就总结、该给建议就给建议，把话说完整、说清楚，不要人为压缩成一句话。**不要机械照抄**已推送的原始数字/数据，但可以用你自己的语言解读、总结、补充观点。禁止空话（如『已完成请查看』）。"))) .toString()
                     val closeReq = Request.Builder()
                         .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
                         .addHeader("Content-Type", "application/json")
@@ -775,11 +775,14 @@ object WeixinBotManager {
             }
             cur.append(line).append("\n")
             if (cur.length > 1800) {
-                // 单行超长：硬切
-                result.add(cur.toString().take(1800))
+                // 单行超长：硬切，必须保留剩余尾巴继续处理（v1.133 修复：原来 clear 丢尾巴导致长文截断）
+                var seg = cur.toString()
+                while (seg.length > 1800) {
+                    result.add(seg.take(1800))
+                    seg = seg.substring(1800)
+                }
                 cur.clear()
-                cur.append(cur.toString()) // 保留超长尾巴重新处理（罕见）
-                cur.clear()
+                cur.append(seg)
             }
         }
         if (cur.isNotEmpty()) result.add(cur.toString())
