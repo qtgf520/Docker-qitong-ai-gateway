@@ -326,7 +326,14 @@ class GatewayProxy(private val database: Database) {
         // ★ v1.115 并发安全：改用局部变量+参数传递（原全局 volatile 在万人并发流式响应期间会被其他请求覆盖→按密钥统计串号/不同步）
         val apiKeyLabel = try { call.attributes[ApiKeyLabelKey] } catch (_: Exception) { "" }
         currentApiKeyLabel = apiKeyLabel  // 保留全局供其他读取点兼容
-        val ownerUser = if (ownerId > 0) database.getUserById(ownerId) else null
+        val ownerUserRaw = if (ownerId > 0) database.getUserById(ownerId) else null
+        // ★ v1.136 套餐到期自动降级：过期套餐视为 free
+        val ownerUser: User? = if (ownerUserRaw != null && ownerUserRaw.role != "admin" && ownerUserRaw.plan != "free" && ownerUserRaw.planExpireAt > 0 && ownerUserRaw.planExpireAt < System.currentTimeMillis()) {
+            try {
+                database.updateUser(ownerUserRaw.copy(plan = "free", planExpireAt = 0))
+                database.getUserById(ownerUserRaw.id) ?: ownerUserRaw
+            } catch (_: Exception) { ownerUserRaw }
+        } else ownerUserRaw
         // 用户级 API 开关检查（非管理员用户暂停则拒绝）
         if (ownerId > 0 && ownerUser?.role != "admin") {
             val apiEnabled = database.getUserConfig(ownerId, "api_enabled", "true").toBoolean()

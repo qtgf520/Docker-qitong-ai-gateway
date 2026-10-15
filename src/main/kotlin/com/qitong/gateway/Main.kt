@@ -211,7 +211,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.135"))
+                put("version", JsonPrimitive("1.136"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1822,6 +1822,8 @@ fun Application.moduleWeb(database: Database) {
                 role = body["role"]?.jsonPrimitive?.content ?: user.role,
                 quotaLimit = body["quotaLimit"]?.jsonPrimitive?.content?.toLongOrNull() ?: user.quotaLimit,
                 quotaUsed = body["quotaUsed"]?.jsonPrimitive?.content?.toLongOrNull() ?: user.quotaUsed,
+                plan = body["plan"]?.jsonPrimitive?.content ?: user.plan,
+                planExpireAt = body["planExpireAt"]?.jsonPrimitive?.content?.toLongOrNull() ?: user.planExpireAt,
                 bindModels = body["bindModels"]?.let {
                     try { kotlinx.serialization.json.Json.decodeFromString<List<String>>(it.toString()) } catch (_: Exception) { user.bindModels }
                 } ?: user.bindModels,
@@ -1936,6 +1938,23 @@ fun Application.moduleWeb(database: Database) {
                 AdminApi.ok(call, mapOf("totalRecharge" to newTotal), "累计充值已调整为 ¥$newTotal")
             } else AdminApi.fail(call, "调整失败", 400)
         }
+        // ★ v1.136 管理员设置用户套餐（plan + 到期时间；代理需为下级）
+        post("/api/users/set-plan") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin" && u.role != "agent" && !AdminApi.hasPerm(u, AdminApi.Perm.U_MANAGE)) { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val userId = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "用户ID无效", 400); return@post }
+            if (u.role != "admin" && !database.isSubordinate(u.id, userId)) { AdminApi.fail(call, "只能管理自己的下级用户", 403); return@post }
+            val target = database.getUserById(userId) ?: run { AdminApi.fail(call, "用户不存在", 404); return@post }
+            val newPlan = body["plan"]?.jsonPrimitive?.content ?: target.plan
+            val validPlans = listOf("free", "quota", "subscription", "agent", "business")
+            if (newPlan !in validPlans) { AdminApi.fail(call, "无效套餐：$newPlan（可选 ${validPlans.joinToString("/")}）", 400); return@post }
+            val expireAt = body["planExpireAt"]?.jsonPrimitive?.content?.toLongOrNull() ?: target.planExpireAt
+            val newQuota = body["quotaLimit"]?.jsonPrimitive?.content?.toLongOrNull() ?: target.quotaLimit
+            database.updateUser(target.copy(plan = newPlan, planExpireAt = expireAt, quotaLimit = newQuota))
+            database.addOpLog(u.id, u.username, "设置套餐", "将 ${target.username} 套餐设为 $newPlan（到期 $expireAt，额度 $newQuota）", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("plan" to newPlan, "planExpireAt" to expireAt, "quotaLimit" to newQuota), "套餐已设为 $newPlan")
+        }
         // 我的分销信息（邀请码/邀请人数/累计佣金）——空码自动生成并持久化
         get("/api/me/distribution") {
             val u = call.requireAuth(database) ?: return@get
@@ -1956,7 +1975,9 @@ fun Application.moduleWeb(database: Database) {
                 "balance" to u.balance,
                 "totalRecharge" to u.totalRecharge,
                 "quotaLimit" to u.quotaLimit,
-                "quotaUsed" to u.quotaUsed
+                "quotaUsed" to u.quotaUsed,
+                "plan" to u.plan,
+                "planExpireAt" to u.planExpireAt
             ), "ok")
         }
         // 当前用户余额账单（充值/扣费/返佣流水）
@@ -2056,7 +2077,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.135"))
+                put("version", JsonPrimitive("1.136"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2855,7 +2876,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.135"))
+                    put("version", JsonPrimitive("1.136"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

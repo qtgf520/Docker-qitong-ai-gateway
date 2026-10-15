@@ -143,7 +143,9 @@ data class User(
     val inviteCode: String = "",        // 我的邀请码
     val commissionRate: Double = 0.1,   // 分销佣金比例（默认10%）
     val email: String = "",             // 绑定邮箱（个人中心，后期提醒用）
-    val notifyEnabled: Boolean = false  // 是否开启邮件提醒
+    val notifyEnabled: Boolean = false, // 是否开启邮件提醒
+    val plan: String = "free",           // v1.136 套餐档位：free/quota/subscription/agent/business
+    val planExpireAt: Long = 0           // v1.136 套餐到期时间戳（0=永久/免费）
 )
 
 /** 人格配置（对齐原APP人设系统） */
@@ -189,7 +191,7 @@ data class GatewayConfig(
 data class GatewayStatus(
     val status: String = "ok",
     val service: String = "qitong-ai-gateway-docker",
-    val version: String = "1.135",
+    val version: String = "1.136",
     val running: Boolean = true,
     val port: Int,
     val failover: Boolean,

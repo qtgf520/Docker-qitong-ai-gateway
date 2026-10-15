@@ -207,6 +207,8 @@ class Database(private val dbPath: String) {
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN commission_rate REAL NOT NULL DEFAULT 0.1") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN notify_enabled INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN plan_expire_at INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN cost REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
             // 人格配置表（对齐原APP人设系统）
@@ -1154,7 +1156,9 @@ class Database(private val dbPath: String) {
         inviteCode = it["invite_code"] as? String ?: "",
         commissionRate = (it["commission_rate"] as? Number)?.toDouble() ?: 0.1,
         email = it["email"] as? String ?: "",
-        notifyEnabled = (it["notify_enabled"] as? Number)?.toInt() == 1
+        notifyEnabled = (it["notify_enabled"] as? Number)?.toInt() == 1,
+        plan = it["plan"] as? String ?: "free",
+        planExpireAt = (it["plan_expire_at"] as? Number)?.toLong() ?: 0
     )
 
     /** 更新用户绑定邮箱 + 通知开关（个人中心） */
@@ -1211,8 +1215,8 @@ class Database(private val dbPath: String) {
         val bindModels = kotlinx.serialization.json.Json.encodeToString(user.bindModels)
         val permissions = kotlinx.serialization.json.Json.encodeToString(user.permissions)
         stmt(
-            "UPDATE users SET role=?, display_name=?, quota_limit=?, quota_used=?, bind_models=?, permissions=? WHERE id=?",
-            user.role, user.displayName, user.quotaLimit, user.quotaUsed, bindModels, permissions, user.id
+            "UPDATE users SET role=?, display_name=?, quota_limit=?, quota_used=?, bind_models=?, permissions=?, plan=?, plan_expire_at=? WHERE id=?",
+            user.role, user.displayName, user.quotaLimit, user.quotaUsed, bindModels, permissions, user.plan, user.planExpireAt, user.id
         )
     }
 
