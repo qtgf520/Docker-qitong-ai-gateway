@@ -35,6 +35,6 @@ data/
 .operit/
 ui-template/
 ui-assets/
-*.tgzqitong-gateway-*-all.jar
 
 qitong-gateway-*-all.jar
+*.tgz
