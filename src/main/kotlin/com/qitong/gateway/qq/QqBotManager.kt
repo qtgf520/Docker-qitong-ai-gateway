@@ -1490,7 +1490,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             .put("model", bot.aiModel)
             .put("messages", msgs)
             .put("stream", false)
-            .put("temperature", 0.8)
+            .put("temperature", 0.8).put("max_tokens", 4096)
             .toString()
 
         val req = Request.Builder()
@@ -1530,6 +1530,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     loopGuard++
                     // ★ v64 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考
                     if (stopSignals[userOpenid] == true) {
+                        stopSignals.remove(userOpenid)
                         content = "🛑 已停止任务（用户中断）。"
                         break
                     }
@@ -1648,7 +1649,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             .put(JSONObject().put("role", "assistant").put("content", cleanText))
                             .put(JSONObject().put("role", "user").put("content", newPrompt)))
                         .put("stream", false)
-                        .put("temperature", 0.75)
+                        .put("temperature", 0.75).put("max_tokens", 4096)
                         .toString()
                     val nextReq = Request.Builder()
                         .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")

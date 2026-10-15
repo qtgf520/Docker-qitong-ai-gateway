@@ -515,7 +515,7 @@ object WeixinBotManager {
                 .put("model", bot.aiModel)
                 .put("messages", msgs)
                 .put("stream", false)
-                .put("temperature", 0.8)
+                .put("temperature", 0.8).put("max_tokens", 4096)
                 .toString()
             val req = Request.Builder()
                 .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
@@ -604,7 +604,11 @@ object WeixinBotManager {
                         val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
                         val argShow = if (argTxt.length > 80) argTxt.take(80) + "…" else argTxt
                         if (argShow.isNotBlank()) send("🔧 正在执行：$fn($argShow)")
-                        val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
+                        val r = try {
+                            com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
+                        } catch (e: Exception) {
+                            "工具执行异常（" + fn + "）：" + e.message
+                        }
                         results.append("【$fn 执行结果】\n$r\n")
                         // ★ v1.130 结果实时推送
                         val rShow = r.trim().replace('\n', ' ').take(120)
@@ -617,7 +621,11 @@ object WeixinBotManager {
                         try {
                             val futures = calls.map { (fn, args) ->
                                 executor.submit<Pair<String, String>> {
-                                    val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
+                                    val r = try {
+                            com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
+                        } catch (e: Exception) {
+                            "工具执行异常（" + fn + "）：" + e.message
+                        }
                                     fn to r
                                 }
                             }
@@ -669,7 +677,7 @@ object WeixinBotManager {
                         }
                     } catch (e: Exception) { null }
                     if (nextContent.isNullOrBlank()) {
-                        content = cleanText + "\n\n" + results
+                        content = "✅ 已完成以上任务，结果已实时推送。如需继续操作，直接告诉我～"
                         break
                     }
                     // ★ v1.133 记录本轮执行到 hist：把「调用+结果」写进上下文，「接着弄」时模型能看到之前干了啥
