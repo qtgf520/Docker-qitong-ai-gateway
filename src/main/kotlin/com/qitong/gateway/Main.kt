@@ -211,7 +211,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.137"))
+                put("version", JsonPrimitive("1.138"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1950,10 +1950,27 @@ fun Application.moduleWeb(database: Database) {
             val validPlans = listOf("free", "quota", "subscription", "agent", "business")
             if (newPlan !in validPlans) { AdminApi.fail(call, "无效套餐：$newPlan（可选 ${validPlans.joinToString("/")}）", 400); return@post }
             val expireAt = body["planExpireAt"]?.jsonPrimitive?.content?.toLongOrNull() ?: target.planExpireAt
-            val newQuota = body["quotaLimit"]?.jsonPrimitive?.content?.toLongOrNull() ?: target.quotaLimit
+            // ★ v1.138 套餐权益自动填充：未显式传额度时，按套餐档位套用默认权益（额度 + 限速）
+            val planDefaults = mapOf(
+                "free" to Triple(100000L, "30", "3000"),        // 免费版：10万 token 额度，QPS 30，每日 3000 次
+                "quota" to Triple(10000000L, "120", "20000"),   // 额度版：1000万 token，QPS 120，每日 2 万次
+                "subscription" to Triple(50000000L, "300", "100000"), // 订阅版：5000万 token，QPS 300，每日 10 万次
+                "agent" to Triple(20000000L, "200", "50000"),   // 代理版：2000万 token，QPS 200，每日 5 万次
+                "business" to Triple(0L, "0", "0")              // 商业版：不限额度，不限速
+            )
+            val dflt = planDefaults[newPlan] ?: Triple(0L, "60", "10000")
+            val newQuota = body["quotaLimit"]?.jsonPrimitive?.content?.toLongOrNull() ?: dflt.first
             database.updateUser(target.copy(plan = newPlan, planExpireAt = expireAt, quotaLimit = newQuota))
-            database.addOpLog(u.id, u.username, "设置套餐", "将 ${target.username} 套餐设为 $newPlan（到期 $expireAt，额度 $newQuota）", call.request.local.remoteHost)
-            AdminApi.ok(call, mapOf("plan" to newPlan, "planExpireAt" to expireAt, "quotaLimit" to newQuota), "套餐已设为 $newPlan")
+            // 应用限速权益（QPS / 每日次数；0 表示不限）
+            val qps = dflt.second; val daily = dflt.third
+            if (body["quotaLimit"]?.jsonPrimitive?.content?.toLongOrNull() == null) {
+                runCatching {
+                    database.setUserConfig(userId, "rate_qps", qps)
+                    database.setUserConfig(userId, "rate_daily", daily)
+                }
+            }
+            database.addOpLog(u.id, u.username, "设置套餐", "将 ${target.username} 套餐设为 $newPlan（到期 $expireAt，额度 $newQuota，QPS $qps，日限 $daily）", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("plan" to newPlan, "planExpireAt" to expireAt, "quotaLimit" to newQuota, "rateQps" to qps, "rateDaily" to daily), "套餐已设为 $newPlan")
         }
         // 我的分销信息（邀请码/邀请人数/累计佣金）——空码自动生成并持久化
         get("/api/me/distribution") {
@@ -2077,7 +2094,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.137"))
+                put("version", JsonPrimitive("1.138"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2876,7 +2893,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.137"))
+                    put("version", JsonPrimitive("1.138"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()
