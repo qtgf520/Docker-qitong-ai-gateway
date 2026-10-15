@@ -693,16 +693,18 @@ loaders.users = function(){
    var bindTxt = (u.bindModels && u.bindModels.length) ? u.bindModels.map(function(m){ return '<span class="badge blue">'+esc(m)+'</span>'; }).join(' ') : '<span style="color:var(--muted)">全部模型</span>';
    var permTxt = (u.permissions && u.permissions.length) ? u.permissions.map(function(p){ return '<span class="badge purple">'+esc(p)+'</span>'; }).join(' ') : '<span style="color:var(--muted)">仅私有</span>';
    if(u.role === 'admin') permTxt = '<span class="badge green">全部权限</span>';
+   var planMap={free:'免费版',quota:'额度版',subscription:'订阅版',agent:'代理版',business:'商业版'};var planTxt='<span class="badge cyan">'+(planMap[u.plan]||u.plan||'免费版')+'</span>';
+   var planMap={free:'免费版',quota:'额度版',subscription:'订阅版',agent:'代理版',business:'商业版'};var planTxt='<span class="badge cyan">'+(planMap[u.plan]||u.plan||'免费版')+'</span>';
 var balTxt = '<span style="color:var(--green);font-weight:700">¥'+(u.balance||0).toFixed(2)+'</span>';
     var roleBadge = u.role==='admin' ? '<span class="badge purple">管理员</span>' : (u.role==='agent' ? '<span class="badge amber">代理</span>' : '<span class="badge blue">用户</span>');
-    return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td>'+roleBadge+'</td><td>'+balTxt+' <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="rechargeUser('+u.id+',\''+esc(u.username)+'\')">充值</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="deductUser('+u.id+',\''+esc(u.username)+'\')">扣款</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--cyan)" onclick="setBalanceUser('+u.id+',\''+esc(u.username)+'\','+(u.balance||0)+','+(u.totalRecharge||0)+')">调整</button></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td style="font-size:11px;color:var(--muted)">'+(u.email?esc(u.email):'—')+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
+    return '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.displayName)+'</td><td>'+roleBadge+'</td><td>'+planTxt+'</td><td>'+balTxt+' <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="rechargeUser('+u.id+',\''+esc(u.username)+'\')">充值</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="deductUser('+u.id+',\''+esc(u.username)+'\')">扣款</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--cyan)" onclick="setBalanceUser('+u.id+',\''+esc(u.username)+'\','+(u.balance||0)+','+(u.totalRecharge||0)+')">调整</button></td><td>'+quotaText+'</td><td>'+bindTxt+'</td><td style="font-size:11px">'+permTxt+'</td><td style="font-size:11px;color:var(--muted)">'+(u.email?esc(u.email):'—')+'</td><td><button class="btn-ghost" onclick="editUser('+u.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delUser('+u.id+')">删除</button></td></tr>';
    }).join('');
    // 代理登录时提示管理自己的下级
    api('/api/auth/me').then(function(me){
     var isAgent = me && me.data && me.data.role === 'agent';
     box.innerHTML = [
-     '<div class="card"><h3 style="display:flex;align-items:center;justify-content:space-between"> ' + (isAgent ? '我的下级用户' : '用户管理') + (isAgent ? '' : '<button class="btn" onclick="openUserCreate()">+ 添加用户</button>') + '</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>邮箱</th><th>操作</th></tr></thead><tbody>' +
-     rows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (users.length ? '' : (isAgent ? '暂无下级用户，邀请注册或让客户填你的邀请码' : '暂无用户')) + '</td></tr>' +
+     '<div class="card"><h3 style="display:flex;align-items:center;justify-content:space-between"> ' + (isAgent ? '我的下级用户' : '用户管理') + (isAgent ? '' : '<button class="btn" onclick="openUserCreate()">+ 添加用户</button>') + '</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>套餐</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>邮箱</th><th>操作</th></tr></thead><tbody>' +
+     rows + '<tr><td colspan="10" style="text-align:center;color:var(--muted)">' + (users.length ? '' : (isAgent ? '暂无下级用户，邀请注册或让客户填你的邀请码' : '暂无用户')) + '</td></tr>' +
      '</tbody></table></div><div style="margin-top:10px;color:var(--muted);font-size:12px">' + (isAgent ? '代理只能管理自己邀请/开通的下级客户；余额用于按模型价格扣费' : '注册页开放注册；可编辑用户角色 / 额度 / 绑定模型 / 系统权限；余额用于按模型价格扣费') + '</div></div>'
     ].join('');
    });
@@ -788,6 +790,7 @@ window.editUser = function(id){
     '<div class="form-row"><label>用户名</label><input class="input" value="'+esc(u.username)+'" disabled></div>',
     '<div class="form-row"><label>昵称</label><input id="euName" class="input" value="'+esc(u.displayName||'')+'"></div>',
     '<div class="form-row"><label>角色</label><select id="euRole" class="input"><option value="user"'+(u.role==='user'?' selected':'')+'>用户</option><option value="agent"'+(u.role==='agent'?' selected':'')+'>代理</option><option value="admin"'+(u.role==='admin'?' selected':'')+'>管理员</option></select></div>',
+    '<div class="form-row"><label>套餐</label><select id="euPlan" class="input"><option value="free"'+(u.plan==='free'?' selected':'')+'>免费版</option><option value="quota"'+(u.plan==='quota'?' selected':'')+'>额度版</option><option value="subscription"'+(u.plan==='subscription'?' selected':'')+'>订阅版</option><option value="agent"'+(u.plan==='agent'?' selected':'')+'>代理版</option><option value="business"'+(u.plan==='business'?' selected':'')+'>商业版</option></select></div>',
     '<div class="form-row"><label>额度上限（token，0=不限）</label><input id="euQuota" class="input" type="number" value="'+(u.quotaLimit||0)+'"></div>',
     '<div class="form-row"><label>已用额度（token）</label><input id="euUsed" class="input" type="number" value="'+(u.quotaUsed||0)+'"></div>',
     '<div class="form-row"><label>绑定模型（Ctrl多选，留空=全部）</label><select id="euModels" class="input" multiple size="4">'+modelOpts+'</select></div>',
@@ -797,7 +800,7 @@ window.editUser = function(id){
    openModal('编辑用户 - ' + u.username, html, function(){
     var models = Array.from($('euModels').selectedOptions).map(function(o){ return o.value; });
     var perms = Array.from(document.querySelectorAll('.usPermCb')).filter(function(c){ return c.checked && !c.disabled; }).map(function(c){ return c.value; });
-    var body = { id: id, displayName: $('euName').value.trim(), role: $('euRole').value, quotaLimit: parseInt($('euQuota').value)||0, quotaUsed: parseInt($('euUsed').value)||0, bindModels: models, permissions: perms };
+    var body = { id: id, displayName: $('euName').value.trim(), role: $('euRole').value, quotaLimit: parseInt($('euQuota').value)||0, quotaUsed: parseInt($('euUsed').value)||0, bindModels: models, permissions: perms, plan: $('euPlan').value };
     var pwd = $('euPwd').value;
     if(pwd){ if(pwd.length < 6){ toast('密码至少6个字符', false); return; } body.newPassword = pwd; }
     api('/api/users/update', { method:'POST', body: body }).then(function(rr){

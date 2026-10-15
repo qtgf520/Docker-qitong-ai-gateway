@@ -191,7 +191,7 @@ data class GatewayConfig(
 data class GatewayStatus(
     val status: String = "ok",
     val service: String = "qitong-ai-gateway-docker",
-    val version: String = "1.136",
+    val version: String = "1.137",
     val running: Boolean = true,
     val port: Int,
     val failover: Boolean,
