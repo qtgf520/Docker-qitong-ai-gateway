@@ -176,9 +176,17 @@ object WeixinBotManager {
             st.messagesHandled += 1
         }
         // ★ v71 微信大消息自动分段推送（消息上限约 2000 字符，超长切段逐条发不丢信息）
+        // ★ v1.132 发送异常保护：推送失败不中断 AI 思考/工具执行，记日志继续
         val send = { text: String ->
-            val pieces = splitMessage(text)
-            pieces.forEach { p -> api.sendMessage(bot.botToken, msg.from, p, msg.contextToken) }
+            try {
+                val pieces = splitMessage(text)
+                pieces.forEach { p ->
+                    runCatching { api.sendMessage(bot.botToken, msg.from, p, msg.contextToken) }
+                        .onFailure { e -> System.err.println("[WeixinBot] 消息推送异常: ${e.message}") }
+                }
+            } catch (e: Exception) {
+                System.err.println("[WeixinBot] send lambda 异常: ${e.message}")
+            }
         }
 
         // 绑定流程（pendingBind 分步）
@@ -534,6 +542,8 @@ object WeixinBotManager {
                     d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
                 var loop = 0
                 var noCallGuide = 0   // ★ v77 引导计数器：模型只输出描述不输出标签时引导它
+                // ★ v1.132 记录用户原始消息到 hist（循环内）——确保「接着弄」时模型能看到最初需求
+                var userTextLogged = false
                 while (loop < 20) {
                     // ★ v75 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考（对齐 QQ v64）
                     if (stopSignals[msg.from] == true) {
@@ -542,12 +552,13 @@ object WeixinBotManager {
                         break
                     }
                     loop++
+                    // ★ v1.132 修复双递增 bug：每轮只 +1，真正能跑满 20 轮（原来两个 loop++ → 每轮 +2 只跑 10 轮就被截断=「任务做一半卡住」元凶）
                     // ★ v1.130 长任务进度：每 10s 推一次「还在处理」，比原来 30s 更密，用户不再觉得卡死
                     if (System.currentTimeMillis() - lastProgressAt > 10_000) {
                         send("⏳ 任务还在处理中（第 $loop 轮），我继续干着，请稍候…")
                         lastProgressAt = System.currentTimeMillis()
                     }
-                    loop++
+                    if (!userTextLogged) { hist.add("user" to userText); userTextLogged = true }
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
                     if (calls.isEmpty()) {
                         // ★ v77 假调用修复：模型只输出了"正在调用 xxx"描述但没输出严格标签 → 引导它输出真标签再执行
@@ -661,10 +672,11 @@ object WeixinBotManager {
                         content = cleanText + "\n\n" + results
                         break
                     }
+                    // ★ v1.132 记录本轮执行到 hist：把「调用+结果」写进上下文，「接着弄」时模型能看到之前干了啥
+                    hist.add("assistant" to cleanText)
+                    hist.add("user" to "【工具执行结果】\n$results")
                     content = nextContent
                 }
-                hist.add("user" to userText)
-                hist.add("assistant" to cleanFunctionTags(content))
                 while (hist.size > 20) hist.removeAt(0)
                 // ★ v92 微信记忆闭环增强：qtai-sj（sandboxOn）模式也沉淀记忆（对齐 QQ 长期记忆；受 memory_enabled 开关控制）
                 // ★v1.115 未绑定用户也按 openid 沉淀（对齐 QQ），绑定账号仍走账号记忆

@@ -1518,6 +1518,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 // 只推一次「处理中」，中间步骤全部静默（最后结果由外层推）
                 var stepHintSent = false
                 var lastProgressAt = System.currentTimeMillis()
+                // ★ v1.132 假调用引导计数器（循环外，跨轮累积，最多引导 2 次）
+                var noCallGuide = 0
                 while (sandboxOn && content.isNotBlank() && loopGuard < 20) {
                     loopGuard++
                     // ★ v64 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考
@@ -1526,9 +1528,48 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         break
                     }
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
-                    if (calls.isEmpty()) break
+                    // ★ v1.132 修复假调用中断：模型只输出「正在调用xxx」描述但没输出严格标签 → 引导它输出真标签再执行（对齐微信 v77 noCallGuide）
+                    if (calls.isEmpty()) {
+                        if (noCallGuide < 2 && (content.contains("正在调用") || content.contains("调用沙盒") ||
+                                content.contains("准备调用") || content.contains("我需要调用") || content.contains("我来调用"))) {
+                            noCallGuide++
+                            smartSend("💭 我确认一下要调用哪个工具…", false)
+                            val guideBody = JSONObject()
+                                .put("model", bot.aiModel)
+                                .put("messages", JSONArray()
+                                    .put(JSONObject().put("role", "system").put("content", sysFull))
+                                    .put(JSONObject().put("role", "user").put("content", userText))
+                                    .put(JSONObject().put("role", "assistant").put("content", content))
+                                    .put(JSONObject().put("role", "user").put("content",
+                                        "我看到你说要调用工具，但没有输出标准的沙盒函数调用标签。请严格按这个格式输出你要调用的工具（一次输出一个即可，不要解释）：\n[[沙盒:函数名(参数=值)]]\n可用函数见上面的知识库清单。")))
+                                .toString()
+                            val guideReq = Request.Builder()
+                                .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
+                                .addHeader("Content-Type", "application/json")
+                                .post(guideBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                                .build()
+                            val guided = try {
+                                val guideCall = http.newCall(guideReq)
+                                activeCalls[userOpenid] = guideCall
+                                try {
+                                    guideCall.execute().use { respG ->
+                                        if (!respG.isSuccessful) null
+                                        else JSONObject(respG.body?.string().orEmpty())
+                                            .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                            ?.optString("content")?.trim().orEmpty()
+                                    }
+                                } finally {
+                                    if (activeCalls[userOpenid] === guideCall) activeCalls.remove(userOpenid)
+                                }
+                            } catch (e: Exception) { null }
+                            if (guided.isNullOrBlank()) { content = cleanFunctionTags(content); break }
+                            content = guided
+                            continue  // 下一轮用引导结果再解析
+                        }
+                        break
+                    }
                     // ★ v1.130 龙虾式实时进展：每轮思考→调用→结果→下一步全程推送，不静默
-                    if (!stepHintSent) { smartSend("🎯 正在处理您的请求，请稍候…", false); stepHintSent = true }
+                    // ★ v1.132 真思考模式：不再预推假的「🎯 正在处理」——有真调用才推进展，无调用直接出答案
                     // ★ v1.130 实时推送本轮要调用的工具（龙虾式：先讲要干嘛）
                     val fnNames = calls.map { it.first }.distinct()
                     smartSend("💭 我正在进行第 ${loopGuard} 步：调用「${fnNames.joinToString("、")}」…", false)
@@ -1546,7 +1587,13 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         // ★ v1.130 工具执行前推送细节（参数太长截断防刷屏）
                         val argShow = if (argTxt.length > 80) argTxt.take(80) + "…" else argTxt
                         if (argShow.isNotBlank()) smartSend("🔧 正在执行：$fn($argShow)", false)
-                        val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
+                        // ★ v1.132 单工具异常保护：execute 抛异常不再中断整个任务，记录错误继续下一步
+                        val r = try {
+                            com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
+                        } catch (e: Exception) {
+                            System.err.println("[QQBot] 沙盒执行异常 $fn: ${e.message}")
+                            "❌ 工具执行异常（$fn）：${e.message}"
+                        }
                         results.append("【$fn 执行结果】\n$r")
                         // ★ v1.130 结果实时推送（龙虾式：✅ 讲结果）
                         val rShow = r.trim().replace('\n', ' ').take(120)
@@ -1582,7 +1629,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
                     val cleanText = cleanFunctionTags(content)
-                    // ★ v1.131 结果已实时推送 → 模型只做决策不复述（龙虾式：过程已展示，最终别重复）
+                    // ★ v1.132 结果已实时推送 → 模型只做决策不复述（龙虾式：过程已展示，最终别重复）
                     val newPrompt = cleanText + "\n\n【工具执行结果（内部参考，已实时推送给用户，用户已经看到了）】\n" + results + "\n\n请基于以上真实执行结果**继续决策**，不要复述任何已展示的结果/数据：\n- 如果任务已完成且无需再调用工具 → 直接回复一句**简短、自然、像真人**的收尾（如「✅ 搞定，结果都在上面了～」或「搞定！数据已发你，还要我继续查别的吗？」），**严禁重复粘贴结果内容**\n- 如果需要更多操作 → 继续调用函数（输出 [[沙盒:函数名(参数=值)]]）\n- 不要输出任何函数调用语法（除继续调用外），只输出对用户说的话"
                     hist.add("assistant" to cleanText)
                     // ★ v60 收敛不重复：结果已实时推送→不再把 results 拼回最终回复！
@@ -1622,6 +1669,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         content = "✅ 已完成以上任务，结果已实时推送。如需继续操作，直接告诉我～"
                         break
                     }
+                    // ★ v1.132 记录本轮执行到 hist：把「调用+结果」写进上下文，「接着弄」时模型能看到之前干了啥
+                    hist.add("assistant" to cleanText)
+                    hist.add("user" to "【工具执行结果】\n$results")
                     content = nextContent
                     // 无限循环保护：若下一轮无调用则结束
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty()) break
@@ -1629,7 +1679,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 if (loopGuard > 0 && content.isNotBlank()) {
                     // ★ v55 返回前必清洗 XML 标签（防畸形格式泄漏给用户）
                     val cleaned = cleanFunctionTags(content)
-                    // ★ v1.131 龙虾式收敛：执行过工具（loopGuard>0）→ 最终强制模型生成简短收尾，绝不复述已推送的结果
+                    // ★ v1.132 确保用户原始消息已入 hist（循环内可能漏记抛异常时兜底）
+                    if (hist.none { it.second == userText }) hist.add("user" to userText)
+                    // ★ v1.132 龙虾式收敛：执行过工具（loopGuard>0）→ 最终强制模型生成简短收尾，绝不复述已推送的结果
                     try {
                         val closeBody = JSONObject()
                             .put("model", bot.aiModel)
