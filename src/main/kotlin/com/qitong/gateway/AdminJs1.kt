@@ -44,11 +44,16 @@ function applyLang(){
 function saveLangLocal(lang){ curLang = lang; localStorage.setItem('qt_lang', lang); applyLang(); }
 function openModal(title, html, onSave, opts){
  opts = opts || {};
+ // ★ v1.147 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
+ if(typeof onSave !== 'function'){ opts.hideFooter = true; onSave = function(){}; }
  $('modalTitle').textContent = title;
  var footer = opts.hideFooter ? '' : '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn" onclick="modalSave()">保存</button><button class="btn-ghost" onclick="closeModal()">取消</button></div>';
  $('modalBody').innerHTML = html + footer;
  window.modalSave = onSave;
  $('modal').classList.add('show');
+}
+function modalSave(){
+ if(typeof window.modalSave === 'function') window.modalSave();
 }
 function closeModal(){ $('modal').classList.remove('show'); }
 function api(url, opts){
