@@ -270,7 +270,7 @@ loaders.profile = function(){
    '<div class="card"><h3>我的套餐 <span class="badge cyan">' + planName + '</span></h3>' +
     '<div class="form-row"><label>剩余额度</label><div style="font-size:16px;color:var(--cyan)">' + quotaText + '</div></div>' +
     '<div class="form-row"><label>到期时间</label><div style="color:var(--muted);font-size:13px">' + expireText + '</div></div>' +
-    '<div class="form-row"><label>续费（从余额扣款）</label><button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="doSubscribe()">续费 / 升级套餐</button></div></div>',
+    '<div class="form-row"><label>续费（从余额扣款）</label><button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="doSubscribe()">续费 / 升级套餐</button><button class="btn" style="width:auto;padding:8px 20px;margin-top:0;margin-left:6px" onclick="doRedeem()">卡密兑换</button></div></div>',
    '<div class="grid grid-2">',
     '<div class="card"><h3>账户</h3><div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div><div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div></div>',
     '<div class="card"><h3>邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag"></span></div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
@@ -394,6 +394,19 @@ window.doSubscribe = function(){
   var plan = $('subPlan').value; var months = parseInt($('subMonths').value)||1;
   api('/api/users/subscribe', { method:'POST', body: { plan: plan, months: months } }).then(function(r){
    if(r.code===0){ toast(r.msg, true); loaders.profile(); } else toast(r.msg, false);
+  });
+ });
+};
+window.doRedeem = function(){
+ var html = [
+  '<div class="form-row"><label>卡密</label><input id="rdCode" class="input" placeholder="QT..."></div>',
+  '<small style="color:var(--muted)">输入购买的卡密，兑换后金额直接充入余额</small>'
+ ].join('');
+ openModal('卡密兑换', html, function(){
+  var code = $('rdCode').value.trim();
+  if(!code){ toast('请输入卡密', false); return; }
+  api('/api/me/redeem', { method:'POST', body: { code: code } }).then(function(r){
+   if(r.code===0){ toast(r.msg, true); closeModal(); loaders.profile(); } else toast(r.msg, false);
   });
  });
 };
@@ -724,7 +737,7 @@ var balTxt = '<span style="color:var(--green);font-weight:700">¥'+(u.balance||0
    api('/api/auth/me').then(function(me){
     var isAgent = me && me.data && me.data.role === 'agent';
     box.innerHTML = [
-     '<div class="card"><h3 style="display:flex;align-items:center;justify-content:space-between"> ' + (isAgent ? '我的下级用户' : '用户管理') + (isAgent ? '' : '<button class="btn" onclick="openUserCreate()">+ 添加用户</button>') + '</h3><div id="planStatsBox" style="margin-bottom:12px"></div><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>套餐</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>邮箱</th><th>操作</th></tr></thead><tbody>' +
+     '<div class="card"><h3 style="display:flex;align-items:center;justify-content:space-between"> ' + (isAgent ? '我的下级用户' : '用户管理') + (isAgent ? '' : '<button class="btn" style="margin-left:6px" onclick="openGenCards()">🎫 生成卡密</button><button class="btn" onclick="openUserCreate()">+ 添加用户</button>') + '</h3><div id="planStatsBox" style="margin-bottom:12px"></div><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>套餐</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>邮箱</th><th>操作</th></tr></thead><tbody>' +
      rows + '<tr><td colspan="10" style="text-align:center;color:var(--muted)">' + (users.length ? '' : (isAgent ? '暂无下级用户，邀请注册或让客户填你的邀请码' : '暂无用户')) + '</td></tr>' +
      '</tbody></table></div><div style="margin-top:10px;color:var(--muted);font-size:12px">' + (isAgent ? '代理只能管理自己邀请/开通的下级客户；余额用于按模型价格扣费' : '注册页开放注册；可编辑用户角色 / 额度 / 绑定模型 / 系统权限；余额用于按模型价格扣费') + '</div></div>'
     ].join('');
@@ -740,6 +753,31 @@ var balTxt = '<span style="color:var(--green);font-weight:700">¥'+(u.balance||0
   });
  };
 // ===== 管理员直接添加用户 =====
+window.openGenCards = function(){
+ var html = [
+  '<div class="form-row"><label>面额（元）</label><input id="gcAmount" class="input" type="number" value="30" min="1"></div>',
+  '<div class="form-row"><label>数量（1-500）</label><input id="gcCount" class="input" type="number" value="10" min="1" max="500"></div>',
+  '<div class="form-row"><label>批次备注（可选）</label><input id="gcBatch" class="input" placeholder="如：双十一活动"></div>',
+  '<small style="color:var(--muted)">生成后可在列表查看，复制卡密发给用户兑换充值</small>'
+ ].join('');
+ openModal('生成充值卡密', html, function(){
+  var amount = parseFloat($('gcAmount').value)||0; var count = parseInt($('gcCount').value)||1; var batch = $('gcBatch').value.trim();
+  api('/api/admin/gen-cards', { method:'POST', body: { amount: amount, count: count, batch: batch } }).then(function(r){
+   if(r.code===0){ toast(r.msg, true); closeModal(); openCardsList(); } else toast(r.msg, false);
+  });
+ });
+};
+window.openCardsList = function(){
+ api('/api/admin/cards').then(function(r){
+  var list = (r && r.data) || [];
+  var rows = list.map(function(c){
+   var used = c.usedBy > 0;
+   return '<tr><td style="font-family:monospace;font-size:12px">'+esc(c.code)+'</td><td>¥'+(c.amount||0).toFixed(2)+'</td><td>'+esc(c.batch||'')+'</td><td>'+(used?'<span class="badge red">已用</span>':'<span class="badge green">未用</span>')+'</td></tr>';
+  }).join('');
+  var html = '<div style="max-height:60vh;overflow-y:auto"><table><thead><tr><th>卡密</th><th>面额</th><th>批次</th><th>状态</th></tr></thead><tbody>'+(rows||'<tr><td colspan="4" style="text-align:center;color:var(--muted)">暂无卡密</td></tr>')+'</tbody></table></div>';
+  openModal('卡密列表（最近 200 张）', html, function(){});
+ });
+};
 window.openUserCreate = function(){
  var html = [
   '<div class="form-row"><label>用户名 *</label><input id="cuName" class="input" placeholder="至少3个字符"></div>',
