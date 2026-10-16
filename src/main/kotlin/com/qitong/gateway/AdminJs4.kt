@@ -287,7 +287,7 @@ var PAGES = [
   ['models', '模型', '接入'], ['speedtest', '测速排行', '接入'], ['rules', '路由规则', '接入'],
   ['keys', 'API密钥', '接入'], ['chat', '内置聊天', '工具'], ['tickets', '工单中心', '工具'],
   ['settings', '网关设置', '系统'], ['profile', '个人中心', '系统'], ['logs', '全部操作日志', '系统'],
-  ['announcements', '公告管理', '系统'], ['users', '用户管理', '系统'], ['about', '关于我们', '系统']
+  ['announcements', '公告管理', '系统'], ['users', '用户管理', '系统'], ['plans', '套餐管理', '系统'], ['cards', '卡密中心', '系统'], ['about', '关于我们', '系统']
 ];
 var CMDS = [
   { label: '切换 浅色/深色 主题', hint: '命令', run: function(){ toggleTheme(); } },

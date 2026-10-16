@@ -224,6 +224,76 @@ class Database(private val dbPath: String) {
             )
             try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN cost REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
+
+            // ★ v1.146 套餐定义表（管理员可自定义增删改；用户可预览价格与介绍）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS plan_defs (
+                    code TEXT PRIMARY KEY,
+                    name TEXT NOT NULL DEFAULT '',
+                    price REAL NOT NULL DEFAULT 0,
+                    months INTEGER NOT NULL DEFAULT 1,
+                    quota_limit INTEGER NOT NULL DEFAULT 0,
+                    rate_qps INTEGER NOT NULL DEFAULT 60,
+                    rate_daily INTEGER NOT NULL DEFAULT 10000,
+                    intro TEXT NOT NULL DEFAULT '',
+                    sort INTEGER NOT NULL DEFAULT 0,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    builtin INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
+            // ★ v1.146 内置五档套餐种子（仅首次初始化，INSERT OR IGNORE 不覆盖管理员修改）
+            runCatching {
+                val defs = listOf(
+                    listOf("free", "免费版", 0.0, 1, 100000L, 30, 3000, "体验版：10 万 token 额度，QPS 30，适合试用", 1, 1),
+                    listOf("quota", "额度版", 29.0, 1, 10000000L, 120, 20000, "额度版：1000 万 token/月，QPS 120，日限 2 万次", 2, 1),
+                    listOf("subscription", "订阅版", 99.0, 1, 50000000L, 300, 100000, "订阅版：5000 万 token/月，QPS 300，日限 10 万次", 3, 1),
+                    listOf("agent", "代理版", 199.0, 1, 20000000L, 200, 50000, "代理版：2000 万 token/月，含分销返佣权益", 4, 1),
+                    listOf("business", "商业版", 499.0, 1, 0L, 0, 0, "商业版：不限额度、不限速，全部模型解锁", 5, 1)
+                )
+                for (d in defs) {
+                    val cnt = query("SELECT code FROM plan_defs WHERE code=?", d[0])
+                    if (cnt.isEmpty()) {
+                        stmt("INSERT INTO plan_defs (code,name,price,months,quota_limit,rate_qps,rate_daily,intro,sort,enabled,builtin,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                            d[0], d[1], d[2] as Double, d[3] as Int, d[4] as Long, d[5] as Int, d[6] as Int, d[7], d[8] as Int, d[9] as Int, 1, System.currentTimeMillis())
+                    }
+                }
+            }
+            // ★ v1.146 内置五档套餐种子（仅首次初始化，INSERT OR IGNORE 不覆盖管理员修改）
+            runCatching {
+                val defs = listOf(
+                    listOf("free", "免费版", 0.0, 1, 100000L, 30, 3000, "体验版：10 万 token 额度，QPS 30，适合试用", 1, 1),
+                    listOf("quota", "额度版", 29.0, 1, 10000000L, 120, 20000, "额度版：1000 万 token/月，QPS 120，日限 2 万次", 2, 1),
+                    listOf("subscription", "订阅版", 99.0, 1, 50000000L, 300, 100000, "订阅版：5000 万 token/月，QPS 300，日限 10 万次", 3, 1),
+                    listOf("agent", "代理版", 199.0, 1, 20000000L, 200, 50000, "代理版：2000 万 token/月，含分销返佣权益", 4, 1),
+                    listOf("business", "商业版", 499.0, 1, 0L, 0, 0, "商业版：不限额度、不限速，全部模型解锁", 5, 1)
+                )
+                for (d in defs) {
+                    val cnt = query("SELECT code FROM plan_defs WHERE code=?", d[0])
+                    if (cnt.isEmpty()) {
+                        stmt("INSERT INTO plan_defs (code,name,price,months,quota_limit,rate_qps,rate_daily,intro,sort,enabled,builtin,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                            d[0], d[1], d[2] as Double, d[3] as Int, d[4] as Long, d[5] as Int, d[6] as Int, d[7], d[8] as Int, d[9] as Int, 1, System.currentTimeMillis())
+                    }
+                }
+            }
+
+            // ★ v1.146 套餐定义表（管理员可自定义增删改；用户可预览价格与介绍）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS plan_defs (
+                    code TEXT PRIMARY KEY,
+                    name TEXT NOT NULL DEFAULT '',
+                    price REAL NOT NULL DEFAULT 0,
+                    months INTEGER NOT NULL DEFAULT 1,
+                    quota_limit INTEGER NOT NULL DEFAULT 0,
+                    rate_qps INTEGER NOT NULL DEFAULT 60,
+                    rate_daily INTEGER NOT NULL DEFAULT 10000,
+                    intro TEXT NOT NULL DEFAULT '',
+                    sort INTEGER NOT NULL DEFAULT 0,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    builtin INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
             // 人格配置表（对齐原APP人设系统）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS persona (
@@ -1382,6 +1452,43 @@ class Database(private val dbPath: String) {
         return amount
     }
 
+    // ============ v1.146 套餐定义（管理员可自定义增删改） ============
+    fun getPlanDefs(onlyEnabled: Boolean = false): List<Map<String, Any?>> {
+        val sql = if (onlyEnabled) "SELECT * FROM plan_defs WHERE enabled=1 ORDER BY sort ASC, price ASC"
+                  else "SELECT * FROM plan_defs ORDER BY sort ASC, price ASC"
+        return query(sql).map { row ->
+            mapOf(
+                "code" to (row["code"] as? String ?: ""),
+                "name" to (row["name"] as? String ?: ""),
+                "price" to ((row["price"] as? Number)?.toDouble() ?: 0.0),
+                "months" to ((row["months"] as? Number)?.toInt() ?: 1),
+                "quotaLimit" to ((row["quota_limit"] as? Number)?.toLong() ?: 0L),
+                "rateQps" to ((row["rate_qps"] as? Number)?.toInt() ?: 60),
+                "rateDaily" to ((row["rate_daily"] as? Number)?.toInt() ?: 10000),
+                "intro" to (row["intro"] as? String ?: ""),
+                "sort" to ((row["sort"] as? Number)?.toInt() ?: 0),
+                "enabled" to (((row["enabled"] as? Number)?.toInt() ?: 1) == 1),
+                "builtin" to (((row["builtin"] as? Number)?.toInt() ?: 0) == 1)
+            )
+        }
+    }
+    fun getPlanDef(code: String): Map<String, Any?>? = getPlanDefs().firstOrNull { it["code"] == code }
+    fun upsertPlanDef(code: String, name: String, price: Double, months: Int, quotaLimit: Long, rateQps: Int, rateDaily: Int, intro: String, sort: Int, enabled: Boolean) {
+        val exist = query("SELECT code FROM plan_defs WHERE code=?", code).isNotEmpty()
+        if (exist) {
+            stmt("UPDATE plan_defs SET name=?,price=?,months=?,quota_limit=?,rate_qps=?,rate_daily=?,intro=?,sort=?,enabled=?,updated_at=? WHERE code=?",
+                name, price, months, quotaLimit, rateQps, rateDaily, intro, sort, if (enabled) 1 else 0, System.currentTimeMillis(), code)
+        } else {
+            stmt("INSERT INTO plan_defs (code,name,price,months,quota_limit,rate_qps,rate_daily,intro,sort,enabled,builtin,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                code, name, price, months, quotaLimit, rateQps, rateDaily, intro, sort, if (enabled) 1 else 0, 0, System.currentTimeMillis())
+        }
+    }
+    fun deletePlanDef(code: String): Boolean {
+        val row = query("SELECT builtin FROM plan_defs WHERE code=?", code).firstOrNull() ?: return false
+        if (((row["builtin"] as? Number)?.toInt() ?: 0) == 1) return false  // 内置不可删
+        stmt("DELETE FROM plan_defs WHERE code=?", code)
+        return true
+    }
     // ============ 人格配置 ============
 
     fun getPersona(userId: Long): Persona? =

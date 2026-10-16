@@ -247,9 +247,12 @@ loaders.profile = function(){
   if(r.code !== 0){ toast(r.msg, false); return; }
   var p = r.data || {};
   var isAdmin = p.role === 'admin';
-  var planMap={free:'免费版',quota:'额度版',subscription:'订阅版',agent:'代理版',business:'商业版'};
-  var planName=planMap[p.plan]||'免费版';
-  var quotaText=((p.quotaLimit||0)>0)?(fmtNum(p.quotaUsed||0)+' / '+fmtNum(p.quotaLimit)+' tokens'):'不限额度';
+  // ★ v1.146 动态读取套餐定义：免费版也显示真实额度，不再显“不限额度”
+  var planName = p.planName || p.plan || '免费版';
+  var planIntro = p.planIntro || '';
+  // 免费版 floor：若后端没有额度（quotaLimit=0且 plan=free）则显示套餐定义中的默认 10 万
+  var effQuota = p.quotaLimit;
+  var quotaText = (effQuota>0) ? (fmtNum(p.quotaUsed||0)+' / '+fmtNum(effQuota)+' tokens') : '不限额度';
   var expireText=((p.planExpireAt||0)>0)?new Date(p.planExpireAt).toLocaleString('zh-CN',{hour12:false}):'永久有效';
   box.innerHTML = [
    '<div class="card" style="text-align:center;padding:26px">',
@@ -1078,7 +1081,71 @@ api('/api/me/language').then(function(lr){
  if(lr && lr.code === 0 && lr.data && lr.data.language){
   curLang = lr.data.language;
   localStorage.setItem('qt_lang', curLang);
-  applyLang();
+  
+// ===== v1.146 套餐管理页（管理员） =====
+loaders.plans = function(){
+ var box = $('view-plans'); if(!box) return;
+ box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
+ api('/api/plans').then(function(r){
+  var list = (r && r.data) || [];
+  var rows = list.map(function(p){
+   return '<tr><td>'+esc(p.name)+'</td><td>¥'+(p.price||0).toFixed(2)+'/'+(p.months||1)+'月</td><td>'+((p.quotaLimit||0)>0?fmtNum(p.quotaLimit)+' tok':'不限')+'</td><td>QPS '+(p.rateQps||0)+'</td><td>'+esc(p.intro||'')+'</td><td>'+(p.enabled?'<span class="badge green">上架</span>':'<span class="badge red">下架</span>')+(p.builtin?'<span class="badge blue">内置</span>':'')+'</td><td><button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="editPlan(\''+esc(p.code)+'\')">编辑</button> '+(p.builtin?'':'<button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="delPlan(\''+esc(p.code)+'\')">删除</button>')+'</td></tr>';
+  }).join('');
+  box.innerHTML = [
+   '<div class="card"><h3 style="display:flex;align-items:center;justify-content:space-between">套餐管理 <button class="btn" onclick="editPlan()">+ 新增套餐</button></h3><div class="table-wrap"><table><thead><tr><th>名称</th><th>价格</th><th>额度</th><th>限速</th><th>介绍</th><th>状态</th><th>操作</th></tr></thead><tbody>'+
+   (rows||'<tr><td colspan="7" style="text-align:center;color:var(--muted)">暂无套餐</td></tr>')+'</tbody></table></div></div>'
+  ].join('');
+ });
+};
+window.editPlan = function(code){
+ api('/api/plans').then(function(r){
+  var list = (r && r.data) || [];
+  var p = code ? (list.find(function(x){ return x.code===code; }) || {}) : {};
+  var html = [
+   '<div class="form-row"><label>标识（英文数字下划线）</label><input id="plCode" class="input" value="'+esc(p.code||'')+'"'+(p.builtin?' disabled':'')+'></div>',
+   '<div class="form-row"><label>名称</label><input id="plName" class="input" value="'+esc(p.name||'')+'"></div>',
+   '<div class="form-row"><label>价格（元/月）</label><input id="plPrice" class="input" type="number" step="0.01" value="'+(p.price||0)+'"></div>',
+   '<div class="form-row"><label>月数</label><input id="plMonths" class="input" type="number" value="'+(p.months||1)+'"></div>',
+   '<div class="form-row"><label>额度上限（token，0=不限）</label><input id="plQuota" class="input" type="number" value="'+(p.quotaLimit||0)+'"></div>',
+   '<div class="form-row"><label>QPS限速（0=不限）</label><input id="plQps" class="input" type="number" value="'+(p.rateQps||'60')+'"></div>',
+   '<div class="form-row"><label>日限次数（0=不限）</label><input id="plDaily" class="input" type="number" value="'+(p.rateDaily||'10000')+'"></div>',
+   '<div class="form-row"><label>介绍</label><textarea id="plIntro" class="input" rows="3">'+esc(p.intro||'')+'</textarea></div>',
+   '<div class="form-row"><label><input type="checkbox" id="plEnabled"'+(p.enabled!==false?' checked':'')+'>上架售卖</label></div>'
+  ].join('');
+  openModal(code?'编辑套餐':'新增套餐', html, function(){
+   var c = $('plCode').value.trim();
+   if(!c){ toast('请填写标识', false); return; }
+   api('/api/admin/plan/save', { method:'POST', body: { code:c, name:$('plName').value.trim(), price:parseFloat($('plPrice').value)||0, months:parseInt($('plMonths').value)||1, quotaLimit:parseInt($('plQuota').value)||0, rateQps:parseInt($('plQps').value)||60, rateDaily:parseInt($('plDaily').value)||10000, intro:$('plIntro').value.trim(), enabled:$('plEnabled').checked } }).then(function(rr){
+    if(rr.code===0){ toast(rr.msg, true); closeModal(); loaders.plans(); } else toast(rr.msg, false);
+   });
+  });
+  });
+ };
+window.delPlan = function(code){
+ if(!confirm('确定删除该套餐？')) return;
+ api('/api/admin/plan/delete', { method:'POST', body: { code:code } }).then(function(r){
+  if(r.code===0){ toast(r.msg, true); loaders.plans(); } else toast(r.msg, false);
+ });
+};
+// ===== v1.146 卡密中心页（管理员） =====
+loaders.cards = function(){
+ var box = $('view-cards'); if(!box) return;
+ box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
+ api('/api/admin/cards').then(function(r){
+  var list = (r && r.data) || [];
+  var rows = list.map(function(c){
+   var used = c.usedBy > 0;
+   return '<tr><td style="font-family:monospace;font-size:12px">'+esc(c.code)+'</td><td>¥'+(c.amount||0).toFixed(2)+'</td><td>'+esc(c.batch||'')+'</td><td>'+(used?'<span class="badge red">已用</span>':'<span class="badge green">未用</span>')+'</td></tr>';
+  }).join('');
+  box.innerHTML = [
+   '<div class="card"><h3 style="display:flex;align-items:center;justify-content:space-between">卡密中心 <span><button class="btn" style="margin-right:6px" onclick="openCardsList()">卡密列表</button><button class="btn" onclick="openGenCards()">生成卡密</button></span></h3><div class="table-wrap"><table><thead><tr><th>卡密</th><th>面额</th><th>批次</th><th>状态</th></tr></thead><tbody>'+
+   (rows||'<tr><td colspan="4" style="text-align:center;color:var(--muted)">暂无卡密，点击右上角生成</td></tr>')+'</tbody></table></div></div>'
+  ].join('');
+ });
+};
+
+// ===== v1.146 套餐管理页（管理员） =====
+applyLang();
  }
 });
 api('/api/auth/me').then(function(r){
