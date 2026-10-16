@@ -129,6 +129,10 @@ JAR=$(ls build/libs/qitong-gateway-*-all.jar | head -1)
 scp -i /root/.ssh/hk_server_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
   "$JAR" root@103.23.149.10:/opt/qitong-gateway/qitong-gateway.jar.new
 ```
+**★ gzip 管道备用方案（scp 大文件被 Connection closed 时用）：**
+```bash
+gzip -c "$JAR" | ssh -i /root/.ssh/hk_server_key -o StrictHostKeyChecking=no root@103.23.149.10 'cat > /opt/qitong-gateway/g.gz && cd /opt/qitong-gateway && gunzip -f g.gz && mv g qitong-gateway.jar.new'
+```
 
 **② 服务器换 jar + 重建容器**（用 linux_ssh 通道执行，通道已配置免密）：
 ```bash
