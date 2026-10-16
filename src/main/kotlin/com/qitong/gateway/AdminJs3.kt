@@ -724,10 +724,18 @@ var balTxt = '<span style="color:var(--green);font-weight:700">¥'+(u.balance||0
    api('/api/auth/me').then(function(me){
     var isAgent = me && me.data && me.data.role === 'agent';
     box.innerHTML = [
-     '<div class="card"><h3 style="display:flex;align-items:center;justify-content:space-between"> ' + (isAgent ? '我的下级用户' : '用户管理') + (isAgent ? '' : '<button class="btn" onclick="openUserCreate()">+ 添加用户</button>') + '</h3><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>套餐</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>邮箱</th><th>操作</th></tr></thead><tbody>' +
+     '<div class="card"><h3 style="display:flex;align-items:center;justify-content:space-between"> ' + (isAgent ? '我的下级用户' : '用户管理') + (isAgent ? '' : '<button class="btn" onclick="openUserCreate()">+ 添加用户</button>') + '</h3><div id="planStatsBox" style="margin-bottom:12px"></div><div class="table-wrap"><table><thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>套餐</th><th>余额</th><th>额度使用</th><th>绑定模型</th><th>系统权限</th><th>邮箱</th><th>操作</th></tr></thead><tbody>' +
      rows + '<tr><td colspan="10" style="text-align:center;color:var(--muted)">' + (users.length ? '' : (isAgent ? '暂无下级用户，邀请注册或让客户填你的邀请码' : '暂无用户')) + '</td></tr>' +
      '</tbody></table></div><div style="margin-top:10px;color:var(--muted);font-size:12px">' + (isAgent ? '代理只能管理自己邀请/开通的下级客户；余额用于按模型价格扣费' : '注册页开放注册；可编辑用户角色 / 额度 / 绑定模型 / 系统权限；余额用于按模型价格扣费') + '</div></div>'
     ].join('');
+    // ★ v1.141 套餐统计条（管理员）
+    if(!isAgent){
+     api('/api/admin/plan-stats').then(function(ps){
+      var el=$('planStatsBox'); if(!el||!ps||ps.code!==0) return;
+      var d=ps.data||{}; var rows=(d.distribution||[]).map(function(x){ return '<span class="badge cyan" style="margin-right:6px">'+x.name+' '+x.count+'人</span>'; }).join('');
+      el.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;background:var(--inset);border-radius:8px;font-size:12px">'+rows+'<span class="badge green">有效付费 '+((d.activePaid)||0)+'</span><span class="badge red">已过期 '+((d.expired)||0)+'</span><span class="badge amber">7天内到期 '+((d.expiringSoon)||0)+'</span><span style="color:var(--muted)">累计充值 ¥'+((d.totalRecharge)||0).toFixed(2)+'</span></div>';
+     });
+    }
    });
   });
  };
