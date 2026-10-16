@@ -1001,6 +1001,8 @@ class Database(private val dbPath: String) {
                 uploadBytes = (it["upload_bytes"] as? Number)?.toLong() ?: 0,
                 downloadBytes = (it["download_bytes"] as? Number)?.toLong() ?: 0,
                 apiKeyLabel = it["api_key_label"] as? String ?: "",
+                userId = (it["user_id"] as? Number)?.toLong() ?: 0,
+                cost = (it["cost"] as? Number)?.toDouble() ?: 0.0,
                 createdAt = (it["created_at"] as? Number)?.toLong() ?: 0
             )
         }
@@ -1019,6 +1021,8 @@ class Database(private val dbPath: String) {
                 uploadBytes = (it["upload_bytes"] as? Number)?.toLong() ?: 0,
                 downloadBytes = (it["download_bytes"] as? Number)?.toLong() ?: 0,
                 apiKeyLabel = it["api_key_label"] as? String ?: "",
+                userId = (it["user_id"] as? Number)?.toLong() ?: 0,
+                cost = (it["cost"] as? Number)?.toDouble() ?: 0.0,
                 createdAt = (it["created_at"] as? Number)?.toLong() ?: 0
             )
         }
