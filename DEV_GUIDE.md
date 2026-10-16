@@ -146,6 +146,8 @@ docker compose up -d --build    # ★ 必须 --build，否则不 COPY 新 jar！
 - **`docker compose up -d --force-recreate` 不会重新 COPY jar**！必须 `--build`（或 `update --force` + `up -d --build`）
 - 服务器 `/opt/qitong-gateway/` 是源码+jar 混合目录，但**服务器无 git 仓库、无 gradle**，只能靠换 jar 部署，别在服务器上拉代码构建
 - 部署后等 10~15 秒（容器启动+健康检查），再验证 /health
+- **v1.141+ 血泪坑：服务器 sshd 会间歇性握手限流**（22 端口 open 但 ssh 卡在 connect，主服务 HTTP 一直正常）。频繁重试会加重限流。对策：①等 60~180s 自动恢复；②加大 ConnectTimeout；③别用循环狂试；④部署脚本优先 gzip 管道（比 scp 抗抖动）
+- **v1.141+ 血泪坑：服务器 sshd 会间歇性握手限流**（22 端口 open 但 ssh 卡在 connect，主服务 HTTP 一直正常）。频繁重试会加重限流。对策：①等 60~180s 自动恢复；②加大 ConnectTimeout；③别用循环狂试；④部署脚本优先 gzip 管道（比 scp 抗抖动）
 
 ---
 
