@@ -247,6 +247,10 @@ loaders.profile = function(){
   if(r.code !== 0){ toast(r.msg, false); return; }
   var p = r.data || {};
   var isAdmin = p.role === 'admin';
+  var planMap={free:'免费版',quota:'额度版',subscription:'订阅版',agent:'代理版',business:'商业版'};
+  var planName=planMap[p.plan]||'免费版';
+  var quotaText=((p.quotaLimit||0)>0)?(fmtNum(p.quotaUsed||0)+' / '+fmtNum(p.quotaLimit)+' tokens'):'不限额度';
+  var expireText=((p.planExpireAt||0)>0)?new Date(p.planExpireAt).toLocaleString('zh-CN',{hour12:false}):'永久有效';
   box.innerHTML = [
    '<div class="card" style="text-align:center;padding:26px">',
     '<div class="avatar">' + esc((p.displayName || p.username || '?').substring(0,1).toUpperCase()) + '</div>',
@@ -263,6 +267,10 @@ loaders.profile = function(){
     '<div class="card"><h3>QQ 绑定码 <span style="font-size:12px;color:var(--muted)">在 QQ 群里发绑定码即可登录绑定，无需私聊</span></h3>' +
      '<div class="form-row"><label>生成一次性绑定码（5分钟内有效）</label><button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="genBindCode()">生成绑定码</button></div>' +
      '<div id="bindCodeBox" style="color:var(--muted);font-size:12px">点击「生成绑定码」→ 得到 6 位码 → 在 QQ 群里发「绑定码 123456」→ 自动绑定到当前账号</div></div>',
+   '<div class="card"><h3>我的套餐 <span class="badge cyan">' + planName + '</span></h3>' +
+    '<div class="form-row"><label>剩余额度</label><div style="font-size:16px;color:var(--cyan)">' + quotaText + '</div></div>' +
+    '<div class="form-row"><label>到期时间</label><div style="color:var(--muted);font-size:13px">' + expireText + '</div></div>' +
+    '<div class="form-row"><label>续费（从余额扣款）</label><button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="doSubscribe()">续费 / 升级套餐</button></div></div>',
    '<div class="grid grid-2">',
     '<div class="card"><h3>账户</h3><div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div><div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div></div>',
     '<div class="card"><h3>邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag"></span></div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
@@ -374,6 +382,19 @@ loaders.profile = function(){
     '<button class="btn-ghost" style="margin-top:8px" onclick="genBindCode()">重新生成</button></div>';
    toast(r.msg, true);
   } else toast(r.msg||'生成失败', false);
+ });
+};
+window.doSubscribe = function(){
+ var html = [
+  '<div class="form-row"><label>选择套餐</label><select id="subPlan" class="input"><option value="quota">额度版 ¥29/月</option><option value="subscription">订阅版 ¥99/月</option><option value="agent">代理版 ¥199/月</option><option value="business">商业版 ¥499/月</option></select></div>',
+  '<div class="form-row"><label>续费月数</label><input id="subMonths" class="input" type="number" value="1" min="1" max="36"></div>',
+  '<small style="color:var(--muted)">费用从账户余额扣除，续费后套餐到期时间自动顺延</small>'
+ ].join('');
+ openModal('续费 / 升级套餐', html, function(){
+  var plan = $('subPlan').value; var months = parseInt($('subMonths').value)||1;
+  api('/api/users/subscribe', { method:'POST', body: { plan: plan, months: months } }).then(function(r){
+   if(r.code===0){ toast(r.msg, true); loaders.profile(); } else toast(r.msg, false);
+  });
  });
 };
 window.loadBalanceLogs = function(){
