@@ -204,6 +204,15 @@ object HeartbeatEngine {
                     }
                 }
             }
+            // ★ v1.142 套餐到期预警：扫描 3 天内到期的付费套餐用户，提醒续费
+            runCatching {
+                val now2 = System.currentTimeMillis()
+                val soon = now2 + 3L * 24 * 3600 * 1000
+                val expiring = db.getUsers().filter { it.plan != "free" && it.planExpireAt > now2 && it.planExpireAt < soon }
+                if (expiring.isNotEmpty()) {
+                    okLines.add("⏰ 有 ${expiring.size} 个套餐 3 天内到期：" + expiring.joinToString("、") { it.username })
+                }
+            }
             // ★ v76 心跳提示词注入（用户自定义）
             if (prompt.isNotBlank()) okLines.add("💬 心跳提示词：$prompt")
 
