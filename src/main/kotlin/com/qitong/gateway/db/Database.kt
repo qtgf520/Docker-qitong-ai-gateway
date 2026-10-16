@@ -209,6 +209,19 @@ class Database(private val dbPath: String) {
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN notify_enabled INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN plan_expire_at INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+
+            // ★ v1.143 充值卡密表：管理员生成卡密，用户兑换充值
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS recharge_cards (
+                    code TEXT PRIMARY KEY,
+                    amount REAL NOT NULL DEFAULT 0,
+                    batch TEXT NOT NULL DEFAULT '',
+                    used_by INTEGER NOT NULL DEFAULT 0,
+                    used_at INTEGER NOT NULL DEFAULT 0,
+                    created_by INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
             try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE token_usage ADD COLUMN cost REAL NOT NULL DEFAULT 0") } catch (_: Exception) {}
             // 人格配置表（对齐原APP人设系统）
@@ -1312,6 +1325,58 @@ class Database(private val dbPath: String) {
 
     /** 查询用户余额 */
     fun getUserBalance(userId: Long): Double = getUserById(userId)?.balance ?: 0.0
+
+    // ============ v1.143 充值卡密 ============
+    /** 批量生成卡密（返回生成的明文卡密列表） */
+    fun genRechargeCards(amount: Double, count: Int, batch: String, createdBy: Long): List<String> {
+        val list = mutableListOf<String>()
+        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        val rnd = java.util.Random()
+        for (i in 1..count.coerceIn(1, 500)) {
+            val sb = StringBuilder()
+            for (j in 1..16) sb.append(chars[rnd.nextInt(chars.length)])
+            val code = "QT" + sb.toString()
+            try {
+                stmt("INSERT INTO recharge_cards (code,amount,batch,created_by,created_at) VALUES (?,?,?,?,?)",
+                    code, amount, batch, createdBy, System.currentTimeMillis())
+                list.add(code)
+            } catch (_: Exception) {}
+        }
+        return list
+    }
+    /** 卡密列表（管理员） */
+    fun getRechargeCards(batch: String = "", limit: Int = 200): List<Map<String, Any?>> {
+        val sql = if (batch.isBlank()) "SELECT * FROM recharge_cards ORDER BY created_at DESC LIMIT $limit"
+                  else "SELECT * FROM recharge_cards WHERE batch=? ORDER BY created_at DESC LIMIT $limit"
+        val rows = if (batch.isBlank()) query(sql) else query(sql, batch)
+        return rows.map { row ->
+            mapOf(
+                "code" to (row["code"] as? String ?: ""),
+                "amount" to ((row["amount"] as? Number)?.toDouble() ?: 0.0),
+                "batch" to (row["batch"] as? String ?: ""),
+                "usedBy" to ((row["used_by"] as? Number)?.toLong() ?: 0L),
+                "usedAt" to ((row["used_at"] as? Number)?.toLong() ?: 0L),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+    }
+    /** 兑换卡密：成功返回充值金额，失败返回 null（无效/已用） */
+    fun redeemRechargeCard(code: String, userId: Long): Double? {
+        val c = code.trim().uppercase()
+        val rows = query("SELECT * FROM recharge_cards WHERE code=?", c)
+        val row = rows.firstOrNull() ?: return null
+        val usedBy = (row["used_by"] as? Number)?.toLong() ?: 0L
+        if (usedBy > 0) return null
+        val amount = (row["amount"] as? Number)?.toDouble() ?: return null
+        stmt("UPDATE recharge_cards SET used_by=?, used_at=? WHERE code=? AND used_by=0",
+            userId, System.currentTimeMillis(), c)
+        // 复核：确认本次更新生效（防并发重复兑换）
+        val after = query("SELECT used_by FROM recharge_cards WHERE code=?", c).firstOrNull()
+        if ((after?.get("used_by") as? Number)?.toLong() != userId) return null
+        rechargeBalance(userId, amount)
+        addBalanceLog(userId, "card", amount, "卡密充值 " + c)
+        return amount
+    }
 
     // ============ 人格配置 ============
 
