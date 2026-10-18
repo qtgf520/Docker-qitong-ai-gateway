@@ -211,7 +211,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.148"))
+                put("version", JsonPrimitive("1.149"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -672,7 +672,7 @@ fun Application.moduleWeb(database: Database) {
                 put("data", AdminApi.getStats(database, u))
             }, 200)
         }
-                // ★ v1.148 套餐统计报表（管理员）：各套餐用户分布 + 续费收入 + 到期预警
+                // ★ v1.149 套餐统计报表（管理员）：各套餐用户分布 + 续费收入 + 到期预警
         get("/api/admin/plan-stats") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
@@ -1979,7 +1979,7 @@ fun Application.moduleWeb(database: Database) {
             val validPlans = listOf("free", "quota", "subscription", "agent", "business")
             if (newPlan !in validPlans) { AdminApi.fail(call, "无效套餐：$newPlan（可选 ${validPlans.joinToString("/")}）", 400); return@post }
             val expireAt = body["planExpireAt"]?.jsonPrimitive?.content?.toLongOrNull() ?: target.planExpireAt
-            // ★ v1.148 套餐权益自动填充：未显式传额度时，按套餐档位套用默认权益（额度 + 限速）
+            // ★ v1.149 套餐权益自动填充：未显式传额度时，按套餐档位套用默认权益（额度 + 限速）
             val planDefaults = mapOf(
                 "free" to Triple(100000L, "30", "3000"),        // 免费版：10万 token 额度，QPS 30，每日 3000 次
                 "quota" to Triple(10000000L, "120", "20000"),   // 额度版：1000万 token，QPS 120，每日 2 万次
@@ -2001,7 +2001,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "设置套餐", "将 ${target.username} 套餐设为 $newPlan（到期 $expireAt，额度 $newQuota，QPS $qps，日限 $daily）", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("plan" to newPlan, "planExpireAt" to expireAt, "quotaLimit" to newQuota, "rateQps" to qps, "rateDaily" to daily), "套餐已设为 $newPlan")
         }
-        // ★ v1.148 套餐月费表（元/月）：免费版 0，其余按档收费
+        // ★ v1.149 套餐月费表（元/月）：免费版 0，其余按档收费
         // 订阅续费：从用户余额扣月费，延长套餐到期时间（months 个月）
         post("/api/users/subscribe") {
             val u = call.requireAuth(database) ?: return@post
@@ -2013,7 +2013,7 @@ fun Application.moduleWeb(database: Database) {
             val plan = body["plan"]?.jsonPrimitive?.content ?: target.plan
             val months = body["months"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
             if (months !in 1..36) { AdminApi.fail(call, "续费月数无效（1-36）", 400); return@post }
-            // ★ v1.148 从 plan_defs 读取套餐定义（支持管理员自定义套餐）
+            // ★ v1.149 从 plan_defs 读取套餐定义（支持管理员自定义套餐）
             val planDef = database.getPlanDef(plan) ?: run { AdminApi.fail(call, "无效套餐：$plan", 400); return@post }
             if (planDef["enabled"] != true) { AdminApi.fail(call, "套餐已下架：$plan", 400); return@post }
             val monthPrice = (planDef["price"] as? Number)?.toDouble() ?: 0.0
@@ -2026,7 +2026,7 @@ fun Application.moduleWeb(database: Database) {
             // 延长到期时间：从当前到期时间（或现在）起顺延 months 个月（按 30 天/月）
             val base = if (target.planExpireAt > System.currentTimeMillis()) target.planExpireAt else System.currentTimeMillis()
             val newExpire = base + months * 30L * 24 * 3600 * 1000
-            // ★ v1.148 续费后套用套餐权益（额度 + 限速）
+            // ★ v1.149 续费后套用套餐权益（额度 + 限速）
             val q = (planDef["quotaLimit"] as? Number)?.toLong() ?: target.quotaLimit
             val rq = (planDef["rateQps"] as? Number)?.toInt() ?: 60
             val rd = (planDef["rateDaily"] as? Number)?.toInt() ?: 10000
@@ -2036,13 +2036,13 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, mapOf("plan" to plan, "planExpireAt" to newExpire, "paid" to total, "months" to months), "续费成功：$plan ${months} 个月")
         }
 
-        // ★ v1.148 套餐定义列表（用户可看已上架的；管理员可看全部）——供订阅预览
+        // ★ v1.149 套餐定义列表（用户可看已上架的；管理员可看全部）——供订阅预览
         get("/api/plans") {
             val u = call.requireAuth(database) ?: return@get
             val onlyEnabled = u.role != "admin"
             AdminApi.ok(call, database.getPlanDefs(onlyEnabled), "ok")
         }
-        // ★ v1.148 管理员新增/编辑套餐定义
+        // ★ v1.149 管理员新增/编辑套餐定义
         post("/api/admin/plan/save") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
@@ -2062,7 +2062,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "保存套餐", "套餐 $code（$name）价¥$price 额度$quotaLimit", call.request.local.remoteHost)
             AdminApi.ok(call, null, "套餐已保存")
         }
-        // ★ v1.148 管理员删除套餐（内置不可删）
+        // ★ v1.149 管理员删除套餐（内置不可删）
         post("/api/admin/plan/delete") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
@@ -2087,7 +2087,7 @@ fun Application.moduleWeb(database: Database) {
                 "totalRecharge" to u.totalRecharge
             ), "ok")
         }
-        // ★ v1.148 佣金提现申请（从余额扣减，记流水；最低 10 元）
+        // ★ v1.149 佣金提现申请（从余额扣减，记流水；最低 10 元）
         post("/api/me/withdraw") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -2099,7 +2099,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "提现申请", "提现 ¥$amount 到 $acct", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("amount" to amount, "balance" to database.getUserBalance(u.id)), "提现申请已提交，管理员审核后到账")
         }
-        // ★ v1.148 管理员生成充值卡密
+        // ★ v1.149 管理员生成充值卡密
         post("/api/admin/gen-cards") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
@@ -2112,14 +2112,14 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "生成卡密", "生成 ${codes.size} 张 ¥$amount 卡密（批次 $batch）", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("batch" to batch, "count" to codes.size, "codes" to codes), "已生成 ${codes.size} 张卡密")
         }
-        // ★ v1.148 卡密列表（管理员）
+        // ★ v1.149 卡密列表（管理员）
         get("/api/admin/cards") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
             val batch = call.request.queryParameters["batch"] ?: ""
             AdminApi.ok(call, database.getRechargeCards(batch), "ok")
         }
-        // ★ v1.148 兑换卡密（用户）
+        // ★ v1.149 兑换卡密（用户）
         post("/api/me/redeem") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -2161,12 +2161,12 @@ fun Application.moduleWeb(database: Database) {
                 "totalRecharge" to u.totalRecharge,
                 "inviteCode" to inviteCode,
                 "createdAt" to u.createdAt,
-                // ★ v1.148 个人中心套餐卡片字段
+                // ★ v1.149 个人中心套餐卡片字段
                 "plan" to u.plan,
                 "planExpireAt" to u.planExpireAt,
                 "quotaLimit" to (if (u.plan==="free" && u.quotaLimit<=0) (database.getPlanDef("free")?.get("quotaLimit") as? Number)?.toLong() ?: 100000L else u.quotaLimit),
                 "quotaUsed" to u.quotaUsed,
-                // ★ v1.148 返回套餐定义（名称/介绍/价格），免费版补齐默认额度供前端显示
+                // ★ v1.149 返回套餐定义（名称/介绍/价格），免费版补齐默认额度供前端显示
                 "planName" to (database.getPlanDef(u.plan)?.get("name") as? String ?: u.plan),
                 "planIntro" to (database.getPlanDef(u.plan)?.get("intro") as? String ?: ""),
                 "planPrice" to ((database.getPlanDef(u.plan)?.get("price") as? Number)?.toDouble() ?: 0.0)
@@ -2247,7 +2247,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.148"))
+                put("version", JsonPrimitive("1.149"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3046,7 +3046,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.148"))
+                    put("version", JsonPrimitive("1.149"))
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()

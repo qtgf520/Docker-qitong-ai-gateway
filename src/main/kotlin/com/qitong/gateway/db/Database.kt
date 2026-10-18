@@ -870,7 +870,7 @@ class Database(private val dbPath: String) {
         val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUsers)
         stmt(
             "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window,owner_id,is_public,price,authorized_users,supports_vision,supports_audio,supports_video) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0
         )
         return lastInsertId()
     }
@@ -1644,7 +1644,8 @@ class Database(private val dbPath: String) {
         runCatching { stmt("ALTER TABLE models ADD COLUMN supports_video INTEGER NOT NULL DEFAULT 0") }
     }
     fun seedUpdateLogsIfEmpty() {
-        val logs = listOf(
+val logs = listOf(
+            Triple("v1.149", "修复服务商同步模型全部失败（SQLite 参数错位）", "修复「服务商获取模型仍失败」真正根因：addModel 的 INSERT 语句 16 个占位符却传了 19 个参数（v1.105 加授权字段时尾部 supportsVision/Audio/Video 重复复制三遍）→ JDBC「Parameter index out of range」异常，只要该服务商有新增模型同步就必然失败。排查过程：容器内实测上游 /v1/models 全部 HTTP 200、key 有效、itboy 62 个模型都能拉到，但落库为 0 → 定位 SQL 参数不匹配。已修复参数对齐；顺带全库扫描其他 INSERT 均正常"),
             Triple("v1.148", "服务商获取模型失败精准修复", "修复「服务商无法获取模型」：同步模型固定走代理通道导致直连服务商全失败。改为直连+代理双通道（优先直连，失败切代理兜底）；区分具体错误原因展示给前端（网络不通/401鉴权失败/403/404接口不支持/429限流/5xx/格式异常）；兼容 Ollama models[] 与 OpenAI data[] 两种返回格式"),
             Triple("v1.133", "机器人全面审计修复（对齐 OpenClaw 龙虾式）", "审计 QQ/微信 askModel 代码定位并修复 7 大缺陷：①微信 loop++ 双递增 bug（每轮+2 → 任务最多跑10轮就被截断=「卡住」元凶）②QQ 缺假调用引导（模型说在调用但没输出标签 → 直接中断，对齐微信 v77）③QQ 单工具执行无异常保护（execute 抛异常 → 整个任务崩溃）④QQ 预推假思考（一进循环就推「正在处理」，与实际脱节，改真思考）⑤hist 不记执行结果（「接着弄」时模型看不到之前干了啥，上下文断档）⑥微信 send lambda 无异常保护（推送失败中断 AI 思考）⑦循环内记录工具调用结果到上下文（连续操作上下文不断链）"),
             Triple("v1.131", "机器人不重复内容（龙虾式收敛修复）", "修复「重复执行里的内容」：过程推送已实时展示工具结果但最终回复模型又复述。QQ 补 closeBody 最终收敛（循环结束且执行过工具→单独调模型生成简短自然收尾，绝不复述）；newPrompt 精修明确用户已看到结果只做决策严禁重复粘贴；对齐 OpenClaw 龙虾式精髓（过程实时推送+最终简洁收尾）"),

@@ -373,7 +373,7 @@ private fun providerToMap(p: Provider) = mapOf(
 
     /**
      * 同步服务商模型列表（调上游 /v1/models）
-     * ★ v1.148 修复「服务商无法获取模型」：直连优先+代理兜底双通道；区分 HTTP 状态码/网络异常/解析失败；
+     * ★ v1.149 修复「服务商无法获取模型」：直连优先+代理兜底双通道；区分 HTTP 状态码/网络异常/解析失败；
      *   兼容 OpenAI data[] 与 Ollama models[] 两种返回格式；返回具体错误原因
      */
     suspend fun syncProviderModels(database: Database, providerId: Long): SyncResult {
