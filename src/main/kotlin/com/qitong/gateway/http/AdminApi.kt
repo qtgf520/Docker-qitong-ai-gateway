@@ -368,35 +368,81 @@ private fun providerToMap(p: Provider) = mapOf(
         return model.isEnabled
     }
 
-    /** 同步服务商模型列表（调上游 /v1/models） */
-    suspend fun syncProviderModels(database: Database, providerId: Long): Int {
-        val provider = database.getProviderById(providerId) ?: return 0
-        val url = provider.resolvedBaseUrl.trimEnd('/') + "/v1/models"
-        val client = com.qitong.gateway.network.UpstreamClient.getClient(true)
-        val request = okhttp3.Request.Builder().url(url).get()
-            .apply { if (!provider.apiKey.isNullOrBlank()) header("Authorization", "Bearer ${provider.apiKey}") }
-            .build()
-        val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { client.newCall(request).execute() }.getOrNull()
-        } ?: return 0
-        if (!response.isSuccessful) { response.close(); return 0 }
-        val bodyStr = response.body?.string() ?: ""
-        response.close()
-        return try {
-            val root = strictJson.parseToJsonElement(bodyStr).jsonObject
-            val data = root["data"]?.jsonArray ?: return 0
-            var count = 0
-            for (item in data) {
-                val obj = item.jsonObject
-                val modelId = obj["id"]?.jsonPrimitive?.content ?: continue
-                val display = obj["display_name"]?.jsonPrimitive?.content ?: obj["id"]?.jsonPrimitive?.content ?: modelId
-                if (database.getModelByKey(providerId, modelId) == null) {
-                    database.addModel(AiModel(providerId = providerId, modelId = modelId, displayName = display, syncStatus = "Synced"))
-                    count++
-                }
+    /** 同步结果（count=新增数，error=失败原因，null 表示成功） */
+    data class SyncResult(val count: Int, val error: String? = null)
+
+    /**
+     * 同步服务商模型列表（调上游 /v1/models）
+     * ★ v1.148 修复「服务商无法获取模型」：直连优先+代理兜底双通道；区分 HTTP 状态码/网络异常/解析失败；
+     *   兼容 OpenAI data[] 与 Ollama models[] 两种返回格式；返回具体错误原因
+     */
+    suspend fun syncProviderModels(database: Database, providerId: Long): SyncResult {
+        val provider = database.getProviderById(providerId) ?: return SyncResult(0, "服务商不存在")
+        val url = (provider.resolvedBaseUrl.trimEnd('/')) + "/v1/models"
+
+        // 双通道：直连优先（聊天转发大多数走直连），失败再走代理兜底，保证同步与转发通道一致
+        val clients = listOf(
+            "直连" to com.qitong.gateway.network.UpstreamClient.getClient(false),
+            "代理" to com.qitong.gateway.network.UpstreamClient.getClient(true)
+        )
+
+        var lastErr = "网络连接失败"
+        for ((label, client) in clients) {
+            val request = okhttp3.Request.Builder().url(url).get()
+                .apply { if (!provider.apiKey.isNullOrBlank()) header("Authorization", "Bearer ${provider.apiKey}") }
+                .addHeader("Accept", "application/json")
+                .build()
+            val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { client.newCall(request).execute() }.getOrNull()
             }
-            count
-        } catch (_: Exception) { 0 }
+            if (response == null) {
+                lastErr = "${label}通道请求失败（网络不通或超时）"
+                continue
+            }
+            val code = response.code
+            val bodyStr = runCatching { response.body?.string() }.getOrNull() ?: ""
+            response.close()
+            if (!response.isSuccessful) {
+                lastErr = "${label}通道 HTTP $code：${httpStatusHint(code)}"
+                // 401/403 明确鉴权失败，换通道也一样，直接返回
+                if (code == 401 || code == 403) return SyncResult(0, lastErr)
+                continue
+            }
+            if (bodyStr.isBlank()) { lastErr = "${label}通道返回空响应"; continue }
+
+            // 解析：优先 OpenAI data[]，兼容 Ollama models[]
+            return try {
+                val root = strictJson.parseToJsonElement(bodyStr).jsonObject
+                val data = root["data"]?.jsonArray ?: root["models"]?.jsonArray
+                if (data == null) {
+                    SyncResult(0, "返回格式无法识别（期望 OpenAI data[] 或 Ollama models[]），响应前200字符：${bodyStr.take(200)}")
+                } else {
+                    var count = 0
+                    for (item in data) {
+                        val obj = item.jsonObject
+                        val modelId = obj["id"]?.jsonPrimitive?.content ?: obj["name"]?.jsonPrimitive?.content ?: continue
+                        val display = obj["display_name"]?.jsonPrimitive?.content ?: obj["name"]?.jsonPrimitive?.content ?: modelId
+                        if (database.getModelByKey(providerId, modelId) == null) {
+                            database.addModel(AiModel(providerId = providerId, modelId = modelId, displayName = display, syncStatus = "Synced"))
+                            count++
+                        }
+                    }
+                    SyncResult(count)
+                }
+            } catch (e: Exception) {
+                SyncResult(0, "解析响应失败：${e.message?.take(100)}")
+            }
+        }
+        return SyncResult(0, lastErr)
+    }
+
+    private fun httpStatusHint(code: Int): String = when (code) {
+        401 -> "API Key 无效或未提供，请检查服务商秘钥"
+        403 -> "无权限访问该服务商模型列表"
+        404 -> "该服务商不支持 /v1/models 接口"
+        429 -> "请求过于频繁（限流），请稍后再试"
+        in 500..599 -> "服务商服务器错误"
+        else -> "未知错误"
     }
 
     /** 批量测速（三指标：TTFT/TPS/总耗时，串行测试全部启用模型） */
