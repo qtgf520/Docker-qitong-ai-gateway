@@ -28,6 +28,7 @@ object SandboxEngine {
         "provider_get_all", "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
         "user_balance", "user_recharge", "user_deduct",
         "terminal_run", "terminal_create", "terminal_list", "terminal_status",
+        "web_browse",  // ★ v1.150 网页浏览（curl 抓取转文本，felinks 风格）
         "qq_bots_list", "qq_bots_groups", "qq_points_rank", "help",
         "mcp_list", "mcp_call", "web_search",
         "workflow_run", "workflow_list",
@@ -62,6 +63,7 @@ object SandboxEngine {
             .put(func("user_recharge", "给用户充值（修改，需管理员）", "admin", "modify", listOf(param("username", true, "网关用户名"), param("amount", true, "金额数字")), "充值结果/新余额"))
             .put(func("user_deduct", "给用户扣款（修改，需管理员，余额可扣成负数标记欠费）", "admin", "modify", listOf(param("username", true, "网关用户名"), param("amount", true, "金额数字")), "扣款结果/新余额"))
             .put(func("terminal_run", "沙盒执行终端命令（高危，需管理员确认）", "admin", "high", listOf(param("cmd", true, "待执行命令")), "终端输出"))
+            .put(func("web_browse", "抓取网页并提取标题/正文/链接（felinks 式文本浏览；用于查资料/看网页内容）", "user", "low", listOf(param("url", true, "网页地址 http(s)://")), "网页标题+正文文本"))
             .put(func("terminal_create", "创建临时终端会话（管理员）", "admin", "modify", listOf(param("label", false, "终端名称，如 终端1")), "终端ID/名称"))
             .put(func("terminal_list", "查看已创建的终端会话列表（管理员）", "admin", "read", emptyList(), "终端ID/名称列表"))
             .put(func("terminal_status", "查询异步终端任务执行状态/结果（管理员）", "admin", "read", listOf(param("id", true, "异步任务ID，如 task-2001")), "任务运行中/完成/输出"))
@@ -997,10 +999,46 @@ $KNOWLEDGE_JSON
                     }
                 }
                 "terminal_status" -> {
-                    // ★ v65 查询异步任务状态/结果（大模型轮询长任务）
+// ★ v65 查询异步任务状态/结果（大模型轮询长任务）
                     val id = args["id"] ?: ""
                     if (id.isBlank()) "⚠️ 语法：terminal_status(id=任务ID，如 task-2001)"
                     else com.qitong.gateway.http.TerminalManager.asyncStatus(id.trim())
+                }
+                "web_browse" -> {
+                    // ★ v1.150 网页浏览（felinks 式文本抓取）：curl 抓 HTML → 去标签 → 提取标题/正文/链接
+                    val url = args["url"] ?: ""
+                    if (url.isBlank() || !url.startsWith("http")) "⚠️ 语法：web_browse(url=http(s)://网页地址)"
+                    else try {
+                        val client = com.qitong.gateway.network.UpstreamClient.getClient(false)
+                        val req = okhttp3.Request.Builder().url(url).get()
+                            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120")
+                            .addHeader("Accept", "text/html,application/xhtml+xml")
+                            .build()
+                        val resp = client.newCall(req).execute()
+                        val code = resp.code
+                        val body = runCatching { resp.body?.string() }.getOrNull() ?: ""
+                        resp.close()
+                        if (code != 200) "🌐 HTTP $code：页面无法访问（$url）"
+                        else {
+                            // 提取 <title>
+                            val title = Regex("<title[^>]*>([^<]*)</title>", RegexOption.IGNORE_CASE)
+                                .find(body)?.groupValues?.getOrNull(1)?.trim() ?: url
+                            // 去掉 script/style/nav/footer 后取正文
+                            val clean = body
+                                .replace(Regex("<(script|style|noscript)[^>]*>.*?</\\1>", RegexOption.IGNORE_CASE), " ")
+                                .replace(Regex("<[^>]+>"), " ")
+                                .replace(Regex("\\s+"), " ")
+                                .trim()
+                            // 提取链接（去重取前 30 个）
+                            val links = Regex("href=\"(http[^\"]+)\"", RegexOption.IGNORE_CASE)
+                                .findAll(body).map { it.groupValues[1] }.distinct().take(30).toList()
+                            val bodyText = clean.take(3000)
+                            val linkTxt = if (links.isNotEmpty()) "\n🔗 链接:\n" + links.joinToString("\n") else ""
+                            "🌐 $title\n━━━━━━━━━\n$bodyText$linkTxt\n━━━━━━━━━\n🔗 来源: $url"
+                        }
+                    } catch (e: Exception) {
+                        "🌐 抓取失败：${e.message?.take(150)}"
+                    }
                 }
                 "terminal_create" -> {
                     // ★ v62 创建临时终端会话（TerminalManager.create，label 可选）

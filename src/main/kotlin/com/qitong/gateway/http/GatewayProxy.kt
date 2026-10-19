@@ -179,6 +179,24 @@ class GatewayProxy(private val database: Database) {
         return ""
     }
 
+    /** ★ v1.150 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移） */
+    fun modalityRouteModel(modality: String, modelId: String): String? {
+        if (modality.isBlank()) return null
+        val key = "modality_route_" + when (modality) {
+            "vision" -> "vision"
+            "audio" -> "audio"
+            "video" -> "video"
+            "text" -> "text"
+            "input" -> "input"
+            "output" -> "output"
+            else -> return null
+        }
+        val conf = database.getConfig(key, "").trim()
+        if (conf.isBlank() || conf == "auto" || conf == "qtai-sj") return null
+        // 配置的是模型名或 providerId::modelId，返回 modelId 部分
+        return conf.substringAfter("::", conf)
+    }
+
     /** 构建故障转移尝试列表（强制池优先 + 健康排序）——用户级池优先，回退全局池 */
     fun buildAttemptModels(
         models: List<AiModel>,
@@ -187,6 +205,12 @@ class GatewayProxy(private val database: Database) {
         userId: Long = 0L,
         modality: String = ""   // ★ v1.123 多模态：vision/audio/video，空=纯文本
     ): List<AiModel> {
+        // ★ v1.150 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
+        val routed = modalityRouteModel(modality, modelId)
+        if (routed != null && routed.isNotBlank()) {
+            val matched = models.filter { it.isEnabled && it.modelId == routed }
+            if (matched.isNotEmpty()) return matched
+        }
         // 强制故障池：用户自己的池优先；用户无池时**不回退全局池**（qtai-sj 按用户独立，不跑全部）
         val forcedPool = if (userId > 0) {
             database.getUserConfig(userId, "forced_pool_keys", "")

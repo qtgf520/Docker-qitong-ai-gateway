@@ -509,8 +509,36 @@ loaders.settings = function(){
     '<div class="form-row"><label><input type="checkbox" id="cfgScheduledTasks"'+(cfg.scheduled_tasks_enabled!=='false'?' checked':'')+'>启用计划任务（AI 安排未来执行任务/提醒）</label></div>' +
     '<button class="btn" onclick="saveSettings()">保存设置</button></div>' : '') +
     '<div class="card" id="bakCard"><h3>数据备份/恢复</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
+    (isAdmin ? '<div class="card"><h3>模态路由 <span style="font-size:12px;color:var(--muted)">指定某类请求固定转发到哪个模型（留空/自动=默认全通）</span></h3>' +
+     '<div class="form-row"><label>📝 文本对话 →</label><select id="mrText" class="input"><option value="">自动（默认全通）</option></select></div>' +
+     '<div class="form-row"><label>🖼 图片理解（vision）→</label><select id="mrVision" class="input"><option value="">自动（默认全通）</option></select></div>' +
+     '<div class="form-row"><label>🎤 语音（audio）→</label><select id="mrAudio" class="input"><option value="">自动（默认全通）</option></select></div>' +
+     '<div class="form-row"><label>🎬 视频（video）→</label><select id="mrVideo" class="input"><option value="">自动（默认全通）</option></select></div>' +
+     '<div class="form-row"><label>⬆ 输入/嵌入（embedding）→</label><select id="mrInput" class="input"><option value="">自动（默认全通）</option></select></div>' +
+     '<div class="form-row"><label>⬇ 输出/语音合成（speech）→</label><select id="mrOutput" class="input"><option value="">自动（默认全通）</option></select></div>' +
+     '<small style="color:var(--muted);display:block;margin-top:6px">💡 设置了模态路由后，对应类型的请求会直接转发到所选模型（不走故障转移）；不设置则按原逻辑自动分配。下拉模型来自当前可见模型列表。</small>' +
+     '<button class="btn" style="margin-top:8px" onclick="saveModalRoute()">保存模态路由</button></div>' : '') +
     (isAdmin ? '<div class="card" id="notifyCard"><h3>通知设置</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>' : '')
    ].join('');
+  // 模态路由：填充模型下拉 + 回填已保存配置（仅管理员）
+  if(isAdmin){
+   api('/api/models').then(function(mr){
+    var mlist = (mr && mr.data) || [];
+    var opts = '<option value="">自动（默认全通）</option>' + mlist.map(function(m){
+     return '<option value="'+esc(m.providerId+'::'+m.modelId)+'">'+esc((m.providerLabel? m.providerLabel+' · ':'')+(m.customAlias||m.displayName))+'</option>';
+    }).join('');
+    ['mrText','mrVision','mrAudio','mrVideo','mrInput','mrOutput'].forEach(function(id){
+     var el = $('view-settings').querySelector('#'+id);
+     if(el){ el.innerHTML = opts; }
+    });
+    var map = { mrText:'modality_route_text', mrVision:'modality_route_vision', mrAudio:'modality_route_audio', mrVideo:'modality_route_video', mrInput:'modality_route_input', mrOutput:'modality_route_output' };
+    Object.keys(map).forEach(function(id){
+     var v = cfg[map[id]] || '';
+     var el = $('view-settings').querySelector('#'+id);
+     if(el && v){ el.value = v; }
+    });
+   });
+  }
   // 通知设置（仅管理员）
   if(isAdmin){
    api('/api/notify/config').then(function(nr){
@@ -689,6 +717,19 @@ window.changePassword = function(){
    toast(r.msg, true);
    setTimeout(function(){ localStorage.removeItem('qt_token'); location.href='/login'; }, 800);
   } else toast(r.msg, false);
+ });
+};
+window.saveModalRoute = function(){
+ var body = {
+  modality_route_text: ($('mrText')?$('mrText').value:''),
+  modality_route_vision: ($('mrVision')?$('mrVision').value:''),
+  modality_route_audio: ($('mrAudio')?$('mrAudio').value:''),
+  modality_route_video: ($('mrVideo')?$('mrVideo').value:''),
+  modality_route_input: ($('mrInput')?$('mrInput').value:''),
+  modality_route_output: ($('mrOutput')?$('mrOutput').value:'')
+ };
+ api('/api/config', { method:'POST', body: body }).then(function(r){
+  if(r.code === 0){ toast('模态路由已保存', true); loaders.settings(); } else toast(r.msg, false);
  });
 };
 window.saveSettings = function(){

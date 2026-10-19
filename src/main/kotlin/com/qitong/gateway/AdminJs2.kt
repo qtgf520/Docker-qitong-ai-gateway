@@ -10,35 +10,45 @@ loaders.models = function(){
  Promise.all([api('/api/models'), api('/api/providers')]).then(function(res){
   state.models = res[0].data || []; state.providers = res[1].data || [];
   var pmap = {}; state.providers.forEach(function(p){ var pLabel = (p.customId||'') ? p.customId : ('P'+p.id); pmap[p.id] = pLabel + ' ' + p.name; });
-  var rows = state.models.map(function(m){
-   var enBtn = '<button class="btn-ghost ' + (m.isEnabled ? '' : 'danger') + '" style="padding:2px 8px;font-size:12px" onclick="toggleModel(' + m.id + ')">' + (m.isEnabled ? '停用' : '启用') + '</button>';
-   var pubTxt = m.isPublic ? '<span class="badge green">公用</span>' : (m.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
-   var priceTxt = m.price > 0 ? ('¥'+m.price+'/M') : '<span style="color:var(--muted)">默认价</span>';
-   var auTxt = (m.authorizedNames||'') ? '<span class="badge purple">'+esc(m.authorizedNames)+'</span>' : (m.isPublic ? '<span style="color:var(--muted)">—</span>' : '<span class="badge gray">仅属主</span>');
-   var key = m.providerId + '::' + m.modelId;
-   return '<tr id="mdRow-' + esc(key) + '" data-key="' + esc(key) + '">' +
-    '<td>'+(m.isEnabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
-    '<td>'+esc(m.modelId)+'</td><td>'+esc(m.displayName)+(m.customAlias?' <span class="badge purple">'+esc(m.customAlias)+'</span>':'')+'</td>'+
-    '<td><span class="badge blue">'+esc(pmap[m.providerId]||('P'+m.providerId))+'</span></td>'+
-    '<td>'+pubTxt+'</td><td><span class="badge blue">'+esc(m.ownerName||'')+'</span></td>'+
-    '<td>'+priceTxt+'</td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td>'+
-    '<td style="font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+auTxt+'</td>'+
-    '<td class="md-health" style="min-width:90px"><span class="badge gray">未测</span></td>'+
-    '<td>'+(m.supportsVision?'<span title="支持图片理解">🖼</span> ':'')+(m.supportsAudio?'<span title="支持语音">🎤</span> ':'')+(m.supportsVideo?'<span title="支持视频">🎬</span> ':'')+enBtn+'</td>'+
-    '<td style="white-space:nowrap"><button class="btn-ghost btn-sm md-test-btn" onclick="testOneModel('+m.providerId+',\''+esc(m.modelId)+'\',\''+esc(key)+'\')">测速</button> '+
-    '<button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
-  }).join('');
-  box.innerHTML = [
-   '<div class="action-bar">',
-    '<button class="btn" onclick="editModel(0)">手动添加模型</button>',
-    '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">自动全部测速</button>',
-    '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
-    '<span style="color:var(--muted);font-size:12px">点每行「测速」单测该模型；批量测速通过自动启用 / 失败自动关闭</span>',
-   '</div><div class="card" id="batchSpeedCard" style="display:none"></div>',
-   '<div class="card"><div class="table-wrap"><table><thead><tr><th>状态</th><th>模型ID</th><th>显示名</th><th>服务商</th><th>归属</th><th>属主</th><th>价格</th><th>默认</th><th>上下文</th><th>授权用户</th><th>健康</th><th>启停</th><th>操作</th></tr></thead><tbody>' +
-   rows + '<tr><td colspan="13" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
-   '</tbody></table></div></div>'
-  ].join('');
+   var rows = state.models.map(function(m){
+    var enBtn = '<button class="btn-ghost ' + (m.isEnabled ? '' : 'danger') + '" style="padding:2px 8px;font-size:12px" onclick="toggleModel(' + m.id + ')">' + (m.isEnabled ? '停用' : '启用') + '</button>';
+    var pubTxt = m.isPublic ? '<span class="badge green">公用</span>' : (m.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
+    var priceTxt = m.price > 0 ? ('¥'+m.price+'/M') : '<span style="color:var(--muted)">默认价</span>';
+    var auTxt = (m.authorizedNames||'') ? '<span class="badge purple">'+esc(m.authorizedNames)+'</span>' : (m.isPublic ? '<span style="color:var(--muted)">—</span>' : '<span class="badge gray">仅属主</span>');
+    var key = m.providerId + '::' + m.modelId;
+    return '<tr id="mdRow-' + esc(key) + '" data-key="' + esc(key) + '">' +
+     '<td><input type="checkbox" class="md-chk" value="'+m.id+'" onclick="mdSelChange()"></td>'+
+     '<td>'+(m.isEnabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>'+
+     '<td>'+esc(m.modelId)+'</td><td>'+esc(m.displayName)+(m.customAlias?' <span class="badge purple">'+esc(m.customAlias)+'</span>':'')+'</td>'+
+     '<td><span class="badge blue">'+esc(pmap[m.providerId]||('P'+m.providerId))+'</span></td>'+
+     '<td>'+pubTxt+'</td><td><span class="badge blue">'+esc(m.ownerName||'')+'</span></td>'+
+     '<td>'+priceTxt+'</td><td>'+(m.isDefault?'<span class="badge green">默认</span>':'')+'</td><td style="font-size:12px">'+m.contextWindow+'</td>'+
+     '<td style="font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+auTxt+'</td>'+
+     '<td class="md-health" style="min-width:90px"><span class="badge gray">未测</span></td>'+
+     '<td>'+(m.supportsVision?'<span title="支持图片理解">🖼</span> ':'')+(m.supportsAudio?'<span title="支持语音">🎤</span> ':'')+(m.supportsVideo?'<span title="支持视频">🎬</span> ':'')+enBtn+'</td>'+
+     '<td style="white-space:nowrap"><button class="btn-ghost btn-sm md-test-btn" onclick="testOneModel('+m.providerId+',\''+esc(m.modelId)+'\',\''+esc(key)+'\')">测速</button> '+
+     '<button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
+   }).join('');
+   box.innerHTML = [
+    '<div class="action-bar">',
+     '<button class="btn" onclick="editModel(0)">手动添加模型</button>',
+     '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">自动全部测速</button>',
+     '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
+     // ★ v1.150 多选批量操作
+     '<span style="border-left:1px solid var(--border);padding-left:10px;display:inline-flex;gap:6px;align-items:center">' +
+      '<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)"><input type="checkbox" id="mdChkAll" onclick="mdSelAll(this.checked)">全选</label>' +
+      '<button class="btn-ghost btn-sm" onclick="mdBatch(\'enable\')">批量启用</button>' +
+      '<button class="btn-ghost btn-sm" onclick="mdBatch(\'disable\')">批量停用</button>' +
+      '<button class="btn-ghost btn-sm" onclick="mdBatch(\'public\')">批量设公用</button>' +
+      '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="mdBatch(\'delete\')">批量删除</button>' +
+      '<span id="mdSelCount" style="font-size:11px;color:var(--muted)"></span>' +
+     '</span>',
+     '<span style="color:var(--muted);font-size:12px">点每行「测速」单测该模型；批量测速通过自动启用 / 失败自动关闭</span>',
+    '</div><div class="card" id="batchSpeedCard" style="display:none"></div>',
+    '<div class="card"><div class="table-wrap"><table><thead><tr><th style="width:28px"><input type="checkbox" id="mdChkAllH" onclick="mdSelAll(this.checked)"></th><th>状态</th><th>模型ID</th><th>显示名</th><th>服务商</th><th>归属</th><th>属主</th><th>价格</th><th>默认</th><th>上下文</th><th>授权用户</th><th>健康</th><th>启停</th><th>操作</th></tr></thead><tbody>' +
+    rows + '<tr><td colspan="14" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
+    '</tbody></table></div></div>'
+   ].join('');
 // 接续后台批量测速任务：高亮正在被测的那一行
    api('/api/speedtest/progress').then(function(r){
     if(r.code===0 && r.data && r.data.running){ pollMdProgress(); }
@@ -128,6 +138,52 @@ function pollMdProgress(){
    }
   });
  },1200);
+};
+// ★ v1.150 模型多选批量操作
+function mdSelAll(checked){
+ var chks = document.querySelectorAll('.md-chk');
+ for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }
+ mdSelChange();
+}
+function mdSelChange(){
+ var n = document.querySelectorAll('.md-chk:checked').length;
+ var el = $('mdSelCount'); if(el) el.textContent = n ? '已选 '+n+' 项' : '';
+ var all = document.querySelectorAll('.md-chk');
+ var allChk = $('mdChkAll'); if(allChk) allChk.checked = all.length > 0 && n === all.length;
+ var allChkH = $('mdChkAllH'); if(allChkH) allChkH.checked = all.length > 0 && n === all.length;
+}
+function mdGetSelected(){
+ var ids = [];
+ document.querySelectorAll('.md-chk:checked').forEach(function(c){ ids.push(parseInt(c.value)); });
+ return ids;
+}
+window.mdBatch = function(action){
+ var ids = mdGetSelected();
+ if(!ids.length){ toast('请先勾选模型', false); return; }
+ var label = { enable:'启用', disable:'停用', public:'设为公用', delete:'删除' }[action] || action;
+ if(action === 'delete' && !confirm('确定批量删除选中的 '+ids.length+' 个模型？')) return;
+ if(action !== 'delete' && !confirm('确定对选中的 '+ids.length+' 个模型执行「'+label+'」？')) return;
+ // 批量操作：串行调单接口（简单可靠）
+ var ok = 0, fail = 0;
+ var pending = ids.length;
+ ids.forEach(function(id, idx){
+  setTimeout(function(){
+   var req = null;
+   if(action === 'delete') req = api('/api/models/' + id, { method:'DELETE' });
+   else if(action === 'enable' || action === 'disable') req = api('/api/models/toggle', { method:'POST', body: { id: id, enabled: action === 'enable' } });
+   else if(action === 'public') {
+    var m = state.models.find(function(x){ return x.id===id; });
+    req = api('/api/models', { method:'POST', body: { id: id, providerId: m.providerId, modelId: m.modelId, displayName: m.displayName, isEnabled: m.isEnabled, isPublic: true, isDefault: m.isDefault, customAlias: m.customAlias, contextWindow: m.contextWindow, price: m.price, authorizedUsers: JSON.stringify(m.authorizedUsers||[]), supportsVision: m.supportsVision, supportsAudio: m.supportsAudio, supportsVideo: m.supportsVideo } });
+   }
+   if(req) req.then(function(r){
+    if(r.code === 0) ok++; else fail++;
+    if(--pending <= 0){
+     toast('批量'+label+'完成：成功 '+ok+' 项'+(fail? '，失败 '+fail+' 项':''), ok > 0);
+     loaders.models();
+    }
+   });
+  }, idx * 150); // 串行 150ms 间隔避免风暴
+ });
 };
 // 行内启停（对齐原APP toggleModel）
 window.toggleModel = function(id){

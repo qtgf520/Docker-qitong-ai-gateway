@@ -11,6 +11,120 @@ object WebUi {
 
     private const val VER = "v1.133"
 
+    /** ★ v1.150 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
+    fun landingHtml(): String = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>綦桐AI网关 · AI API 中转与管理平台</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0B0D12;--surface:#12151C;--border:#232833;--primary:#3E7BFA;--text:#D6DAE1;--muted:#8791A0;--green:#3FB27F}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(700px 480px at 80% -6%,rgba(62,123,250,.14),transparent 65%),radial-gradient(600px 420px at -8% 104%,rgba(62,123,250,.08),transparent 65%)}
+.nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:22px;padding:14px 32px;background:rgba(11,13,18,.82);backdrop-filter:blur(14px) saturate(1.5);border-bottom:1px solid rgba(255,255,255,.06)}
+.nav .brand{font-size:15px;font-weight:700;letter-spacing:.3px}
+.nav .brand span{color:var(--primary)}
+.nav .links{display:flex;gap:18px;margin-left:auto;font-size:13px}
+.nav .links a{color:var(--muted);text-decoration:none;transition:.15s}
+.nav .links a:hover{color:var(--text)}
+.nav .cta{padding:7px 16px;background:var(--primary);color:#fff;border-radius:7px;font-size:13px;font-weight:500;text-decoration:none}
+.hero{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:88px 32px 56px;text-align:center}
+.hero h1{font-size:42px;line-height:1.2;font-weight:800;letter-spacing:-.02em}
+.hero h1 .grad{background:linear-gradient(90deg,var(--primary),#7C9CFF);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{font-size:17px;color:var(--muted);max-width:640px;margin:18px auto 0;line-height:1.7}
+.hero .btns{display:flex;gap:12px;justify-content:center;margin-top:30px;flex-wrap:wrap}
+.btn{padding:11px 24px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;display:inline-block;transition:.15s}
+.btn.primary{background:var(--primary);color:#fff}
+.btn.primary:hover{filter:brightness(1.12)}
+.btn.ghost{border:1px solid var(--border);color:var(--muted)}
+.btn.ghost:hover{border-color:var(--muted);color:var(--text)}
+.badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:26px}
+.badge{padding:4px 12px;border-radius:20px;font-size:12px;background:rgba(62,123,250,.1);color:#7C9CFF;border:1px solid rgba(62,123,250,.25)}
+.features{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:24px 32px 72px}
+.features h2{font-size:24px;text-align:center;margin-bottom:32px;font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.fcard{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;transition:.18s}
+.fcard:hover{border-color:rgba(62,123,250,.5);transform:translateY(-2px)}
+.fcard .ico{font-size:24px;margin-bottom:10px}
+.fcard h3{font-size:15px;margin-bottom:8px;font-weight:600}
+.fcard p{font-size:13px;color:var(--muted);line-height:1.6}
+.code-block{margin-top:64px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.code-block .cb-head{padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.code-block pre{margin:0;padding:20px;font-size:13px;line-height:1.7;color:#9FB4D9;overflow-x:auto;font-family:"SF Mono",Menlo,Consolas,monospace}
+.code-block .dots{display:flex;gap:6px;margin-left:auto}
+.code-block .dots span{width:10px;height:10px;border-radius:50%;display:inline-block}
+.footer{position:relative;z-index:1;padding:30px 32px;text-align:center;color:var(--muted);font-size:12px;border-top:1px solid rgba(255,255,255,.05)}
+.footer a{color:var(--muted);text-decoration:none}
+.footer a:hover{color:var(--text)}
+@media (max-width:640px){
+ .hero h1{font-size:30px}.hero{padding-top:56px}
+ .nav .links{display:none}
+}
+</style>
+</head>
+<body>
+<div class="nav">
+  <div class="brand">綦桐AI<span>网关</span></div>
+  <div class="links">
+    <a href="#features">功能特性</a>
+    <a href="#quickstart">快速开始</a>
+    <a href="#docs">API对接</a>
+    <a href="https://github.com/qtgf520/Docker-qitong-ai-gateway" target="_blank">GitHub</a>
+  </div>
+  <a class="cta" href="/admin">进入控制台</a>
+</div>
+<div class="hero">
+  <h1>一个网关，接入<b>所有</b>AI<br><span class="grad">綦桐AI网关 · Docker 服务器版</span></h1>
+  <p>统一管理多家 AI 服务商与模型，对外提供 OpenAI / Claude / Gemini 全兼容 API。自动故障转移、多模态路由、测速排行、用量统计、机器人接入……开箱即用。</p>
+  <div class="btns">
+    <a class="btn primary" href="/login">登录 / 注册</a>
+    <a class="btn ghost" href="#quickstart">查看部署文档</a>
+  </div>
+  <div class="badges">
+    <span class="badge">✅ OpenAI 兼容</span>
+    <span class="badge">✅ 自动故障转移</span>
+    <span class="badge">✅ 多模态路由</span>
+    <span class="badge">✅ QQ/微信机器人</span>
+    <span class="badge">✅ 内置聊天</span>
+  </div>
+</div>
+<div class="features" id="features">
+  <h2>核心功能</h2>
+  <div class="grid">
+    <div class="fcard"><div class="ico">🔀</div><h3>统一 API 网关</h3><p>多服务商、多模型统一入口，OpenAI / Claude / Gemini 三大格式全兼容，一个 Key 走天下。</p></div>
+    <div class="fcard"><div class="ico">🛡️</div><h3>自动故障转移</h3><p>模型失败自动切换池内下一个可用模型，服务不中断；智能路由按消息复杂度自动选模型。</p></div>
+    <div class="fcard"><div class="ico">🎛️</div><h3>多模态路由</h3><p>文本 / 图片 / 语音 / 视频请求可指定模型转发，不设置则默认全通，灵活可控。</p></div>
+    <div class="fcard"><div class="ico">📊</div><h3>测速排行</h3><p>TTFT / TPS / 总耗时三指标实时测速，后台持续跑带进度条，健康度一目了然。</p></div>
+    <div class="fcard"><div class="ico">💰</div><h3>商业化计费</h3><p>用户余额 / 套餐 / 卡密 / 分销佣金，按模型定价扣费，用量统计精细到 token 与流量。</p></div>
+    <div class="fcard"><div class="ico">🤖</div><h3>机器人接入</h3><p>QQ / 微信 / 元宝 Bot 全接入，AI 自动回复、查余额、管模型、远程控制网关。</p></div>
+    <div class="fcard"><div class="ico">🧠</div><h3>qtai-sj 智能体</h3><p>自动化切换最佳模型，自带记忆、技能、工作流、MCP、终端，像真人一样边想边干。</p></div>
+    <div class="fcard"><div class="ico">🔐</div><h3>多租户安全</h3><p>用户数据按登录隔离，服务商 Key 原添加者可见，管理员全权，密钥独立管理。</p></div>
+    <div class="fcard"><div class="ico">🚀</div><h3>一键 Docker 部署</h3><p>docker compose up 即起，SQLite 零依赖，备份/恢复一键完成，适合 VPS 与内网。</p></div>
+  </div>
+  <div class="code-block" id="quickstart">
+    <div class="cb-head"><span>快速部署</span><div class="dots"><span style="background:#E5636A"></span><span style="background:#D99A3D"></span><span style="background:#3FB27F"></span></div></div>
+    <pre>git clone https://github.com/qtgf520/Docker-qitong-ai-gateway.git
+cd Docker-qitong-ai-gateway
+docker compose up -d --build
+# Web 控制台 : http://服务器IP:18080
+# API 网关   : http://服务器IP:18889/v1</pre>
+  </div>
+  <div class="code-block" id="docs">
+    <div class="cb-head"><span>API 对接（OpenAI 兼容）</span></div>
+    <pre>curl http://服务器IP:18889/v1/chat/completions \
+  -H "Authorization: Bearer sk-你的密钥" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qtai-sj","messages":[{"role":"user","content":"你好"}]}'</pre>
+  </div>
+</div>
+<div class="footer">
+  <p>© 2026 綦桐AI网关 · <a href="https://github.com/qtgf520/Docker-qitong-ai-gateway" target="_blank">GitHub</a> · <a href="/admin">进入控制台</a></p>
+</div>
+</body>
+</html>"""
+
     fun loginHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>

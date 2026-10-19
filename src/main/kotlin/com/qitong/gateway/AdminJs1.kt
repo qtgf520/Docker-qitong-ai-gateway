@@ -44,7 +44,7 @@ function applyLang(){
 function saveLangLocal(lang){ curLang = lang; localStorage.setItem('qt_lang', lang); applyLang(); }
 function openModal(title, html, onSave, opts){
  opts = opts || {};
- // ★ v1.149 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
+ // ★ v1.150 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
  if(typeof onSave !== 'function'){ opts.hideFooter = true; onSave = function(){}; }
  $('modalTitle').textContent = title;
  var footer = opts.hideFooter ? '' : '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn" onclick="modalSave()">保存</button><button class="btn-ghost" onclick="closeModal()">取消</button></div>';
@@ -191,7 +191,7 @@ box.innerHTML = [
      '<div class="card" id="gwCtrlCard"><h3>网关控制</h3><div style="display:flex;gap:10px;align-items:center">' +
       '<span id="gwDot" class="dot ' + (st.running ? '' : 'off') + '"></span>' +
       '<span id="gwState" style="font-weight:700;color:' + (st.running ? 'var(--green)' : 'var(--red)') + '">' + (st.running ? '运行中' : '已停止') + '</span>' +
-      '<button class="btn" id="gwToggleBtn" onclick="toggleGateway()">' + (st.running ? '暂停' : '启动') + '</button>' +
+      (st.isAdmin ? '<button class="btn" id="gwToggleBtn" onclick="toggleGateway()">' + (st.running ? '暂停' : '启动') + '</button>' : '') +
      '</div><div style="margin-top:8px;font-size:12px;color:var(--muted)">强制模型：' + esc(st.activeModel || 'qtai-sj') + (runtimeMid ? '　·　<span style="color:var(--cyan)">实际命中：' + esc(runtimeMid) + '</span>' : '') + '</div></div>',
      '<div class="card" id="autoSpeedCard"><h3>自动测速</h3><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
       '<button class="btn" id="autoSpeedBtn" onclick="toggleAutoSpeed()">' + (st.autoSpeedTest ? '停止自动测速' : '启动自动测速') + '</button>' +
@@ -321,46 +321,50 @@ function startPerfTimer(){
    }, 5000);
 }
 
-// ★ v1.125 系统动态实时流（调用量/故障转移/测速事件，滚动展示）
+// ★ v1.150 系统动态实时流（更克制：只推重要事件、模型切换去重合并、样式低调不打扰）
 var _sysFeedTimer = null;
 function startSysFeed(){
   var feed = $('sysFeed');
   if(!feed) return;
-  feed.innerHTML = '<div style="color:var(--muted)">系统运行中，实时事件将显示在这里…</div>';
+  feed.innerHTML = '<div style="color:var(--muted);font-size:12px">系统运行中，重要事件将显示在这里…</div>';
   if(_sysFeedTimer) clearInterval(_sysFeedTimer);
-  function push(txt, cls){
+  function push(txt, cls, icon){
     var f = $('sysFeed'); if(!f) return;
+    // ★ v1.150 去重：同内容 10 秒内不重复推
+    var now = Date.now();
+    if(window._lastFeedText === txt && now - (window._lastFeedAt || 0) < 10000) return;
+    window._lastFeedText = txt; window._lastFeedAt = now;
     var d = new Date();
-    var ts = String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+    var ts = String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
     var row = document.createElement('div');
-    row.style.cssText = 'padding:4px 0;border-bottom:1px solid var(--border);font-size:12px;color:'+(cls||'var(--muted)');
-    row.innerHTML = '<span style="color:var(--cyan);font-family:monospace">'+ts+'</span> ' + txt;
+    row.style.cssText = 'padding:3px 0;font-size:11.5px;color:'+(cls||'var(--muted)')+';opacity:.9;line-height:1.5';
+    row.innerHTML = '<span style="color:var(--muted);font-family:monospace;margin-right:6px">'+ts+'</span>' + (icon||'') + txt;
     f.insertBefore(row, f.firstChild);
-    while(f.children.length > 30) f.removeChild(f.lastChild);
+    while(f.children.length > 15) f.removeChild(f.lastChild);
   }
   _sysFeedTimer = setInterval(function(){
     if(!$('view-dashboard') || !$('view-dashboard').classList.contains('active')){ clearInterval(_sysFeedTimer); _sysFeedTimer=null; return; }
     api('/api/status').then(function(r){
       if(r.code!==0 || !r.data) return;
       var st = r.data;
+      // 仅重要事件：实际命中模型变化（10秒去重已覆盖）、测速完成、掉线恢复
       var rt = st.runtimeActiveMid || st.runtimeActive || '';
-      if(rt && window._lastFeedRt !== rt){
+      if(rt && window._lastFeedRt !== rt && rt !== 'qtai-sj'){
         window._lastFeedRt = rt;
-        push('⚡ 模型切换 → <b style="color:var(--green)">'+esc(rt)+'</b>（自动故障转移）');
+        push('自动切换 → <b style="color:var(--green)">'+esc(rt)+'</b>', 'var(--muted)', '');
       }
       if(st.lastSpeedTestAt && window._lastSpeedAt !== st.lastSpeedTestAt){
         window._lastSpeedAt = st.lastSpeedTestAt;
         var pass = (st.healthCache||[]).filter(function(x){return x.isHealthy;}).length;
-        push('📊 自动测速完成：'+pass+'/'+(st.healthCache||[]).length+' 个模型正常');
+        var total = (st.healthCache||[]).length;
+        push('测速完成：'+pass+'/'+total+' 正常', pass===total ? 'var(--green)' : 'var(--amber)', '');
       }
       if(st.uptime && st.uptime < 120 && window._bootPushed !== st.uptime){
         window._bootPushed = st.uptime;
-        push('🚀 网关已启动（运行 '+(st.uptime||0)+'s）', 'var(--green)');
+        push('网关启动完成', 'var(--green)', '🚀 ');
       }
     });
-  }, 6000);
-  // 立即来一条
-  setTimeout(function(){ push('👋 欢迎回到綦桐AI网关控制台'); }, 300);
+  }, 8000);
 }
 
 // 首页实时测速进度（轮询 /api/speedtest/progress，效果对齐测速页）
@@ -499,9 +503,11 @@ loaders.providers = function(){
  api('/api/providers').then(function(r){
   state.providers = r.data || [];
   var rows = state.providers.map(function(p){
-   var keyTxt = p.apiKey ? (p.apiKey.indexOf('****')>=0 ? p.apiKey : esc(p.apiKey)) : '<span style="color:var(--muted)">无</span>';
+   var canSeeKey = p.apiKey && p.apiKey.indexOf('****') < 0;
+   // ★ v1.150 Key 可见性：原添加者(owner)或管理员能看到完整 key，其他人显示 **** + 提示
+   var keyTxt = p.apiKey ? (p.apiKey.indexOf('****')>=0 ? '<span style="font-size:11px;color:var(--muted)">'+esc(p.apiKey)+'（仅属主可见）</span>' : '<span style="font-family:monospace">'+esc(p.apiKey)+'</span>') : '<span style="color:var(--muted)">无</span>';
    var pubTxt = p.isPublic ? '<span class="badge green">公用</span>' : (p.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
-   return '<tr><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px;font-family:monospace">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
+   return '<tr><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
   }).join('');
   box.innerHTML = [
    '<div class="action-bar"><button class="btn" onclick="editProvider(0)">添加服务商</button><span style="color:var(--muted);font-size:12px">OpenAI Compatible / Ollama / Custom · 公用=所有人可见</span></div>',

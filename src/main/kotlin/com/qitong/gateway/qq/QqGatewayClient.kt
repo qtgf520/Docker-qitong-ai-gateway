@@ -41,6 +41,7 @@ class QqGatewayClient(
     @Volatile private var reconnectTimer: java.util.Timer? = null
     private val stopped = AtomicBoolean(false)
     @Volatile private var backoffMs = 2000L
+    @Volatile private var consecutiveFailures = 0   // ★ v1.150 连续失败计数（防退避死循环）
 
     companion object {
         // 生产 / 沙箱 WebSocket 网关
@@ -48,6 +49,9 @@ class QqGatewayClient(
         private const val URL_SANDBOX = "wss://sandbox.api.sgroup.qq.com/websocket"
         // GROUP_AND_C2C_EVENT = 1 << 25
         private const val INTENT_GROUP_C2C = 33554432L
+        // ★ v1.150 重连策略：指数退避 2s→60s，连续失败超过 10 次后固定 60s 周期重试（不无限叠加）
+        private const val MAX_BACKOFF_MS = 60_000L
+        private const val MAX_CONSECUTIVE_FAILURES = 10
     }
 
     @Volatile private var accessToken: String = ""
@@ -127,6 +131,7 @@ class QqGatewayClient(
                     "READY" -> {
                         sessionId = obj.optJSONObject("d")?.optString("session_id")
                         backoffMs = 2000L
+                        consecutiveFailures = 0   // ★ v1.150 连上即复位，下次掉线从 2s 重新退避
                         onStatusChange(QqBotStatus.ONLINE, "上线 session=$sessionId")
                         System.out.println("[QQBot] ${bot.appid} READY，机器人上线")
                     }
@@ -188,12 +193,15 @@ class QqGatewayClient(
         runCatching { heartbeatTimer?.cancel() }
         runCatching { reconnectTimer?.cancel() }
         if (stopped.get()) return
-        onStatusChange(QqBotStatus.OFFLINE, "${backoffMs / 1000}s 后重连")
+        // ★ v1.150 退避衰减：连续失败 10 次后固定 60s 周期（不再无限翻倍到离谱值），避免「掉线后越等越久」
+        consecutiveFailures++
+        val delay = if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) MAX_BACKOFF_MS else backoffMs
+        onStatusChange(QqBotStatus.OFFLINE, "${delay / 1000}s 后重连（第 $consecutiveFailures 次）")
         reconnectTimer = java.util.Timer("qq-reconnect-${bot.appid}", true).apply {
             schedule(object : java.util.TimerTask() {
                 override fun run() { connect() }
-            }, backoffMs)
+            }, delay)
         }
-        backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
+        backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
     }
 }
