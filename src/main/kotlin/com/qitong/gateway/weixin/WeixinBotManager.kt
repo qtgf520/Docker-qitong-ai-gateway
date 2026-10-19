@@ -74,7 +74,27 @@ object WeixinBotManager {
         }
     }
 
-    /** ★ v76 全网广播（心跳/计划任务到期推送给所有在线微信 bot 的最近联系人） */
+    /** ★ v1.153 指定目标推送（心跳/计划任务到期只发管理员配置的微信 openid；未配置则发最近活跃联系人兜底，不再全广播） */
+    fun sendToTargets(targets: List<String>, text: String) {
+        try {
+            val bots = db?.getWeixinBots()?.filter { it.enabled } ?: return
+            if (bots.isEmpty()) return
+            bots.forEach { bot ->
+                val st = statusOf(bot.id)
+                if (st.status != WeixinBotStatus.ONLINE) return@forEach
+                // 指定目标优先；没配→最近活跃联系人兜底（只发 1 个，不再广播所有人）
+                val recentOpenid = if (targets.isNotEmpty()) targets
+                else history.entries.filter { it.value.isNotEmpty() }.maxByOrNull { entry ->
+                    entry.value.lastOrNull()?.second?.length ?: 0
+                }?.key?.let { listOf(it) } ?: return@forEach
+                recentOpenid.forEach { openid ->
+                    runCatching { api.sendMessage(bot.botToken, openid, text, "") }
+                }
+            }
+        } catch (e: Exception) { System.err.println("[WeixinBot] sendToTargets 异常: ${e.message}") }
+    }
+
+    /** ★ v76 全网广播（保留：计划任务等仍可用，但心跳已改 sendToTargets 指定目标） */
     fun broadcastAll(text: String) {
         try {
             val bots = db?.getWeixinBots()?.filter { it.enabled } ?: return
@@ -476,7 +496,7 @@ object WeixinBotManager {
     private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long, send: (String) -> Unit): String? {
         val d = db ?: return null
         val key = msg.from  // 每用户上下文隔离
-        // ★ v1.152 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
+        // ★ v1.153 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
         val sandboxOn = true
         // ★ v71 人设优先：用户设置的 systemPrompt 始终注入（沙盒时追加到提示词后，不被覆盖）
         val userPrompt = bot.systemPrompt.trim()
@@ -611,7 +631,7 @@ object WeixinBotManager {
                             "工具执行异常（" + fn + "）：" + e.message
                         }
                         results.append("【$fn 执行结果】\n$r\n")
-                        // ★ v1.152 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文由 send 内部分段
+                        // ★ v1.153 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文由 send 内部分段
                         val rShow = r.trim()
                         send("✅ $fn 完成：\n$rShow")
                         executedCalls = true
@@ -634,7 +654,7 @@ object WeixinBotManager {
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append("【$fn 执行结果】\n$r\n")
-                                    // ★ v1.152 修复长文截断：并行工具结果完整推送（不再 take(120)）
+                                    // ★ v1.153 修复长文截断：并行工具结果完整推送（不再 take(120)）
                                     val rShow = r.trim()
                                     send("✅ $fn 完成：\n$rShow")
                                     executedCalls = true
@@ -685,7 +705,7 @@ object WeixinBotManager {
                     hist.add("assistant" to cleanText)
                     hist.add("user" to "【工具执行结果】\n$results")
                     content = nextContent
-                    // ★ v1.152 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
+                    // ★ v1.153 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
                         send("💭 好的，我继续查…")
@@ -797,7 +817,7 @@ object WeixinBotManager {
         }
     }
 
-    /** ★ v1.152 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
+    /** ★ v1.153 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
     private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
         text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
         text.contains("让我", true) || text.contains("我去", true) || text.contains("我来", true) ||

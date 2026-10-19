@@ -44,7 +44,7 @@ function applyLang(){
 function saveLangLocal(lang){ curLang = lang; localStorage.setItem('qt_lang', lang); applyLang(); }
 function openModal(title, html, onSave, opts){
  opts = opts || {};
- // ★ v1.152 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
+ // ★ v1.153 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
  if(typeof onSave !== 'function'){ opts.hideFooter = true; onSave = function(){}; }
  $('modalTitle').textContent = title;
  var footer = opts.hideFooter ? '' : '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn" onclick="modalSave()">保存</button><button class="btn-ghost" onclick="closeModal()">取消</button></div>';
@@ -321,7 +321,7 @@ function startPerfTimer(){
    }, 5000);
 }
 
-// ★ v1.152 系统动态实时流（更克制：只推重要事件、模型切换去重合并、样式低调不打扰）
+// ★ v1.153 系统动态实时流（更克制：只推重要事件、模型切换去重合并、样式低调不打扰）
 var _sysFeedTimer = null;
 function startSysFeed(){
   var feed = $('sysFeed');
@@ -330,7 +330,7 @@ function startSysFeed(){
   if(_sysFeedTimer) clearInterval(_sysFeedTimer);
   function push(txt, cls, icon){
     var f = $('sysFeed'); if(!f) return;
-    // ★ v1.152 去重：同内容 10 秒内不重复推
+    // ★ v1.153 去重：同内容 10 秒内不重复推
     var now = Date.now();
     if(window._lastFeedText === txt && now - (window._lastFeedAt || 0) < 10000) return;
     window._lastFeedText = txt; window._lastFeedAt = now;
@@ -504,15 +504,22 @@ loaders.providers = function(){
   state.providers = r.data || [];
   var rows = state.providers.map(function(p){
    var canSeeKey = p.apiKey && p.apiKey.indexOf('****') < 0;
-   // ★ v1.152 Key 可见性：原添加者(owner)或管理员能看到完整 key，其他人显示 **** + 提示
+   // ★ v1.153 Key 可见性：原添加者(owner)或管理员能看到完整 key，其他人显示 **** + 提示
    var keyTxt = p.apiKey ? (p.apiKey.indexOf('****')>=0 ? '<span style="font-size:11px;color:var(--muted)">'+esc(p.apiKey)+'（仅属主可见）</span>' : '<span style="font-family:monospace">'+esc(p.apiKey)+'</span>') : '<span style="color:var(--muted)">无</span>';
    var pubTxt = p.isPublic ? '<span class="badge green">公用</span>' : (p.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
-   return '<tr><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
+   return '<tr data-pvid="'+p.id+'"><td><input type="checkbox" class="pv-chk" value="'+p.id+'" onclick="pvSelChange()"></td><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
   }).join('');
   box.innerHTML = [
-   '<div class="action-bar"><button class="btn" onclick="editProvider(0)">添加服务商</button><span style="color:var(--muted);font-size:12px">OpenAI Compatible / Ollama / Custom · 公用=所有人可见</span></div>',
-   '<div class="card"><div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>地址</th><th>API Key</th><th>归属</th><th>属主</th><th>状态</th><th>操作</th></tr></thead><tbody>' +
-   rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (state.providers.length ? '' : '暂无服务商') + '</td></tr>' +
+   '<div class="action-bar"><button class="btn" onclick="editProvider(0)">添加服务商</button>' +
+    '<span style="display:inline-flex;gap:6px;align-items:center;border-left:1px solid var(--border);padding-left:10px">' +
+     '<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)"><input type="checkbox" id="pvChkAll" onclick="pvSelAll(this.checked)">全选</label>' +
+     '<select id="pvBatchSel" class="input" style="width:120px;padding:5px 24px 5px 8px"><option value="">批量操作...</option><option value="delete">批量删除</option><option value="enable">批量启用</option><option value="disable">批量停用</option></select>' +
+     '<button class="btn btn-sm" onclick="pvBatchAction()">执行</button>' +
+     '<span id="pvSelCount" style="font-size:11px;color:var(--muted)"></span>' +
+    '</span>' +
+    '<span style="color:var(--muted);font-size:12px">OpenAI Compatible / Ollama / Custom · 公用=所有人可见</span></div>',
+   '<div class="card"><div class="table-wrap"><table><thead><tr><th style="width:28px"><input type="checkbox" onclick="pvSelAll(this.checked)"></th><th>名称</th><th>类型</th><th>地址</th><th>API Key</th><th>归属</th><th>属主</th><th>状态</th><th>操作</th></tr></thead><tbody>' +
+   rows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (state.providers.length ? '' : '暂无服务商') + '</td></tr>' +
    '</tbody></table></div></div>'
   ].join('');
  });
@@ -537,6 +544,44 @@ window.editProvider = function(id){
   api('/api/providers', { method:'POST', body: body }).then(function(r){
    if(r.code === 0){ toast('保存成功', true); closeModal(); loaders.providers(); } else toast(r.msg, false);
   });
+ });
+};
+// ★ v1.153 服务商多选批量操作（下拉式）
+function pvSelAll(checked){
+ var chks = document.querySelectorAll('.pv-chk');
+ for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }
+ pvSelChange();
+}
+function pvSelChange(){
+ var n = document.querySelectorAll('.pv-chk:checked').length;
+ var el = $('pvSelCount'); if(el) el.textContent = n ? '已选 '+n+' 项' : '';
+ var all = document.querySelectorAll('.pv-chk');
+ var chk = $('pvChkAll'); if(chk) chk.checked = all.length > 0 && n === all.length;
+}
+window.pvBatchAction = function(){
+ var sel = $('pvBatchSel'); if(!sel) return;
+ var action = sel.value;
+ if(!action){ toast('请选择操作', false); return; }
+ var ids = [];
+ document.querySelectorAll('.pv-chk:checked').forEach(function(c){ ids.push(parseInt(c.value)); });
+ if(!ids.length){ toast('请先勾选服务商', false); return; }
+ var label = { delete:'删除', enable:'启用', disable:'停用' }[action] || action;
+ if(action === 'delete' && !confirm('确定批量删除选中的 '+ids.length+' 个服务商？（连带其下模型）')) return;
+ if(action !== 'delete' && !confirm('确定对选中的 '+ids.length+' 个服务商执行「'+label+'」？')) return;
+ var ok = 0, fail = 0, pending = ids.length;
+ ids.forEach(function(id, idx){
+  setTimeout(function(){
+   var req = null;
+   if(action === 'delete') req = api('/api/providers/' + id, { method:'DELETE' });
+   else if(action === 'enable' || action === 'disable') req = api('/api/providers', { method:'POST', body: { id: id, isEnabled: action === 'enable' } });
+   if(req) req.then(function(r){
+    if(r.code === 0) ok++; else fail++;
+    if(--pending <= 0){
+     toast('批量'+label+'完成：成功 '+ok+' 项'+(fail? '，失败 '+fail+' 项':''), ok > 0);
+     loaders.providers();
+    }
+   });
+  }, idx * 150);
  });
 };
 window.delProvider = function(id){

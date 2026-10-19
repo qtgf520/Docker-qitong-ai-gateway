@@ -207,18 +207,50 @@ window.clearKeyUsage = function(label){
 // ===== 记忆独立页（大脑记忆 + 记忆配置） =====
 loaders.memory = function(){
  var box = $('view-memory');
- box.innerHTML = '<div class="action-bar"><button class="btn" onclick="addMemory()">+ 添加记忆</button><button class="btn-ghost" onclick="loaders.memory()">刷新</button><button class="btn-ghost" style="color:var(--red)" onclick="clearMemories()">清空全部</button><span style="font-size:12px;color:var(--muted)">🧠 记忆已默认启用（未建人格也生效，qtai-sj 同样有记忆）。记忆会在 AI 对话时自动注入参考。</span></div>' +
+ // ★ v1.153 多选批量操作 + 来源筛选下拉（管理员可看全部来源含QQ/微信/群）
+ box.innerHTML = '<div class="action-bar">' +
+  '<button class="btn" onclick="addMemory()">+ 添加记忆</button>' +
+  '<button class="btn-ghost" onclick="loaders.memory()">刷新</button>' +
+  '<select id="memSrcFilter" class="input" style="width:150px" onchange="loaders.memory()"><option value="">全部来源</option><option value="account">账号记忆</option><option value="qq">QQ用户</option><option value="wx">微信用户</option><option value="group">QQ群</option></select>' +
+  '<span style="display:inline-flex;gap:6px;align-items:center">' +
+   '<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)"><input type="checkbox" id="memChkAll" onclick="memSelAll(this.checked)">全选</label>' +
+   '<button class="btn-ghost btn-sm" onclick="memBatchDelete()">批量删除</button>' +
+   '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="clearMemories()">清空全部</button>' +
+   '<span id="memSelCount" style="font-size:11px;color:var(--muted)"></span>' +
+  '</span>' +
+  '<span style="font-size:12px;color:var(--muted);margin-left:auto">🧠 管理员可见全部来源记忆（账号/QQ用户/微信用户/群），来源已备注</span></div>' +
   '<div class="card" id="memListCard"><div style="color:var(--muted);padding:20px">加载中...</div></div>' +
   '<div class="card" id="memCfgCard2" style="margin-top:14px"><div style="color:var(--muted);padding:20px">加载配置中...</div></div>';
  // 记忆列表
  api('/api/memory').then(function(mr){
   var mc = $('memListCard'); if(!mc) return;
   var mems = (mr && mr.data) || [];
-  if(!mems.length){ mc.innerHTML = '<h3>🧠 大脑记忆</h3><div style="color:var(--muted);padding:12px">暂无记忆。AI 对话会自动保存关键信息到这里。</div>'; return; }
+  // ★ v1.153 按来源筛选
+  var srcFilter = $('memSrcFilter') ? $('memSrcFilter').value : '';
+  if(srcFilter){
+   mems = mems.filter(function(m){
+    var t = m.tags || '';
+    if(srcFilter==='account') return t==='';
+    if(srcFilter==='qq') return t.indexOf('qq:')===0;
+    if(srcFilter==='wx') return t.indexOf('wx:')===0;
+    if(srcFilter==='group') return t.indexOf('group:')===0;
+    return true;
+   });
+  }
+  if(!mems.length){ mc.innerHTML = '<h3>🧠 大脑记忆（'+mems.length+'条）</h3><div style="color:var(--muted);padding:12px">暂无记忆。AI 对话会自动保存关键信息到这里。</div>'; return; }
   var rows = mems.map(function(m){
-   return '<tr><td><b>'+esc(m.title||'(无标题)')+'</b></td><td style="font-size:12px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.content)+'</td><td><span class="badge '+(m.emotion==='happy'?'green':m.emotion==='sad'?'red':'purple')+'">'+esc(m.emotion)+'</span></td><td>'+m.importance+'</td><td>'+new Date(m.timestamp).toLocaleString('zh-CN',{hour12:false})+'</td><td><button class="btn-ghost" style="color:var(--red)" onclick="delMemory('+m.id+')">删</button></td></tr>';
+   var srcNote = m.sourceNote || '';
+   return '<tr data-memid="'+m.id+'">' +
+    '<td><input type="checkbox" class="mem-chk" value="'+m.id+'" onclick="memSelChange()"></td>' +
+    '<td><b>'+esc(m.title||'(无标题)')+'</b></td>' +
+    '<td style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.content)+'</td>' +
+    '<td><span class="badge '+(m.emotion==='happy'?'green':m.emotion==='sad'?'red':'purple')+'">'+esc(m.emotion)+'</span></td>' +
+    '<td>'+m.importance+'</td>' +
+    '<td>'+(srcNote ? '<span class="badge blue">'+esc(srcNote)+'</span>' : '<span style="color:var(--muted)">账号</span>')+'</td>' +
+    '<td>'+new Date(m.timestamp).toLocaleString('zh-CN',{hour12:false})+'</td>' +
+    '<td><button class="btn-ghost" style="color:var(--red)" onclick="delMemory('+m.id+')">删</button></td></tr>';
   }).join('');
-  mc.innerHTML = '<h3>🧠 大脑记忆（'+mems.length+'条）</h3><div class="table-wrap"><table><thead><tr><th>标题</th><th>内容</th><th>情感</th><th>重要</th><th>时间</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  mc.innerHTML = '<h3>🧠 大脑记忆（'+mems.length+'条）</h3><div class="table-wrap"><table><thead><tr><th style="width:28px"><input type="checkbox" onclick="memSelAll(this.checked)"></th><th>标题</th><th>内容</th><th>情感</th><th>重要</th><th>来源</th><th>时间</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
  });
  // 记忆配置
  api('/api/memory/config').then(function(cr){
@@ -239,6 +271,28 @@ window.saveMemoryCfg2 = function(){
   modelIndependent: $('mc2Independent').checked ? 'true' : 'false',
   communicationStyle: $('mc2Style').value
  } }).then(function(r){ if(r.code===0){ toast(r.msg, true); } else toast(r.msg, false); });
+};
+// ★ v1.153 记忆多选批量操作
+function memSelAll(checked){
+ var chks = document.querySelectorAll('.mem-chk');
+ for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }
+ memSelChange();
+}
+function memSelChange(){
+ var n = document.querySelectorAll('.mem-chk:checked').length;
+ var el = $('memSelCount'); if(el) el.textContent = n ? '已选 '+n+' 项' : '';
+ var all = document.querySelectorAll('.mem-chk');
+ var chk = $('memChkAll'); if(chk) chk.checked = all.length > 0 && n === all.length;
+}
+window.memBatchDelete = function(){
+ var ids = [];
+ document.querySelectorAll('.mem-chk:checked').forEach(function(c){ ids.push(parseInt(c.value)); });
+ if(!ids.length){ toast('请先勾选要删除的记忆', false); return; }
+ if(!confirm('确定删除选中的 '+ids.length+' 条记忆？')) return;
+ api('/api/memory/batch-delete', { method:'POST', body: { ids: JSON.stringify(ids) } }).then(function(r){
+  toast(r.msg, r.code === 0);
+  if(r.code === 0) loaders.memory();
+ });
 };
 loaders.profile = function(){
  var box = $('view-profile');

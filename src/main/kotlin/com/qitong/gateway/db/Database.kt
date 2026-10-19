@@ -1514,6 +1514,33 @@ class Database(private val dbPath: String) {
             )
         }
 
+    /** ★ v1.153 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
+    fun getAllMemories(limit: Int = 500): List<Map<String, Any?>> =
+        query("SELECT * FROM brain_memory ORDER BY importance DESC, timestamp DESC LIMIT $limit").map { it ->
+            val tags = (it["tags"] as? String ?: "")
+            // 解析来源备注：qq:openid → QQ用户openid；wx:openid → 微信用户openid；group:xxx → 群xxx；空 → 账号记忆
+            val sourceNote = when {
+                tags.startsWith("qq:") -> "QQ用户 ${tags.removePrefix("qq:")}"
+                tags.startsWith("wx:") -> "微信用户 ${tags.removePrefix("wx:")}"
+                tags.startsWith("group:") -> "QQ群 ${tags.removePrefix("group:")}"
+                else -> "账号记忆"
+            }
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "title" to (it["title"] as? String ?: ""),
+                "content" to (it["content"] as? String ?: ""),
+                "type" to (it["type"] as? String ?: "short"),
+                "emotion" to (it["emotion"] as? String ?: "neutral"),
+                "importance" to ((it["importance"] as? Number)?.toInt() ?: 5),
+                "timestamp" to ((it["timestamp"] as? Number)?.toLong() ?: 0),
+                "accessCount" to ((it["access_count"] as? Number)?.toInt() ?: 0),
+                "source" to (it["source"] as? String ?: "chat"),
+                "tags" to tags,
+                "modelId" to (it["model_id"] as? String ?: ""),
+                "sourceNote" to sourceNote
+            )
+        }
+
     /** v47 记忆命中计数：记忆被使用时 access_count+1，返回新计数 */
     fun bumpMemoryAccess(id: Long): Int {
         stmt("UPDATE brain_memory SET access_count=access_count+1 WHERE id=?", id)
@@ -1570,6 +1597,20 @@ class Database(private val dbPath: String) {
 
     fun clearMemories(userId: Long) {
         stmt("DELETE FROM brain_memory WHERE user_id=?", userId)
+    }
+
+    /** ★ v1.153 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
+    fun deleteMemoryAny(id: Long): Boolean {
+        val exists = queryOne("SELECT id FROM brain_memory WHERE id=?", id) != null
+        if (exists) stmt("DELETE FROM brain_memory WHERE id=?", id)
+        return exists
+    }
+
+    /** ★ v1.153 管理员清空全部记忆（含账号/QQ/微信/群来源） */
+    fun clearAllMemories(): Int {
+        val n = queryOne("SELECT COUNT(*) FROM brain_memory")?.toInt() ?: 0
+        stmt("DELETE FROM brain_memory")
+        return n
     }
 
     // ============ 计划任务（v76：AI 安排未来执行任务；v84：Agora CronExpression 周期任务） ============
@@ -1645,6 +1686,7 @@ class Database(private val dbPath: String) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.153", "心跳指定目标推送 + 记忆并入总记忆多选 + 页面多选下拉", "心跳推送只发指定目标：不再全群/全联系人广播（QQ发配置的群 heartbeat_target_qq，微信发配置的openid heartbeat_target_wx，没配兜底发第一个群/最近联系人）。记忆并入总记忆+备注来源：管理员记忆页可见全部来源（账号/QQ用户/微信用户/QQ群），每条备注来源；普通用户只看自己的。记忆页多选：复选框全选+批量删除+按来源筛选下拉。模型页多选改下拉：批量操作从按钮改下拉（批量启用/停用/设公用/删除）+执行。服务商页多选：全选+下拉批量删除/启用/停用。修复记忆批量删除接口类型错误、心跳推送目标逻辑"),
             Triple("v1.152", "修复长文截断 + Agent 半途而废（OpenClaw 式干完才停）", "修复长文被截断：工具结果推送从 take(120) 摘要改为完整推送（QQ/微信单工具+并行全改）。修复「说要继续查却停了」：Agent 循环里模型说继续查/接着弄/下一步但没输出调用标签时原来直接 break，现在识别继续意图并引导输出真标签再执行（最多2次仍无调用才收尾），像 OpenClaw 一样干不完绝不听。closeBody 收敛放开：最终答复强调该长则长、分多段列表输出，不再压缩成一句话。分段推送确认无丢尾巴"),
             Triple("v1.151", "全部模型走沙盒Agent + 重要消息主动推送 + OpenClaw化", "QQ/微信全部模型走沙盒 Agent：以前只有配 qtai-sj 的机器人有工具调度能力，现在无论配哪个模型都进完整沙盒 Agent 循环（自主规划→调工具→结果回填→多轮执行轮数20）。心跳引擎新增模型健康告警（可用模型占比<30%自动汇报，QQ群+微信双推）。沙盒新增铁律7重要消息醒目呈现（关键结果前置/异常主动汇报/过程克制结果满足）。web_browse 权限表补齐。沙盒对齐 OpenClaw：自主循环/并行批处理/异步终端轮询/主动记忆检索/技能自提炼/网页浏览/模型健康感知"),
             Triple("v1.150", "十项体验升级：官网首页/权限收紧/模态路由/多选/智能体增强", "官网首页上线（/ 根路径未登录显示官网，已登录进控制台）；网关开关仅管理员可操作（普通用户隐藏+403，独立 user-toggle 管自己的 API 开关）；服务商 Key 仅原添加者可见（非属主 **** + 提示）；网关设置新增模态路由（文本/图片/语音/视频/输入/输出 六类可指定固定模型，不设置默认全通）；QQ 机器人掉线重连退避改进（连续失败10次固定60s周期，连上复位，掉线自动恢复不用重启容器）；系统动态去重+只留重要事件+样式低调；模型页多选批量操作（全选/批量启停/设公用/删除）；智能体新增 web_browse 网页浏览（抓取标题/正文/链接，felinks 式）；反代理文档更新官网首页说明"),
