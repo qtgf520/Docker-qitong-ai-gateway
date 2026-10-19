@@ -476,8 +476,9 @@ object WeixinBotManager {
     private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long, send: (String) -> Unit): String? {
         val d = db ?: return null
         val key = msg.from  // 每用户上下文隔离
-        val sandboxOn = bot.aiModel.equals("qtai-sj", true)
-        // ★ v71 人设优先：用户设置的 systemPrompt 始终注入（qtai-sj 时追加到沙盒提示词后，不被覆盖）
+        // ★ v1.151 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
+        val sandboxOn = true
+        // ★ v71 人设优先：用户设置的 systemPrompt 始终注入（沙盒时追加到提示词后，不被覆盖）
         val userPrompt = bot.systemPrompt.trim()
         var baseSys = if (sandboxOn) {
             val sb = com.qitong.gateway.sandbox.SandboxEngine.SYSTEM_PROMPT

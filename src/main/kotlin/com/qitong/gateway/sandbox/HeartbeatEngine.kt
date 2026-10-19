@@ -171,6 +171,18 @@ object HeartbeatEngine {
                 }
             }
 
+            // ★ v1.151 模型健康告警：可用模型占比低（<30%）时主动汇报（OpenClaw 式主动感知健康）
+            runCatching {
+                val health = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
+                val healthy = health.count { (it["isHealthy"] as? Boolean) == true }
+                val total = health.size
+                if (total >= 3 && healthy.toDouble() / total < 0.3) {
+                    issues.add("⚠️ 可用模型仅 $healthy/$total（健康率过低），模型可能大面积不可用，建议检查服务商或测速")
+                } else if (total > 0) {
+                    okLines.add("✅ 可用模型 $healthy/$total")
+                }
+            }
+
             // 5. 高重要性未处理记忆（importance >= 9 视为待办） + 到期计划任务
             runCatching {
                 val todos = db.getMemories(0, limit = 50).filter { (it["importance"] as? Number)?.toInt() ?: 0 >= 9 }

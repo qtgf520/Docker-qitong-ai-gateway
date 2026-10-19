@@ -44,7 +44,7 @@ function applyLang(){
 function saveLangLocal(lang){ curLang = lang; localStorage.setItem('qt_lang', lang); applyLang(); }
 function openModal(title, html, onSave, opts){
  opts = opts || {};
- // ★ v1.150 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
+ // ★ v1.151 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
  if(typeof onSave !== 'function'){ opts.hideFooter = true; onSave = function(){}; }
  $('modalTitle').textContent = title;
  var footer = opts.hideFooter ? '' : '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn" onclick="modalSave()">保存</button><button class="btn-ghost" onclick="closeModal()">取消</button></div>';
@@ -321,7 +321,7 @@ function startPerfTimer(){
    }, 5000);
 }
 
-// ★ v1.150 系统动态实时流（更克制：只推重要事件、模型切换去重合并、样式低调不打扰）
+// ★ v1.151 系统动态实时流（更克制：只推重要事件、模型切换去重合并、样式低调不打扰）
 var _sysFeedTimer = null;
 function startSysFeed(){
   var feed = $('sysFeed');
@@ -330,7 +330,7 @@ function startSysFeed(){
   if(_sysFeedTimer) clearInterval(_sysFeedTimer);
   function push(txt, cls, icon){
     var f = $('sysFeed'); if(!f) return;
-    // ★ v1.150 去重：同内容 10 秒内不重复推
+    // ★ v1.151 去重：同内容 10 秒内不重复推
     var now = Date.now();
     if(window._lastFeedText === txt && now - (window._lastFeedAt || 0) < 10000) return;
     window._lastFeedText = txt; window._lastFeedAt = now;
@@ -504,7 +504,7 @@ loaders.providers = function(){
   state.providers = r.data || [];
   var rows = state.providers.map(function(p){
    var canSeeKey = p.apiKey && p.apiKey.indexOf('****') < 0;
-   // ★ v1.150 Key 可见性：原添加者(owner)或管理员能看到完整 key，其他人显示 **** + 提示
+   // ★ v1.151 Key 可见性：原添加者(owner)或管理员能看到完整 key，其他人显示 **** + 提示
    var keyTxt = p.apiKey ? (p.apiKey.indexOf('****')>=0 ? '<span style="font-size:11px;color:var(--muted)">'+esc(p.apiKey)+'（仅属主可见）</span>' : '<span style="font-family:monospace">'+esc(p.apiKey)+'</span>') : '<span style="color:var(--muted)">无</span>';
    var pubTxt = p.isPublic ? '<span class="badge green">公用</span>' : (p.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
    return '<tr><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';

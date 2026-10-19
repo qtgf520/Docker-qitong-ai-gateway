@@ -1447,8 +1447,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val groupCfg = if (groupOpenid.isNotBlank()) db.getQqGroupConfig(groupOpenid) else null
         val groupPrompt = groupCfg?.get("groupPrompt") as? String
         val userPersona = db.getQqUser(userOpenid)?.get("persona") as? String?
-        // ★ qtai-sj 沙盒模式：选中 qtai-sj 模型自动注入沙盒专属系统提示词（含知识库）
-        val sandboxOn = bot.aiModel.equals("qtai-sj", true)
+        // ★ v1.151 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
+        val sandboxOn = true
         // ★ v50 绑定账号身份：QQ 用户绑定网关账号后，沙盒调用自动用该账号 userId（权限/余额/用量对齐）
         val boundUser = db.getQqBoundUser(userOpenid)
         val effUserId = boundUser?.id ?: 0L

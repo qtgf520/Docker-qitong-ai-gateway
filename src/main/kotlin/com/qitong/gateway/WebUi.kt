@@ -11,7 +11,7 @@ object WebUi {
 
     private const val VER = "v1.133"
 
-    /** ★ v1.150 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
+    /** ★ v1.151 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
     fun landingHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
