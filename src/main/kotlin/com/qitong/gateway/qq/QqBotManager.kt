@@ -1121,6 +1121,14 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return System.currentTimeMillis() - last < seconds * 1000L
     }
 
+    /** ★ v1.152 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
+    private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
+        text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
+        text.contains("让我", true) || text.contains("我去", true) || text.contains("我来", true) ||
+        text.contains("再确认", true) || text.contains("继续处理", true) || text.contains("继续执行", true) ||
+        text.contains("还有", true) || text.contains("进一步", true) || text.contains("接下来", true) ||
+        text.contains("稍等", true) || text.contains("等我", true)
+
     /** ★ v71 大消息分段：超 maxLen 按行切段（QQ 长消息不丢） */
     private fun splitText(text: String, maxLen: Int = 1800): List<String> {
         if (text.length <= maxLen) return listOf(text)
@@ -1447,7 +1455,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val groupCfg = if (groupOpenid.isNotBlank()) db.getQqGroupConfig(groupOpenid) else null
         val groupPrompt = groupCfg?.get("groupPrompt") as? String
         val userPersona = db.getQqUser(userOpenid)?.get("persona") as? String?
-        // ★ v1.151 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
+        // ★ v1.152 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
         val sandboxOn = true
         // ★ v50 绑定账号身份：QQ 用户绑定网关账号后，沙盒调用自动用该账号 userId（权限/余额/用量对齐）
         val boundUser = db.getQqBoundUser(userOpenid)
@@ -1602,9 +1610,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             "❌ 工具执行异常（$fn）：${e.message}"
                         }
                         results.append("【$fn 执行结果】\n$r")
-                        // ★ v1.130 结果实时推送（龙虾式：✅ 讲结果）
-                        val rShow = r.trim().replace('\n', ' ').take(120)
-                        smartSend("✅ $fn 完成：$rShow", false)
+                        // ★ v1.152 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文本分段由 smartSend 自动拆
+                        //   OpenClaw 式：结果就是结果，必须完整给用户看到
+                        val rShow = r.trim()
+                        smartSend("✅ $fn 完成：\n$rShow", false)
                         db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args", 0)
                     } else {
                         // 多调用并行（★ v1.130 实时推送：先讲要并行做哪几步）
@@ -1621,9 +1630,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append(if (results.isEmpty()) "" else "\n").append("【$fn 执行结果】\n$r")
-                                    // ★ v1.130 每个结果实时推送
-                                    val rShow = r.trim().replace('\n', ' ').take(120)
-                                    smartSend("✅ $fn 完成：$rShow", false)
+                                    // ★ v1.152 修复长文截断：并行工具结果也完整推送（不再 take(120)）
+                                    val rShow = r.trim()
+                                    smartSend("✅ $fn 完成：\n$rShow", false)
                                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] 并行执行", 0)
                                 } catch (e: Exception) {
                                     results.append(if (results.isEmpty()) "" else "\n").append("【工具执行异常】\n${e.message}")
@@ -1680,8 +1689,50 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     hist.add("assistant" to cleanText)
                     hist.add("user" to "【工具执行结果】\n$results")
                     content = nextContent
-                    // 无限循环保护：若下一轮无调用则结束
-                    if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty()) break
+                    // ★ v1.152 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步/再查」但没输出调用标签 →
+                    //   引导一次让它输出真标签继续执行，而不是直接 break 停半路
+                    val calls2 = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
+                    if (calls2.isEmpty() && noCallGuide < 2 && continueIntent(content)) {
+                        noCallGuide++
+                        smartSend("💭 好的，我继续查…", false)
+                        val guideBody2 = JSONObject()
+                            .put("model", bot.aiModel)
+                            .put("messages", JSONArray()
+                                .put(JSONObject().put("role", "system").put("content", sysFull))
+                                .put(JSONObject().put("role", "user").put("content", userText))
+                                .put(JSONObject().put("role", "assistant").put("content", cleanText))
+                                .put(JSONObject().put("role", "user").put("content", newPrompt))
+                                .put(JSONObject().put("role", "assistant").put("content", content))
+                                .put(JSONObject().put("role", "user").put("content",
+                                    "你说要继续查/继续处理，但没有输出具体要调用哪个工具。请严格按格式输出你要执行的下一步工具（一次一个即可，不要解释）：\n[[沙盒:函数名(参数=值)]]\n如果你确实查完了、没有更多工具要调，就直接给出最终完整答复（把结果说完整，不要空话）。")))
+                            .toString()
+                        val guideReq2 = Request.Builder()
+                            .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
+                            .addHeader("Content-Type", "application/json")
+                            .post(guideBody2.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                            .build()
+                        val guided2 = try {
+                            val gc2 = http.newCall(guideReq2)
+                            activeCalls[userOpenid] = gc2
+                            try {
+                                gc2.execute().use { respG ->
+                                    if (!respG.isSuccessful) null
+                                    else JSONObject(respG.body?.string().orEmpty())
+                                        .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                        ?.optString("content")?.trim().orEmpty()
+                                }
+                            } finally {
+                                if (activeCalls[userOpenid] === gc2) activeCalls.remove(userOpenid)
+                            }
+                        } catch (e: Exception) { null }
+                        if (guided2.isNullOrBlank()) {
+                            // 引导也没拿到下一步 → 说明确实做完了，正常收尾
+                            break
+                        }
+                        content = guided2
+                        continue  // 下一轮解析引导结果，若仍无调用则 break
+                    }
+                    if (calls2.isEmpty()) break
                 }
                 if (loopGuard > 0 && content.isNotBlank()) {
                     // ★ v55 返回前必清洗 XML 标签（防畸形格式泄漏给用户）
@@ -1697,7 +1748,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 .put(JSONObject().put("role", "user").put("content", userText))
                                 .put(JSONObject().put("role", "assistant").put("content", cleaned))
                                 .put(JSONObject().put("role", "user").put("content",
-                                    "工具结果已经实时推送给用户了（用户已看到原始数据）。现在请给出**完整、有价值的最终答复**，像一个真正聪明的助理那样：该分析就分析、该总结就总结、该给建议就给建议，把话说完整、说清楚，不要人为压缩成一句话。**不要机械照抄**已推送的原始数字/数据，但可以用你自己的语言解读、总结、补充观点。禁止空话（如『已完成请查看』）。")))
+                                    "工具结果已经实时推送给用户了（用户已看到原始数据）。现在请给出**完整、有价值的最终答复**，像一个真正聪明的助理那样：该分析就分析、该总结就总结、该给建议就给建议，**把话说完整、说清楚、该长则长（一段写不下就分多段、用列表/条目输出，完全不要担心长度）**，不要人为压缩成一句话。**不要机械照抄**已推送的原始数字/数据，但可以用你自己的语言解读、总结、补充观点。禁止空话（如『已完成请查看』）。")))
                             .toString()
                         val closeReq = Request.Builder()
                             .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")

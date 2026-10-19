@@ -11,7 +11,7 @@ object WebUi {
 
     private const val VER = "v1.133"
 
-    /** ★ v1.151 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
+    /** ★ v1.152 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
     fun landingHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -20,7 +20,7 @@ object WebUi {
 <title>綦桐AI网关 · AI API 中转与管理平台</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0B0D12;--surface:#12151C;--border:#232833;--primary:#3E7BFA;--text:#D6DAE1;--muted:#8791A0;--green:#3FB27F}
+:root{--bg:#0B0D12;--surface:#1.152C;--border:#232833;--primary:#3E7BFA;--text:#D6DAE1;--muted:#8791A0;--green:#3FB27F}
 body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
 body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(700px 480px at 80% -6%,rgba(62,123,250,.14),transparent 65%),radial-gradient(600px 420px at -8% 104%,rgba(62,123,250,.08),transparent 65%)}
 .nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:22px;padding:14px 32px;background:rgba(11,13,18,.82);backdrop-filter:blur(14px) saturate(1.5);border-bottom:1px solid rgba(255,255,255,.06)}
@@ -133,7 +133,7 @@ docker compose up -d --build
 <title>綦桐AI网关 · 登录</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0B0D12;--surface:#12151C;--border:#232833;--inset:#0E1117;--primary:#3E7BFA;--text:#D6DAE1;--muted:#8791A0;--green:#3FB27F;--red:#E5636A}
+:root{--bg:#0B0D12;--surface:#1.152C;--border:#232833;--inset:#0E1117;--primary:#3E7BFA;--text:#D6DAE1;--muted:#8791A0;--green:#3FB27F;--red:#E5636A}
 body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;background:var(--bg);display:flex;align-items:center;justify-content:center;color:var(--text);padding:16px}
 .card{width:380px;max-width:100%;position:relative;z-index:1;background:rgba(18,21,28,.62);border:1px solid rgba(255,255,255,.09);border-radius:10px;padding:30px 28px;-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 8px 28px rgba(0,0,0,.22)}
 body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(560px 400px at 82% 6%,rgba(62,123,250,.10),transparent 70%),radial-gradient(520px 380px at 6% 96%,rgba(62,123,250,.06),transparent 70%)}
@@ -343,7 +343,7 @@ ${adminJs()}
     fun adminCss(): String = """
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#0B0D12;--surface:#12151C;--surface2:#1A1E28;--border:#232833;--inset:#0E1117;
+  --bg:#0B0D12;--surface:#1.152C;--surface2:#1A1E28;--border:#232833;--inset:#0E1117;
   --primary:#3E7BFA;--primary2:#3E7BFA;--cyan:#3E7BFA;
   --green:#3FB27F;--red:#E5636A;--amber:#D99A3D;
   --text:#D6DAE1;--muted:#8791A0;

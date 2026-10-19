@@ -476,7 +476,7 @@ object WeixinBotManager {
     private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long, send: (String) -> Unit): String? {
         val d = db ?: return null
         val key = msg.from  // 每用户上下文隔离
-        // ★ v1.151 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
+        // ★ v1.152 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
         val sandboxOn = true
         // ★ v71 人设优先：用户设置的 systemPrompt 始终注入（沙盒时追加到提示词后，不被覆盖）
         val userPrompt = bot.systemPrompt.trim()
@@ -611,9 +611,9 @@ object WeixinBotManager {
                             "工具执行异常（" + fn + "）：" + e.message
                         }
                         results.append("【$fn 执行结果】\n$r\n")
-                        // ★ v1.130 结果实时推送
-                        val rShow = r.trim().replace('\n', ' ').take(120)
-                        send("✅ $fn 完成：$rShow")
+                        // ★ v1.152 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文由 send 内部分段
+                        val rShow = r.trim()
+                        send("✅ $fn 完成：\n$rShow")
                         executedCalls = true
                     } else {
                         // 多调用并行（★v1.130 实时推送并行概况）
@@ -634,9 +634,9 @@ object WeixinBotManager {
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append("【$fn 执行结果】\n$r\n")
-                                    // ★ v1.130 每个结果实时推送
-                                    val rShow = r.trim().replace('\n', ' ').take(120)
-                                    send("✅ $fn 完成：$rShow")
+                                    // ★ v1.152 修复长文截断：并行工具结果完整推送（不再 take(120)）
+                                    val rShow = r.trim()
+                                    send("✅ $fn 完成：\n$rShow")
                                     executedCalls = true
                                 } catch (e: Exception) {
                                     results.append("【工具执行异常】\n${e.message}\n")
@@ -685,6 +685,46 @@ object WeixinBotManager {
                     hist.add("assistant" to cleanText)
                     hist.add("user" to "【工具执行结果】\n$results")
                     content = nextContent
+                    // ★ v1.152 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
+                    if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty() && noCallGuide < 2 && continueIntent(content)) {
+                        noCallGuide++
+                        send("💭 好的，我继续查…")
+                        val guideBody2 = JSONObject()
+                            .put("model", bot.aiModel)
+                            .put("messages", JSONArray()
+                                .put(JSONObject().put("role", "system").put("content", baseSys))
+                                .put(JSONObject().put("role", "user").put("content", userText))
+                                .put(JSONObject().put("role", "assistant").put("content", cleanText))
+                                .put(JSONObject().put("role", "user").put("content",
+                                    "【工具执行结果（内部参考，已实时推送）】\n$results"))
+                                .put(JSONObject().put("role", "assistant").put("content", content))
+                                .put(JSONObject().put("role", "user").put("content",
+                                    "你说要继续查/继续处理，但没有输出具体要调用哪个工具。请严格按格式输出你要执行的下一步工具（一次一个即可，不要解释）：\n[[沙盒:函数名(参数=值)]]\n如果你确实查完了、没有更多工具要调，就直接给出最终完整答复（把结果说完整，不要空话）。")))
+                            .toString()
+                        val guideReq2 = Request.Builder()
+                            .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
+                            .addHeader("Content-Type", "application/json")
+                            .post(guideBody2.toRequestBody(jsonCt))
+                            .build()
+                        val guided2 = try {
+                            val gc2 = http.newCall(guideReq2)
+                            activeCalls[msg.from] = gc2
+                            try {
+                                gc2.execute().use { respG ->
+                                    if (!respG.isSuccessful) null
+                                    else JSONObject(respG.body?.string().orEmpty())
+                                        .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                        ?.optString("content")?.trim().orEmpty()
+                                }
+                            } finally {
+                                if (activeCalls[msg.from] === gc2) activeCalls.remove(msg.from)
+                            }
+                        } catch (e: Exception) { null }
+                        if (!guided2.isNullOrBlank()) { content = guided2; continue }
+                        // 引导也没拿到下一步 → 确实做完了，正常收尾
+                        break
+                    }
+                    if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty()) break
                 }
                 while (hist.size > 20) hist.removeAt(0)
                 // ★ v92 微信记忆闭环增强：qtai-sj（sandboxOn）模式也沉淀记忆（对齐 QQ 长期记忆；受 memory_enabled 开关控制）
@@ -716,7 +756,7 @@ object WeixinBotManager {
                             .put(JSONObject().put("role", "user").put("content", userText))
                             .put(JSONObject().put("role", "assistant").put("content", cleanFunctionTags(content)))
                             .put(JSONObject().put("role", "user").put("content",
-                                "工具结果已经实时推送给用户了（用户已看到原始数据）。现在请给出**完整、有价值的最终答复**，像一个真正聪明的助理那样：该分析就分析、该总结就总结、该给建议就给建议，把话说完整、说清楚，不要人为压缩成一句话。**不要机械照抄**已推送的原始数字/数据，但可以用你自己的语言解读、总结、补充观点。禁止空话（如『已完成请查看』）。"))) .toString()
+                                "工具结果已经实时推送给用户了（用户已看到原始数据）。现在请给出**完整、有价值的最终答复**，像一个真正聪明的助理那样：该分析就分析、该总结就总结、该给建议就给建议，**把话说完整、说清楚、该长则长（一段写不下就分多段、用列表/条目输出，完全不要担心长度）**，不要人为压缩成一句话。**不要机械照抄**已推送的原始数字/数据，但可以用你自己的语言解读、总结、补充观点。禁止空话（如『已完成请查看』）。"))) .toString()
                     val closeReq = Request.Builder()
                         .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
                         .addHeader("Content-Type", "application/json")
@@ -756,6 +796,14 @@ object WeixinBotManager {
             null
         }
     }
+
+    /** ★ v1.152 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
+    private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
+        text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
+        text.contains("让我", true) || text.contains("我去", true) || text.contains("我来", true) ||
+        text.contains("再确认", true) || text.contains("继续处理", true) || text.contains("继续执行", true) ||
+        text.contains("还有", true) || text.contains("进一步", true) || text.contains("接下来", true) ||
+        text.contains("稍等", true) || text.contains("等我", true)
 
     /** 清洗回复里的函数调用标签（防 XML/JSON 泄漏给用户，对齐 QQ 侧逻辑） */
     private fun cleanFunctionTags(text: String): String {
