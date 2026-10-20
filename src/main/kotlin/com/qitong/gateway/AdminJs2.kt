@@ -34,7 +34,7 @@ loaders.models = function(){
      '<button class="btn" onclick="editModel(0)">手动添加模型</button>',
      '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">自动全部测速</button>',
      '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
-     // ★ v1.154 多选批量操作（下拉式）
+     // ★ v1.155 多选批量操作（下拉式）
      '<span style="border-left:1px solid var(--border);padding-left:10px;display:inline-flex;gap:6px;align-items:center">' +
       '<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)"><input type="checkbox" id="mdChkAll" onclick="mdSelAll(this.checked)">全选</label>' +
       '<select id="mdBatchSel" class="input" style="width:130px;padding:5px 24px 5px 8px"><option value="">批量操作...</option><option value="enable">批量启用</option><option value="disable">批量停用</option><option value="public">批量设公用</option><option value="delete">批量删除</option></select>' +
@@ -137,7 +137,7 @@ function pollMdProgress(){
   });
  },1200);
 };
-// ★ v1.154 模型多选批量操作（下拉式：选操作→执行）
+// ★ v1.155 模型多选批量操作（下拉式：选操作→执行）
 function mdSelAll(checked){
  var chks = document.querySelectorAll('.md-chk');
  for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }

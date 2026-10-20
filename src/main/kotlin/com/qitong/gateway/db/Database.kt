@@ -242,7 +242,7 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.154 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
+            // ★ v1.155 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS model_prices (
                     model_id TEXT PRIMARY KEY,
@@ -1252,7 +1252,7 @@ class Database(private val dbPath: String) {
     fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = "", inviterId: Long = 0): Long {
         // 生成邀请码
         val code = "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0')
-        // ★ v1.154 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
+        // ★ v1.155 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
         //   避免新用户 quota_limit=0 显示「不限额度」而实际免费套餐是 10 万（对齐产品预期）
         val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         stmt(
@@ -1269,7 +1269,7 @@ fun updateUserLogin(id: Long) {
         stmt("UPDATE users SET password_hash=? WHERE id=?", newHash, id)
     }
 
-    // ★ v1.154 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
+    // ★ v1.155 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
     fun fixFreeUserQuotas(): Int {
         val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         val rows = query("SELECT id FROM users WHERE plan='free' AND quota_limit<=0")
@@ -1536,7 +1536,7 @@ fun updateUserLogin(id: Long) {
             )
         }
 
-    /** ★ v1.154 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
+    /** ★ v1.155 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
     fun getAllMemories(limit: Int = 500): List<Map<String, Any?>> =
         query("SELECT * FROM brain_memory ORDER BY importance DESC, timestamp DESC LIMIT $limit").map { it ->
             val tags = (it["tags"] as? String ?: "")
@@ -1621,21 +1621,21 @@ fun updateUserLogin(id: Long) {
         stmt("DELETE FROM brain_memory WHERE user_id=?", userId)
     }
 
-    /** ★ v1.154 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
+    /** ★ v1.155 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
     fun deleteMemoryAny(id: Long): Boolean {
         val exists = queryOne("SELECT id FROM brain_memory WHERE id=?", id) != null
         if (exists) stmt("DELETE FROM brain_memory WHERE id=?", id)
         return exists
     }
 
-    /** ★ v1.154 管理员清空全部记忆（含账号/QQ/微信/群来源） */
+    /** ★ v1.155 管理员清空全部记忆（含账号/QQ/微信/群来源） */
     fun clearAllMemories(): Int {
         val n = queryOne("SELECT COUNT(*) FROM brain_memory")?.toInt() ?: 0
         stmt("DELETE FROM brain_memory")
         return n
     }
 
-    // ============ ★ v1.154 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
+    // ============ ★ v1.155 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
 
     /** 全部自定义价格（model_id → input/output/updatedAt） */
     fun getAllModelPrices(): List<Map<String, Any?>> =
@@ -1758,6 +1758,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.155", "智能体全接口对齐：网关接口全部开放给沙盒 Agent", "沙盒智能体（QQ/微信/qtai-sj）新增 40+ 网关函数，实现后台全部接口远程可控：价格表查询/自定义维护、用量统计、网关总览、系统监控、数据备份/恢复、套餐管理、卡密生成/兑换、SSH 远程执行、工单列表/创建/详情、操作/登录/QQ/微信日志、记忆库查看/添加/清空、QQ用户列表/积分调整、网关全局启停、我的API开关、活跃模型查看/切换、强制故障池管理、自动测速开关、通知配置查看/测试发送、路由规则增删查、我的会话列表。按用户/管理员双层权限隔离，普通用户只读+自助，管理员全权。"),
             Triple("v1.154", "用户管理菜单修复 + 价格表可维护 + 个人中心额度显示", "修复用户管理菜单消失（历史版本误删入口，视图/loader一直在，已补回）。模型价格表可手动维护：新增 model_prices 表+接口（GET/POST/DELETE/clear），管理员可在价格表页添加/编辑/删除/清空自定义价格，计费优先级：自定义表→模型单价→内置表。个人中心账户卡补额度使用+到期时间显示。扫bug：价格表只读→可维护全链路，计费取价逻辑对齐自定义表（余额检查+扣费两处）"),
             Triple("v1.153", "心跳指定目标推送 + 记忆并入总记忆多选 + 页面多选下拉", "心跳推送只发指定目标：不再全群/全联系人广播（QQ发配置的群 heartbeat_target_qq，微信发配置的openid heartbeat_target_wx，没配兜底发第一个群/最近联系人）。记忆并入总记忆+备注来源：管理员记忆页可见全部来源（账号/QQ用户/微信用户/QQ群），每条备注来源；普通用户只看自己的。记忆页多选：复选框全选+批量删除+按来源筛选下拉。模型页多选改下拉：批量操作从按钮改下拉（批量启用/停用/设公用/删除）+执行。服务商页多选：全选+下拉批量删除/启用/停用。修复记忆批量删除接口类型错误、心跳推送目标逻辑"),
             Triple("v1.152", "修复长文截断 + Agent 半途而废（OpenClaw 式干完才停）", "修复长文被截断：工具结果推送从 take(120) 摘要改为完整推送（QQ/微信单工具+并行全改）。修复「说要继续查却停了」：Agent 循环里模型说继续查/接着弄/下一步但没输出调用标签时原来直接 break，现在识别继续意图并引导输出真标签再执行（最多2次仍无调用才收尾），像 OpenClaw 一样干不完绝不听。closeBody 收敛放开：最终答复强调该长则长、分多段列表输出，不再压缩成一句话。分段推送确认无丢尾巴"),

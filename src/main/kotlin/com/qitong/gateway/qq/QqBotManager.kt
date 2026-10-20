@@ -231,12 +231,12 @@ object QqBotManager {
                 }.onFailure { e -> System.err.println("[QQBot] 掉线重登检查异常: ${e.message}") }
             }
         }
-        // ★ v47 自主心跳（对齐 Kai Heartbeat）：每 N 分钟自检，发现问题推送到指定目标（★ v1.154 不再全群广播，只发管理员配置的群/微信联系人）
+        // ★ v47 自主心跳（对齐 Kai Heartbeat）：每 N 分钟自检，发现问题推送到指定目标（★ v1.155 不再全群广播，只发管理员配置的群/微信联系人）
         runCatching {
             com.qitong.gateway.sandbox.HeartbeatEngine.onIssue = { msg ->
                 runCatching {
                     // 心跳推送目标（网关设置可配：heartbeat_target_qq=群openid 逗号分隔；heartbeat_target_wx=微信openid 逗号分隔）
-                    // ★ v1.154 只发指定目标，不再全群/全联系人广播
+                    // ★ v1.155 只发指定目标，不再全群/全联系人广播
                     val qqTargets = database.getConfig("heartbeat_target_qq", "").split(",")
                         .map { it.trim() }.filter { it.isNotBlank() }
                     val wxTargets = database.getConfig("heartbeat_target_wx", "").split(",")
@@ -253,7 +253,7 @@ object QqBotManager {
                             targets.forEach { gid -> runCatching { api.sendGroupMessage(b, at, gid, msg, null) } }
                         }
                     }
-                    // ★ v1.154 微信推送：只发配置目标 openid（不再 broadcastAll 全联系人）
+                    // ★ v1.155 微信推送：只发配置目标 openid（不再 broadcastAll 全联系人）
                     com.qitong.gateway.weixin.WeixinBotManager.sendToTargets(wxTargets, msg)
                 }
             }
@@ -1126,7 +1126,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return System.currentTimeMillis() - last < seconds * 1000L
     }
 
-    /** ★ v1.154 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
+    /** ★ v1.155 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
     private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
         text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
         text.contains("让我", true) || text.contains("我去", true) || text.contains("我来", true) ||
@@ -1460,7 +1460,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val groupCfg = if (groupOpenid.isNotBlank()) db.getQqGroupConfig(groupOpenid) else null
         val groupPrompt = groupCfg?.get("groupPrompt") as? String
         val userPersona = db.getQqUser(userOpenid)?.get("persona") as? String?
-        // ★ v1.154 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
+        // ★ v1.155 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
         val sandboxOn = true
         // ★ v50 绑定账号身份：QQ 用户绑定网关账号后，沙盒调用自动用该账号 userId（权限/余额/用量对齐）
         val boundUser = db.getQqBoundUser(userOpenid)
@@ -1615,7 +1615,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             "❌ 工具执行异常（$fn）：${e.message}"
                         }
                         results.append("【$fn 执行结果】\n$r")
-                        // ★ v1.154 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文本分段由 smartSend 自动拆
+                        // ★ v1.155 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文本分段由 smartSend 自动拆
                         //   OpenClaw 式：结果就是结果，必须完整给用户看到
                         val rShow = r.trim()
                         smartSend("✅ $fn 完成：\n$rShow", false)
@@ -1635,7 +1635,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append(if (results.isEmpty()) "" else "\n").append("【$fn 执行结果】\n$r")
-                                    // ★ v1.154 修复长文截断：并行工具结果也完整推送（不再 take(120)）
+                                    // ★ v1.155 修复长文截断：并行工具结果也完整推送（不再 take(120)）
                                     val rShow = r.trim()
                                     smartSend("✅ $fn 完成：\n$rShow", false)
                                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] 并行执行", 0)
@@ -1694,7 +1694,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     hist.add("assistant" to cleanText)
                     hist.add("user" to "【工具执行结果】\n$results")
                     content = nextContent
-                    // ★ v1.154 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步/再查」但没输出调用标签 →
+                    // ★ v1.155 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步/再查」但没输出调用标签 →
                     //   引导一次让它输出真标签继续执行，而不是直接 break 停半路
                     val calls2 = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
                     if (calls2.isEmpty() && noCallGuide < 2 && continueIntent(content)) {

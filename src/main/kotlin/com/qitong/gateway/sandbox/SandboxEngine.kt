@@ -28,7 +28,7 @@ object SandboxEngine {
         "provider_get_all", "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
         "user_balance", "user_recharge", "user_deduct",
         "terminal_run", "terminal_create", "terminal_list", "terminal_status",
-        "web_browse",  // ★ v1.154 网页浏览（curl 抓取转文本，felinks 风格）
+        "web_browse",  // ★ v1.155 网页浏览（curl 抓取转文本，felinks 风格）
         "qq_bots_list", "qq_bots_groups", "qq_points_rank", "help",
         "mcp_list", "mcp_call", "web_search",
         "workflow_run", "workflow_list",
@@ -42,7 +42,19 @@ object SandboxEngine {
         "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
         "api_key_list", "api_key_create", "api_key_delete", "user_list", "user_set_balance", "user_set_role", "user_delete",
         "config_get", "config_set", "announcement_add", "announcement_delete", "ticket_reply", "ticket_close",
-        "skill_add", "skill_del", "skill_toggle", "skill_my"
+        "skill_add", "skill_del", "skill_toggle", "skill_my",
+        "price_list", "price_get", "price_set", "price_delete", "price_clear",
+        "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
+        "backup_list", "backup_create", "backup_restore",
+        "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
+        "ssh_list", "ssh_exec",
+        "ticket_list", "ticket_create", "ticket_detail",
+        "op_logs", "login_logs", "qq_logs", "wx_logs",
+        "memory_list", "memory_add", "memory_clear",
+        "qq_users_list", "qq_point_adjust",
+        "gateway_toggle", "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool", "gateway_auto_speedtest",
+        "notify_config", "notify_test",
+        "rule_list", "rule_add", "rule_delete", "conversation_list"
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -137,6 +149,50 @@ object SandboxEngine {
             .put(func("announcement_delete", "删除公告（管理员）", "admin", "modify", listOf(param("id", true, "公告ID")), "删除结果"))
             .put(func("ticket_reply", "回复工单（管理员；给用户工单回复）", "admin", "modify", listOf(param("ticket_id", true, "工单ID"), param("content", true, "回复内容")), "回复结果"))
             .put(func("ticket_close", "关闭工单（管理员）", "admin", "modify", listOf(param("ticket_id", true, "工单ID")), "关闭结果"))
+            .put(func("price_list", "查看全部模型价格表（管理员；含内置+自定义）", "admin", "read", emptyList(), "各模型输入/输出单价"))
+            .put(func("price_get", "查单个模型价格（只读）", "user", "read", listOf(param("model_id", true, "模型ID如 deepseek-chat")), "该模型输入/输出单价"))
+            .put(func("price_set", "保存/新增模型自定义价格（管理员；input_price输入价，output_price可选默认2倍）", "admin", "modify", listOf(param("model_id", true, "模型ID"), param("input_price", true, "输入价(元/百万token)"), param("output_price", false, "输出价默认为输入2倍")), "保存结果"))
+            .put(func("price_delete", "删除模型自定义价格（管理员）", "admin", "modify", listOf(param("model_id", true, "模型ID")), "删除结果"))
+            .put(func("price_clear", "清空全部自定义价格恢复默认表（管理员）", "admin", "modify", emptyList(), "清空条数"))
+            .put(func("usage_recent", "查看最近用量记录（只读；管理员全部，用户看自己）", "user", "read", listOf(param("limit", false, "条数默认20")), "模型/Token/费用/时间"))
+            .put(func("usage_stats", "用量统计汇总（只读；管理员总览，用户看自己）", "user", "read", emptyList(), "模型/Token/费用/流量"))
+            .put(func("overall_stats", "网关总览统计（只读）：用户/服务商/模型数/流量/运行状态", "user", "read", emptyList(), "统计摘要"))
+            .put(func("sys_monitor", "系统监控快照（管理员）：CPU/内存/磁盘/网络/负载", "admin", "read", emptyList(), "系统资源实时状态"))
+            .put(func("plan_stats", "套餐统计报表（管理员）：套餐分布/活跃付费/到期预警/充值总额", "admin", "read", emptyList(), "套餐分布/收入/到期"))
+            .put(func("backup_list", "查看备份列表（管理员）", "admin", "read", emptyList(), "备份文件名/大小/时间"))
+            .put(func("backup_create", "执行一次数据库备份（管理员）", "admin", "modify", emptyList(), "备份文件路径"))
+            .put(func("backup_restore", "恢复备份（管理员；重启容器生效）", "admin", "modify", listOf(param("name", true, "备份文件名")), "恢复结果"))
+            .put(func("plan_list", "查看套餐定义列表（只读）", "user", "read", emptyList(), "套餐/价格/额度/速率"))
+            .put(func("plan_save", "保存/新增套餐定义（管理员）", "admin", "modify", listOf(param("code", true, "套餐编码"), param("name", true, "套餐名"), param("price", true, "价格(元)"), param("months", false, "时长月数"), param("quota_limit", false, "额度上限"), param("intro", false, "介绍")), "保存结果"))
+            .put(func("plan_delete", "删除套餐定义（管理员）", "admin", "modify", listOf(param("code", true, "套餐编码")), "删除结果"))
+            .put(func("card_list", "查看充值卡密列表（管理员）", "admin", "read", listOf(param("batch", false, "批次号，空=全部")), "卡密/面额/状态"))
+            .put(func("card_gen", "批量生成充值卡密（管理员）", "admin", "modify", listOf(param("amount", true, "面额(元)"), param("count", false, "数量默认10"), param("batch", false, "批次备注")), "生成的卡密列表"))
+            .put(func("card_redeem", "兑换充值卡密（需绑定网关账号）", "user", "modify", listOf(param("code", true, "卡密")), "到账金额"))
+            .put(func("ssh_list", "查看SSH配置列表（管理员）", "admin", "read", emptyList(), "SSH配置名/主机/用户"))
+            .put(func("ssh_exec", "通过已保存的SSH配置远程执行命令（管理员）", "admin", "modify", listOf(param("name", true, "SSH配置名"), param("cmd", true, "要执行的命令")), "远程命令输出"))
+            .put(func("ticket_list", "查看工单列表（只读；管理员全部，用户看自己）", "user", "read", emptyList(), "工单ID/标题/状态"))
+            .put(func("ticket_create", "创建工单（需绑定账号）", "user", "modify", listOf(param("title", true, "工单标题")), "新工单ID"))
+            .put(func("ticket_detail", "查看工单消息详情（管理员）", "admin", "read", listOf(param("ticket_id", true, "工单ID")), "工单消息列表"))
+            .put(func("op_logs", "查看操作日志（管理员）", "admin", "read", emptyList(), "用户名/动作/详情"))
+            .put(func("login_logs", "查看登录日志（管理员）", "admin", "read", emptyList(), "用户名/成功失败/IP"))
+            .put(func("qq_logs", "查看QQ机器人日志（管理员）", "admin", "read", emptyList(), "类型/内容"))
+            .put(func("wx_logs", "查看微信机器人日志（管理员）", "admin", "read", emptyList(), "类型/内容"))
+            .put(func("memory_list", "查看记忆库全部（管理员）", "admin", "read", emptyList(), "记忆标题/摘要/来源"))
+            .put(func("memory_add", "手动添加一条记忆（需绑定账号）", "user", "modify", listOf(param("title", true, "标题"), param("content", true, "内容")), "保存结果"))
+            .put(func("memory_clear", "清空全部记忆（管理员）", "admin", "modify", emptyList(), "清空条数"))
+            .put(func("qq_users_list", "查看QQ用户列表（管理员）", "admin", "read", emptyList(), "昵称/积分/权限"))
+            .put(func("qq_point_adjust", "调整QQ用户积分（管理员）", "admin", "modify", listOf(param("openid", true, "QQ用户openid"), param("delta", true, "积分增减")), "调整结果"))
+            .put(func("gateway_toggle", "网关全局启停（管理员；action=start/stop/toggle）", "admin", "modify", listOf(param("action", false, "start/stop/toggle默认toggle")), "启停结果"))
+            .put(func("gateway_user_toggle", "我的API开关（普通用户只控制自己的转发）", "user", "modify", emptyList(), "我的API状态"))
+            .put(func("gateway_active_model", "查看/设置活跃模型（管理员全局，用户看自己）", "user", "read", listOf(param("modelKey", false, "模型Key，空=只看当前")), "当前活跃模型"))
+            .put(func("gateway_forced_pool", "管理强制故障池（管理员全局，用户自己的池）", "user", "modify", listOf(param("action", true, "add/remove/clear"), param("modelKey", true, "模型Key")), "池内容"))
+            .put(func("gateway_auto_speedtest", "自动测速开关+间隔（管理员全局，用户自己的）", "user", "modify", listOf(param("enabled", true, "true/false"), param("intervalMin", false, "间隔分钟默认240")), "设置结果"))
+            .put(func("notify_config", "查看通知配置（管理员）：钉钉/邮箱", "admin", "read", emptyList(), "通知配置项"))
+            .put(func("notify_test", "发送测试通知（管理员）", "admin", "modify", listOf(param("message", false, "测试消息内容")), "发送结果"))
+            .put(func("rule_list", "查看路由规则列表（管理员）", "admin", "read", emptyList(), "规则名/匹配/目标"))
+            .put(func("rule_add", "新增路由规则（管理员）", "admin", "modify", listOf(param("name", true, "规则名"), param("target_model", true, "目标模型Key"), param("path_pattern", false, "路径匹配"), param("model_pattern", false, "模型匹配"), param("priority", false, "优先级")), "新增结果"))
+            .put(func("rule_delete", "删除路由规则（管理员）", "admin", "modify", listOf(param("id", true, "规则ID")), "删除结果"))
+            .put(func("conversation_list", "查看我的会话记录列表（只读）", "user", "read", emptyList(), "会话ID/标题"))
             .toString()
     }
 
@@ -214,7 +270,7 @@ $KNOWLEDGE_JSON
 3. 【缓存意识】相同问题短时间内重复问（如反复查状态/排行），网关响应缓存会自动命中加速；用户问「缓存」相关 → [[沙盒:cache_stats(action=stats)]] 查看，管理员可 [[沙盒:cache_stats(action=clear)]] 清空。
 4. 【持续成长】每次任务后想想：这次学到了什么？有没有更优路径？下次同类任务直接走最优路径。
 
-## 7. 重要消息醒目呈现（v1.154：OpenClaw 式「用户要的结果才重点推」）
+## 7. 重要消息醒目呈现（v1.155：OpenClaw 式「用户要的结果才重点推」）
 1. 【关键结果前置】任务完成时，把用户真正需要的核心结果用最醒目方式呈现（如「✅ 充值成功：用户 xxx 到账 ¥50，当前余额 ¥128.50」「🔴 模型 deepseek-v4-flash 已掉线，已自动切换到 gpt-4o」），不要把关键数字埋在长文里。
 2. 【异常主动汇报】执行中发现异常（模型全挂/余额不足/服务商失效/接口报错）时，立即用⚠️/🔴醒目格式汇报，并给出可执行的下一步（如「建议先测速看看哪些模型可用」），不要默默失败。
 3. 【过程克制，结果满足】过程推送（💭/🔧/✅）只用于「用户点名的任务在推进」的场景；纯闲聊/简单问答不要刷过程，直接给结果。用户要的看得见的步骤才推步骤，用户只要结果就只给结果。
@@ -384,7 +440,7 @@ $KNOWLEDGE_JSON
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
-            "web_browse",  // ★ v1.154 网页浏览（user/read）
+            "web_browse",  // ★ v1.155 网页浏览（user/read）
             "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list", "skill_list",
             "git_version", "git_log", "announcement_list", "skill_my" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
@@ -397,6 +453,17 @@ $KNOWLEDGE_JSON
             "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
             "api_key_create", "api_key_delete", "user_set_balance", "user_set_role", "user_delete",
             "config_set", "announcement_add", "announcement_delete", "ticket_reply", "ticket_close" -> "admin" to "modify"
+            // v1.155 新增：普通用户只读/自助
+            "price_get", "plan_list", "conversation_list", "usage_recent", "usage_stats", "overall_stats",
+            "ticket_list", "ticket_create", "card_redeem", "memory_add",
+            "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool" -> "user" to "read"
+            // v1.155 新增：管理员只读
+            "price_list", "sys_monitor", "plan_stats", "backup_list", "card_list", "ssh_list", "ticket_detail",
+            "op_logs", "login_logs", "qq_logs", "wx_logs", "qq_users_list", "memory_list", "notify_config", "rule_list" -> "admin" to "read"
+            // v1.155 新增：管理员修改
+            "price_set", "price_delete", "price_clear", "backup_create", "backup_restore", "plan_save", "plan_delete",
+            "card_gen", "ssh_exec", "qq_point_adjust", "memory_clear", "gateway_toggle", "gateway_auto_speedtest",
+            "notify_test", "rule_add", "rule_delete" -> "admin" to "modify"
             else -> "user" to "read"
         }
         val (needPerm, risk) = perm
@@ -1011,7 +1078,7 @@ $KNOWLEDGE_JSON
                     else com.qitong.gateway.http.TerminalManager.asyncStatus(id.trim())
                 }
                 "web_browse" -> {
-                    // ★ v1.154 网页浏览（felinks 式文本抓取）：curl 抓 HTML → 去标签 → 提取标题/正文/链接
+                    // ★ v1.155 网页浏览（felinks 式文本抓取）：curl 抓 HTML → 去标签 → 提取标题/正文/链接
                     val url = args["url"] ?: ""
                     if (url.isBlank() || !url.startsWith("http")) "⚠️ 语法：web_browse(url=http(s)://网页地址)"
                     else try {
@@ -1352,6 +1419,23 @@ $KNOWLEDGE_JSON
                     if (to.isBlank() || !to.contains("@")) "⚠️ 语法：mail_send(to=收件人邮箱, title=主题, content=内容)"
                     else if (content.isBlank()) "⚠️ 邮件内容不能为空"
                     else com.qitong.gateway.notify.NotificationManager.sendMail(db, to, title, content)
+                }
+                // ===== v1.155 网关全接口补齐（实现见 V155Ext1/2） =====
+                "price_list", "price_get", "price_set", "price_delete", "price_clear",
+                "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
+                "backup_list", "backup_create", "backup_restore",
+                "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
+                "ssh_list", "ssh_exec",
+                "ticket_list", "ticket_create", "ticket_detail",
+                "op_logs", "login_logs", "qq_logs", "wx_logs",
+                "memory_list", "memory_add", "memory_clear",
+                "qq_users_list", "qq_point_adjust",
+                "gateway_toggle", "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool", "gateway_auto_speedtest",
+                "notify_config", "notify_test",
+                "rule_list", "rule_add", "rule_delete", "conversation_list" -> {
+                    V155Ext1.execute(fn, args, isAdmin, userId, db, channel)
+                        ?: V155Ext2.execute(fn, args, isAdmin, userId, db, channel)
+                        ?: "❌ 未知沙盒函数: $fn（发「沙盒帮助」查看可用能力）"
                 }
                 else -> "❌ 未知沙盒函数: $fn（发「沙盒帮助」查看可用能力）"
             }
