@@ -1252,19 +1252,32 @@ class Database(private val dbPath: String) {
     fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = "", inviterId: Long = 0): Long {
         // 生成邀请码
         val code = "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0')
+        // ★ v1.154 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
+        //   避免新用户 quota_limit=0 显示「不限额度」而实际免费套餐是 10 万（对齐产品预期）
+        val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         stmt(
-            "INSERT INTO users (username, password_hash, role, display_name, created_at, inviter_id, invite_code) VALUES (?,?,?,?,?,?,?)",
-            username, passwordHash, role, displayName, System.currentTimeMillis(), inviterId, code
+            "INSERT INTO users (username, password_hash, role, display_name, created_at, inviter_id, invite_code, plan, quota_limit, quota_used) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            username, passwordHash, role, displayName, System.currentTimeMillis(), inviterId, code, "free", freeQuota, 0L
         )
         return lastInsertId()
     }
 
-    fun updateUserLogin(id: Long) {
+fun updateUserLogin(id: Long) {
         stmt("UPDATE users SET last_login_at=? WHERE id=?", System.currentTimeMillis(), id)
     }
-
     fun updateUserPassword(id: Long, newHash: String) {
         stmt("UPDATE users SET password_hash=? WHERE id=?", newHash, id)
+    }
+
+    // ★ v1.154 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
+    fun fixFreeUserQuotas(): Int {
+        val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
+        val rows = query("SELECT id FROM users WHERE plan='free' AND quota_limit<=0")
+        rows.forEach { r ->
+            val uid = (r["id"] as? Number)?.toLong() ?: return@forEach
+            stmt("UPDATE users SET quota_limit=? WHERE id=? AND plan='free' AND quota_limit<=0", freeQuota, uid)
+        }
+        return rows.size
     }
 
     fun deleteUser(id: Long) {

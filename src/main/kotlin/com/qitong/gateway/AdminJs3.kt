@@ -328,13 +328,11 @@ loaders.profile = function(){
     '<div class="form-row"><label>剩余额度</label><div style="font-size:16px;color:var(--cyan)">' + quotaText + '</div></div>' +
     '<div class="form-row"><label>到期时间</label><div style="color:var(--muted);font-size:13px">' + expireText + '</div></div>' +
     '<div class="form-row"><label>续费（从余额扣款）</label><button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="doSubscribe()">续费 / 升级套餐</button><button class="btn" style="width:auto;padding:8px 20px;margin-top:0;margin-left:6px" onclick="doRedeem()">卡密兑换</button></div></div>',
-   '<div class="grid grid-2">',
-    '<div class="card"><h3>账户</h3>' +
-     '<div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div>' +
-     '<div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div>' +
-     '<div class="form-row"><label>额度使用（token）</label><div style="font-size:14px;color:var(--text)">' + quotaText + '</div></div>' +
-     '<div class="form-row"><label>到期时间</label><div style="color:var(--muted);font-size:13px">' + expireText + '</div></div>' +
-     '</div>',
+'<div class="grid grid-2">',
+     '<div class="card"><h3>账户</h3>' +
+      '<div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div>' +
+      '<div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div>' +
+      '</div>',
     '<div class="card"><h3>邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag"></span></div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
    '</div>',
     '<div class="card"><h3>余额账单 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadBalanceLogs()">刷新</button></h3><div id="balLogBox" style="color:var(--muted);font-size:12px">加载中...</div></div>',

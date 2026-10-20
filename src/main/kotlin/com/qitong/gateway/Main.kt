@@ -139,6 +139,11 @@ fun main(args: Array<String>) {
         }
     }
     runCatching { database.seedUpdateLogsIfEmpty() }
+    // ★ v1.154 免费用户额度补全（老库 plan='free' 且 quota_limit=0 的用户补 10 万，与新注册逻辑对齐）
+    runCatching {
+        val fixed = database.fixFreeUserQuotas()
+        if (fixed > 0) println("[Gateway] 已补全 $fixed 个免费用户额度（10万 token）")
+    }
     // ★ v1.104 SSH 配置持久化：启动时绑定 DB（加载已保存的 SSH 连接，重启不丢）
     runCatching { com.qitong.gateway.http.TerminalManager.bindSshDb(database) }
 
