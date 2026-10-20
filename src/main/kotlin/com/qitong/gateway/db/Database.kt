@@ -242,6 +242,15 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
+            // ★ v1.154 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS model_prices (
+                    model_id TEXT PRIMARY KEY,
+                    input_price REAL NOT NULL DEFAULT 0,
+                    output_price REAL NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
             // ★ v1.146 内置五档套餐种子（仅首次初始化，INSERT OR IGNORE 不覆盖管理员修改）
             runCatching {
                 val defs = listOf(
@@ -1514,7 +1523,7 @@ class Database(private val dbPath: String) {
             )
         }
 
-    /** ★ v1.153 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
+    /** ★ v1.154 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
     fun getAllMemories(limit: Int = 500): List<Map<String, Any?>> =
         query("SELECT * FROM brain_memory ORDER BY importance DESC, timestamp DESC LIMIT $limit").map { it ->
             val tags = (it["tags"] as? String ?: "")
@@ -1599,17 +1608,67 @@ class Database(private val dbPath: String) {
         stmt("DELETE FROM brain_memory WHERE user_id=?", userId)
     }
 
-    /** ★ v1.153 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
+    /** ★ v1.154 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
     fun deleteMemoryAny(id: Long): Boolean {
         val exists = queryOne("SELECT id FROM brain_memory WHERE id=?", id) != null
         if (exists) stmt("DELETE FROM brain_memory WHERE id=?", id)
         return exists
     }
 
-    /** ★ v1.153 管理员清空全部记忆（含账号/QQ/微信/群来源） */
+    /** ★ v1.154 管理员清空全部记忆（含账号/QQ/微信/群来源） */
     fun clearAllMemories(): Int {
         val n = queryOne("SELECT COUNT(*) FROM brain_memory")?.toInt() ?: 0
         stmt("DELETE FROM brain_memory")
+        return n
+    }
+
+    // ============ ★ v1.154 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
+
+    /** 全部自定义价格（model_id → input/output/updatedAt） */
+    fun getAllModelPrices(): List<Map<String, Any?>> =
+        query("SELECT * FROM model_prices ORDER BY model_id").map { it ->
+            mapOf(
+                "modelId" to (it["model_id"] as? String ?: ""),
+                "inputPrice" to ((it["input_price"] as? Number)?.toDouble() ?: 0.0),
+                "outputPrice" to ((it["output_price"] as? Number)?.toDouble() ?: 0.0),
+                "updatedAt" to ((it["updated_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    /** 查某模型自定义输入价（未收录返回 null → 回退内置 PricingTable） */
+    fun getModelPrice(modelId: String): Map<String, Any?>? =
+        query("SELECT * FROM model_prices WHERE model_id=?", modelId).firstOrNull()?.let { it ->
+            mapOf(
+                "modelId" to (it["model_id"] as? String ?: ""),
+                "inputPrice" to ((it["input_price"] as? Number)?.toDouble() ?: 0.0),
+                "outputPrice" to ((it["output_price"] as? Number)?.toDouble() ?: 0.0)
+            )
+        }
+
+    /** 保存/新增模型价格（upsert） */
+    fun saveModelPrice(modelId: String, inputPrice: Double, outputPrice: Double) {
+        val now = System.currentTimeMillis()
+        val exists = queryOne("SELECT model_id FROM model_prices WHERE model_id=?", modelId) != null
+        if (exists) {
+            stmt("UPDATE model_prices SET input_price=?, output_price=?, updated_at=? WHERE model_id=?",
+                inputPrice, outputPrice, now, modelId)
+        } else {
+            stmt("INSERT INTO model_prices (model_id,input_price,output_price,updated_at) VALUES (?,?,?,?)",
+                modelId, inputPrice, outputPrice, now)
+        }
+    }
+
+    /** 删除模型价格（返回是否存在） */
+    fun deleteModelPrice(modelId: String): Boolean {
+        val exists = queryOne("SELECT model_id FROM model_prices WHERE model_id=?", modelId) != null
+        if (exists) stmt("DELETE FROM model_prices WHERE model_id=?", modelId)
+        return exists
+    }
+
+    /** 清空全部自定义价格（管理员） */
+    fun clearAllModelPrices(): Int {
+        val n = queryOne("SELECT COUNT(*) FROM model_prices")?.toInt() ?: 0
+        stmt("DELETE FROM model_prices")
         return n
     }
 
@@ -1686,6 +1745,7 @@ class Database(private val dbPath: String) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.154", "用户管理菜单修复 + 价格表可维护 + 个人中心额度显示", "修复用户管理菜单消失（历史版本误删入口，视图/loader一直在，已补回）。模型价格表可手动维护：新增 model_prices 表+接口（GET/POST/DELETE/clear），管理员可在价格表页添加/编辑/删除/清空自定义价格，计费优先级：自定义表→模型单价→内置表。个人中心账户卡补额度使用+到期时间显示。扫bug：价格表只读→可维护全链路，计费取价逻辑对齐自定义表（余额检查+扣费两处）"),
             Triple("v1.153", "心跳指定目标推送 + 记忆并入总记忆多选 + 页面多选下拉", "心跳推送只发指定目标：不再全群/全联系人广播（QQ发配置的群 heartbeat_target_qq，微信发配置的openid heartbeat_target_wx，没配兜底发第一个群/最近联系人）。记忆并入总记忆+备注来源：管理员记忆页可见全部来源（账号/QQ用户/微信用户/QQ群），每条备注来源；普通用户只看自己的。记忆页多选：复选框全选+批量删除+按来源筛选下拉。模型页多选改下拉：批量操作从按钮改下拉（批量启用/停用/设公用/删除）+执行。服务商页多选：全选+下拉批量删除/启用/停用。修复记忆批量删除接口类型错误、心跳推送目标逻辑"),
             Triple("v1.152", "修复长文截断 + Agent 半途而废（OpenClaw 式干完才停）", "修复长文被截断：工具结果推送从 take(120) 摘要改为完整推送（QQ/微信单工具+并行全改）。修复「说要继续查却停了」：Agent 循环里模型说继续查/接着弄/下一步但没输出调用标签时原来直接 break，现在识别继续意图并引导输出真标签再执行（最多2次仍无调用才收尾），像 OpenClaw 一样干不完绝不听。closeBody 收敛放开：最终答复强调该长则长、分多段列表输出，不再压缩成一句话。分段推送确认无丢尾巴"),
             Triple("v1.151", "全部模型走沙盒Agent + 重要消息主动推送 + OpenClaw化", "QQ/微信全部模型走沙盒 Agent：以前只有配 qtai-sj 的机器人有工具调度能力，现在无论配哪个模型都进完整沙盒 Agent 循环（自主规划→调工具→结果回填→多轮执行轮数20）。心跳引擎新增模型健康告警（可用模型占比<30%自动汇报，QQ群+微信双推）。沙盒新增铁律7重要消息醒目呈现（关键结果前置/异常主动汇报/过程克制结果满足）。web_browse 权限表补齐。沙盒对齐 OpenClaw：自主循环/并行批处理/异步终端轮询/主动记忆检索/技能自提炼/网页浏览/模型健康感知"),

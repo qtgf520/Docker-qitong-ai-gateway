@@ -207,7 +207,7 @@ window.clearKeyUsage = function(label){
 // ===== 记忆独立页（大脑记忆 + 记忆配置） =====
 loaders.memory = function(){
  var box = $('view-memory');
- // ★ v1.153 多选批量操作 + 来源筛选下拉（管理员可看全部来源含QQ/微信/群）
+ // ★ v1.154 多选批量操作 + 来源筛选下拉（管理员可看全部来源含QQ/微信/群）
  box.innerHTML = '<div class="action-bar">' +
   '<button class="btn" onclick="addMemory()">+ 添加记忆</button>' +
   '<button class="btn-ghost" onclick="loaders.memory()">刷新</button>' +
@@ -225,7 +225,7 @@ loaders.memory = function(){
  api('/api/memory').then(function(mr){
   var mc = $('memListCard'); if(!mc) return;
   var mems = (mr && mr.data) || [];
-  // ★ v1.153 按来源筛选
+  // ★ v1.154 按来源筛选
   var srcFilter = $('memSrcFilter') ? $('memSrcFilter').value : '';
   if(srcFilter){
    mems = mems.filter(function(m){
@@ -272,7 +272,7 @@ window.saveMemoryCfg2 = function(){
   communicationStyle: $('mc2Style').value
  } }).then(function(r){ if(r.code===0){ toast(r.msg, true); } else toast(r.msg, false); });
 };
-// ★ v1.153 记忆多选批量操作
+// ★ v1.154 记忆多选批量操作
 function memSelAll(checked){
  var chks = document.querySelectorAll('.mem-chk');
  for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }
@@ -329,7 +329,12 @@ loaders.profile = function(){
     '<div class="form-row"><label>到期时间</label><div style="color:var(--muted);font-size:13px">' + expireText + '</div></div>' +
     '<div class="form-row"><label>续费（从余额扣款）</label><button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="doSubscribe()">续费 / 升级套餐</button><button class="btn" style="width:auto;padding:8px 20px;margin-top:0;margin-left:6px" onclick="doRedeem()">卡密兑换</button></div></div>',
    '<div class="grid grid-2">',
-    '<div class="card"><h3>账户</h3><div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div><div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div></div>',
+    '<div class="card"><h3>账户</h3>' +
+     '<div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div>' +
+     '<div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div>' +
+     '<div class="form-row"><label>额度使用（token）</label><div style="font-size:14px;color:var(--text)">' + quotaText + '</div></div>' +
+     '<div class="form-row"><label>到期时间</label><div style="color:var(--muted);font-size:13px">' + expireText + '</div></div>' +
+     '</div>',
     '<div class="card"><h3>邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag"></span></div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
    '</div>',
     '<div class="card"><h3>余额账单 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadBalanceLogs()">刷新</button></h3><div id="balLogBox" style="color:var(--muted);font-size:12px">加载中...</div></div>',

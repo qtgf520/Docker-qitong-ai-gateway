@@ -179,7 +179,7 @@ class GatewayProxy(private val database: Database) {
         return ""
     }
 
-    /** ★ v1.153 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移） */
+    /** ★ v1.154 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移） */
     fun modalityRouteModel(modality: String, modelId: String): String? {
         if (modality.isBlank()) return null
         val key = "modality_route_" + when (modality) {
@@ -205,7 +205,7 @@ class GatewayProxy(private val database: Database) {
         userId: Long = 0L,
         modality: String = ""   // ★ v1.123 多模态：vision/audio/video，空=纯文本
     ): List<AiModel> {
-        // ★ v1.153 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
+        // ★ v1.154 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
         val routed = modalityRouteModel(modality, modelId)
         if (routed != null && routed.isNotBlank()) {
             val matched = models.filter { it.isEnabled && it.modelId == routed }
@@ -448,7 +448,11 @@ class GatewayProxy(private val database: Database) {
         if (ownerUser != null && ownerUser.role != "admin") {
             // 查找请求模型的真实价格（按 modelId 匹配任意 provider）★v1.109 未设自定义价也用价格表默认价，均视为付费
             val requestedModel = models.firstOrNull { it.modelId == modelId }
-            val requestedPrice = requestedModel?.let { if (it.price > 0) it.price else PricingTable.priceOf(it.modelId).takeIf { p -> p > 0 } ?: PricingTable.DEFAULT_PRICE } ?: 0.0
+            // ★ v1.154 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表
+            val dbPrice2 = runCatching { database.getModelPrice(modelId) }
+                .getOrNull()?.get("inputPrice") as? Double
+            val requestedPrice = if (dbPrice2 != null && dbPrice2 > 0) dbPrice2
+                else requestedModel?.let { if (it.price > 0) it.price else PricingTable.priceOf(it.modelId).takeIf { p -> p > 0 } ?: PricingTable.DEFAULT_PRICE } ?: 0.0
             val requestedPaid = requestedPrice > 0
             if (requestedPaid && (ownerUser.quotaLimit <= 0 || ownerUser.quotaUsed >= ownerUser.quotaLimit)) {
                 val bal = database.getUserBalance(ownerUser.id)
@@ -816,8 +820,11 @@ class GatewayProxy(private val database: Database) {
             // token 缺省时按字节估算（兼容无 usage 字段的上游）
             val estTokens = if (totalTokens > 0) totalTokens.toLong()
                 else ((downloadBytes + uploadBytes) / 4).coerceAtLeast(1)
-            // ★ v1.109 成本计算：模型自定义价优先；未设（price=0）用价格表默认价（PricingTable），不再免费 → 费用不再 0.000
-            val price = if (model.price > 0) model.price
+            // ★ v1.109 成本计算：★v1.154 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表（不再免费 → 费用不再 0.000）
+            val dbPrice = runCatching { database.getModelPrice(model.modelId) }
+                .getOrNull()?.get("inputPrice") as? Double
+            val price = if (dbPrice != null && dbPrice > 0) dbPrice
+                else if (model.price > 0) model.price
                 else PricingTable.priceOf(model.modelId).takeIf { it > 0 } ?: PricingTable.DEFAULT_PRICE
             val cost = estTokens / 1_000_000.0 * price * PricingTable.OUTPUT_MULTIPLIER
             val userId = ownerUser?.id ?: 0

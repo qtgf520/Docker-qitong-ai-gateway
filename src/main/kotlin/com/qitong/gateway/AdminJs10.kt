@@ -6,7 +6,7 @@ package com.qitong.gateway
 object AdminJs10 {
     fun js(): String = """
 
-// ===== 模型价格表（全部模型默认价，元/百万token） =====
+// ===== 模型价格表（全部模型默认价 + 管理员可维护自定义价，元/百万token） =====
 loaders.prices = function(){
  var box = $('view-prices');
  if(!box) return;
@@ -15,26 +15,82 @@ loaders.prices = function(){
   if(r.code !== 0){ box.innerHTML = '<div class="card"><h3>💰 模型默认价格表</h3><div style="color:var(--red);padding:10px">加载失败</div></div>'; return; }
   var d = r.data || {};
   var tbl = d.table || {};
+  var isAdmin = !!d.isAdmin;
   var rows = Object.keys(tbl).map(function(mid){
    var p = tbl[mid] || {};
+   var isCustom = p.custom;
+   var ops = '';
+   if(isAdmin){
+    ops = '<td style="white-space:nowrap">' +
+     (isCustom ? '<button class="btn-ghost btn-sm" onclick="editPrice(\'' + esc(mid) + '\',' + p.input + ',' + p.output + ')">编辑</button> <button class="btn-ghost btn-sm" style="color:var(--red)" onclick="delPrice(\'' + esc(mid) + '\')">删</button>' : '<button class="btn-ghost btn-sm" onclick="editPrice(\'' + esc(mid) + '\',' + p.input + ',' + p.output + ')">设自定义</button>') +
+     '</td>';
+   }
    return '<tr>' +
     '<td style="font-family:ui-monospace,monospace">'+esc(mid)+'</td>' +
     '<td>¥'+p.input+'</td>' +
     '<td>¥'+p.output+'</td>' +
-    '<td>'+(p.default?'<span class="badge gray">默认价</span>':'<span class="badge green">已收录</span>')+'</td>' +
+    '<td>'+(isCustom?'<span class="badge cyan">自定义</span>':(p.default?'<span class="badge gray">默认价</span>':'<span class="badge green">已收录</span>'))+'</td>' +
+    ops +
    '</tr>';
   }).join('');
-  var html =
+  var adminBar = isAdmin ?
+   '<div class="action-bar" style="margin-bottom:12px">' +
+    '<button class="btn" onclick="addPrice()">+ 添加自定义价格</button>' +
+    '<button class="btn-ghost" style="color:var(--red)" onclick="clearAllPrices()">清空全部自定义</button>' +
+    '<span style="color:var(--muted);font-size:12px">自定义价格优先于内置价格与模型单价；计费时按：自定义表 → 模型单价 → 内置表</span>' +
+   '</div>' : '';
+  var html = adminBar +
    '<div class="grid grid-3" style="margin-bottom:14px">' +
     '<div class="stat"><div class="num" style="font-size:20px">¥'+d.defaultPrice+'</div><div class="lbl">默认价（未收录模型，元/百万token 输入）</div></div>' +
     '<div class="stat"><div class="num" style="font-size:20px">'+d.outputMultiplier+'x</div><div class="lbl">输出价 = 输入价 × 倍数</div></div>' +
     '<div class="stat"><div class="num" style="font-size:20px">'+Object.keys(tbl).length+' 款</div><div class="lbl">已收录模型</div></div>' +
    '</div>' +
-   '<div class="card"><h3>全部模型价格（按输入/输出计费）</h3><div class="table-wrap"><table><thead><tr><th>模型</th><th>输入价（元/百万token）</th><th>输出价（元/百万token）</th><th>状态</th></tr></thead><tbody>' +
-    (rows || '<tr><td colspan="4" style="text-align:center;color:var(--muted)">价格表为空</td></tr>') +
+   '<div class="card"><h3>全部模型价格（按输入/输出计费）</h3><div class="table-wrap"><table><thead><tr><th>模型</th><th>输入价（元/百万token）</th><th>输出价（元/百万token）</th><th>状态</th>'+(isAdmin?'<th>操作</th>':'')+'</tr></thead><tbody>' +
+    (rows || '<tr><td colspan="'+(isAdmin?'5':'4')+'" style="text-align:center;color:var(--muted)">价格表为空</td></tr>') +
    '</tbody></table></div>' +
-   '<div style="font-size:11px;color:var(--muted);margin-top:8px">💰 价格单位：元 / 百万 Token（输入价）。模型可单独设置自定义单价（编辑模型时设置），自定义价优先于默认价。未收录模型统一按默认价计费。</div></div>';
+   '<div style="font-size:11px;color:var(--muted);margin-top:8px">💰 价格单位：元 / 百万 Token（输入价）。模型可单独设置自定义单价（编辑模型时设置），自定义价格表优先于模型单价与默认价。未收录模型统一按默认价计费。</div></div>';
   box.innerHTML = html;
+ });
+};
+// ★ v1.154 价格表管理：添加/编辑/删除（仅管理员）
+window.addPrice = function(){
+ openModal('添加自定义价格', '<div class="form-row"><label>模型ID *</label><input id="prModel" class="input" placeholder="如 deepseek-v4-flash"></div>' +
+  '<div class="form-row"><label>输入价（元/百万token）*</label><input id="prIn" class="input" type="number" step="0.01" min="0" value="2"></div>' +
+  '<div class="form-row"><label>输出价（元/百万token，空=输入价×2）</label><input id="prOut" class="input" type="number" step="0.01" min="0" placeholder="留空自动×2"></div>', function(){
+  var mid = ($('prModel').value||'').trim();
+  var inP = parseFloat($('prIn').value)||0;
+  var outP = $('prOut').value ? (parseFloat($('prOut').value)||0) : inP*2;
+  if(!mid){ toast('请填写模型ID', false); return; }
+  api('/api/prices', { method:'POST', body: { modelId: mid, inputPrice: inP, outputPrice: outP } }).then(function(r){
+   toast(r.msg, r.code === 0);
+   if(r.code === 0){ closeModal(); loaders.prices(); }
+  });
+ });
+};
+window.editPrice = function(mid, inP, outP){
+ openModal('编辑价格：'+esc(mid), '<div class="form-row"><label>模型ID</label><input class="input" value="'+esc(mid)+'" disabled></div>' +
+  '<div class="form-row"><label>输入价（元/百万token）</label><input id="prIn" class="input" type="number" step="0.01" min="0" value="'+inP+'"></div>' +
+  '<div class="form-row"><label>输出价（元/百万token）</label><input id="prOut" class="input" type="number" step="0.01" min="0" value="'+outP+'"></div>', function(){
+  var inP2 = parseFloat($('prIn').value)||0;
+  var outP2 = parseFloat($('prOut').value)||0;
+  api('/api/prices', { method:'POST', body: { modelId: mid, inputPrice: inP2, outputPrice: outP2 } }).then(function(r){
+   toast(r.msg, r.code === 0);
+   if(r.code === 0){ closeModal(); loaders.prices(); }
+  });
+ });
+};
+window.delPrice = function(mid){
+ if(!confirm('确定删除「'+mid+'」的自定义价格？（删除后回退内置价格）')) return;
+ api('/api/prices/' + encodeURIComponent(mid), { method:'DELETE' }).then(function(r){
+  toast(r.msg, r.code === 0);
+  if(r.code === 0) loaders.prices();
+ });
+};
+window.clearAllPrices = function(){
+ if(!confirm('确定清空全部自定义价格？（恢复为内置价格表）')) return;
+ api('/api/prices/clear', { method:'POST' }).then(function(r){
+  toast(r.msg, r.code === 0);
+  if(r.code === 0) loaders.prices();
  });
 };
 // ===== 备份中心（一键备份/恢复，仅管理员） =====

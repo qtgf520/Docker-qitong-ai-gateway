@@ -11,7 +11,7 @@ object WebUi {
 
     private const val VER = "v1.133"
 
-    /** ★ v1.153 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
+    /** ★ v1.154 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
     fun landingHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -20,7 +20,7 @@ object WebUi {
 <title>綦桐AI网关 · AI API 中转与管理平台</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0B0D12;--surface:#1.153C;--border:#232833;--primary:#3E7BFA;--text:#D6DAE1;--muted:#8791A0;--green:#3FB27F}
+:root{--bg:#0B0D12;--surface:#1.154C;--border:#232833;--primary:#3E7BFA;--text:#D6DAE1;--muted:#8791A0;--green:#3FB27F}
 body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
 body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(700px 480px at 80% -6%,rgba(62,123,250,.14),transparent 65%),radial-gradient(600px 420px at -8% 104%,rgba(62,123,250,.08),transparent 65%)}
 .nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:22px;padding:14px 32px;background:rgba(11,13,18,.82);backdrop-filter:blur(14px) saturate(1.5);border-bottom:1px solid rgba(255,255,255,.06)}
@@ -133,7 +133,7 @@ docker compose up -d --build
 <title>綦桐AI网关 · 登录</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0B0D12;--surface:#1.153C;--border:#232833;--inset:#0E1117;--primary:#3E7BFA;--text:#D6DAE1;--muted:#8791A0;--green:#3FB27F;--red:#E5636A}
+:root{--bg:#0B0D12;--surface:#1.154C;--border:#232833;--inset:#0E1117;--primary:#3E7BFA;--text:#D6DAE1;--muted:#8791A0;--green:#3FB27F;--red:#E5636A}
 body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;background:var(--bg);display:flex;align-items:center;justify-content:center;color:var(--text);padding:16px}
 .card{width:380px;max-width:100%;position:relative;z-index:1;background:rgba(18,21,28,.62);border:1px solid rgba(255,255,255,.09);border-radius:10px;padding:30px 28px;-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 8px 28px rgba(0,0,0,.22)}
 body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(560px 400px at 82% 6%,rgba(62,123,250,.10),transparent 70%),radial-gradient(520px 380px at 6% 96%,rgba(62,123,250,.06),transparent 70%)}
@@ -277,6 +277,7 @@ ${adminCss()}
       <a data-page="logs"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><b>日志中心</b></a>
       <a data-page="settings" class="admin-only"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><b>网关设置</b></a>
       <a data-page="announcements" class="admin-only"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><b>公告管理</b></a>
+      <a data-page="users" class="admin-only"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><b>用户管理</b></a>
 <a data-page="plans" class="admin-only"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="15" x2="16" y2="15"/></svg><b>套餐管理</b></a><a data-page="cards" class="admin-only"><svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg><b>卡密中心</b></a></nav>
   </aside>
   <!-- 内容区 -->
@@ -343,7 +344,7 @@ ${adminJs()}
     fun adminCss(): String = """
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#0B0D12;--surface:#1.153C;--surface2:#1A1E28;--border:#232833;--inset:#0E1117;
+  --bg:#0B0D12;--surface:#1.154C;--surface2:#1A1E28;--border:#232833;--inset:#0E1117;
   --primary:#3E7BFA;--primary2:#3E7BFA;--cyan:#3E7BFA;
   --green:#3FB27F;--red:#E5636A;--amber:#D99A3D;
   --text:#D6DAE1;--muted:#8791A0;

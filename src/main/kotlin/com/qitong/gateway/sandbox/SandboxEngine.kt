@@ -28,7 +28,7 @@ object SandboxEngine {
         "provider_get_all", "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
         "user_balance", "user_recharge", "user_deduct",
         "terminal_run", "terminal_create", "terminal_list", "terminal_status",
-        "web_browse",  // ★ v1.153 网页浏览（curl 抓取转文本，felinks 风格）
+        "web_browse",  // ★ v1.154 网页浏览（curl 抓取转文本，felinks 风格）
         "qq_bots_list", "qq_bots_groups", "qq_points_rank", "help",
         "mcp_list", "mcp_call", "web_search",
         "workflow_run", "workflow_list",
@@ -214,7 +214,7 @@ $KNOWLEDGE_JSON
 3. 【缓存意识】相同问题短时间内重复问（如反复查状态/排行），网关响应缓存会自动命中加速；用户问「缓存」相关 → [[沙盒:cache_stats(action=stats)]] 查看，管理员可 [[沙盒:cache_stats(action=clear)]] 清空。
 4. 【持续成长】每次任务后想想：这次学到了什么？有没有更优路径？下次同类任务直接走最优路径。
 
-## 7. 重要消息醒目呈现（v1.153：OpenClaw 式「用户要的结果才重点推」）
+## 7. 重要消息醒目呈现（v1.154：OpenClaw 式「用户要的结果才重点推」）
 1. 【关键结果前置】任务完成时，把用户真正需要的核心结果用最醒目方式呈现（如「✅ 充值成功：用户 xxx 到账 ¥50，当前余额 ¥128.50」「🔴 模型 deepseek-v4-flash 已掉线，已自动切换到 gpt-4o」），不要把关键数字埋在长文里。
 2. 【异常主动汇报】执行中发现异常（模型全挂/余额不足/服务商失效/接口报错）时，立即用⚠️/🔴醒目格式汇报，并给出可执行的下一步（如「建议先测速看看哪些模型可用」），不要默默失败。
 3. 【过程克制，结果满足】过程推送（💭/🔧/✅）只用于「用户点名的任务在推进」的场景；纯闲聊/简单问答不要刷过程，直接给结果。用户要的看得见的步骤才推步骤，用户只要结果就只给结果。
@@ -384,7 +384,7 @@ $KNOWLEDGE_JSON
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
-            "web_browse",  // ★ v1.153 网页浏览（user/read）
+            "web_browse",  // ★ v1.154 网页浏览（user/read）
             "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list", "skill_list",
             "git_version", "git_log", "announcement_list", "skill_my" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
@@ -1011,7 +1011,7 @@ $KNOWLEDGE_JSON
                     else com.qitong.gateway.http.TerminalManager.asyncStatus(id.trim())
                 }
                 "web_browse" -> {
-                    // ★ v1.153 网页浏览（felinks 式文本抓取）：curl 抓 HTML → 去标签 → 提取标题/正文/链接
+                    // ★ v1.154 网页浏览（felinks 式文本抓取）：curl 抓 HTML → 去标签 → 提取标题/正文/链接
                     val url = args["url"] ?: ""
                     if (url.isBlank() || !url.startsWith("http")) "⚠️ 语法：web_browse(url=http(s)://网页地址)"
                     else try {
