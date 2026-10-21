@@ -207,7 +207,7 @@ window.clearKeyUsage = function(label){
 // ===== 记忆独立页（大脑记忆 + 记忆配置） =====
 loaders.memory = function(){
  var box = $('view-memory');
- // ★ v1.156 多选批量操作 + 来源筛选下拉（管理员可看全部来源含QQ/微信/群）
+ // ★ v1.157 多选批量操作 + 来源筛选下拉（管理员可看全部来源含QQ/微信/群）
  box.innerHTML = '<div class="action-bar">' +
   '<button class="btn" onclick="addMemory()">+ 添加记忆</button>' +
   '<button class="btn-ghost" onclick="loaders.memory()">刷新</button>' +
@@ -225,7 +225,7 @@ loaders.memory = function(){
  api('/api/memory').then(function(mr){
   var mc = $('memListCard'); if(!mc) return;
   var mems = (mr && mr.data) || [];
-  // ★ v1.156 按来源筛选
+  // ★ v1.157 按来源筛选
   var srcFilter = $('memSrcFilter') ? $('memSrcFilter').value : '';
   if(srcFilter){
    mems = mems.filter(function(m){
@@ -272,7 +272,7 @@ window.saveMemoryCfg2 = function(){
   communicationStyle: $('mc2Style').value
  } }).then(function(r){ if(r.code===0){ toast(r.msg, true); } else toast(r.msg, false); });
 };
-// ★ v1.156 记忆多选批量操作
+// ★ v1.157 记忆多选批量操作
 function memSelAll(checked){
  var chks = document.querySelectorAll('.mem-chk');
  for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }
@@ -357,6 +357,12 @@ loaders.profile = function(){
      '<div class="form-row"><label>旧密码</label><input id="chgOld" class="input" type="password" placeholder="输入旧密码"></div>' +
      '<div class="form-row"><label>新密码</label><input id="chgNew" class="input" type="password" placeholder="至少6个字符"></div>' +
      '<button class="btn" onclick="changePassword()">修改密码</button></div>',
+    '<div class="card"><h3>两步验证 2FA <span class="badge ' + (p.totpEnabled ? 'green' : 'gray') + '">' + (p.totpEnabled ? '已开启' : '未开启') + '</span></h3>' +
+     '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">开启后登录需输入身份验证器 6 位动态码，防密码泄露/暴力破解</div>' +
+     (p.totpEnabled ?
+      '<button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="disableTotp()">关闭两步验证</button>' :
+      '<button class="btn" style="width:auto;padding:8px 20px;margin-top:0" onclick="setupTotp()">开启两步验证</button>') +
+     '<div id="totpBox" style="margin-top:10px"></div></div>',
     '<div class="card" id="brainCardP"><h3>qtai-sj 大脑绑定</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>',
     '<div class="card" id="langCardP"><h3>界面语言</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中...</div></div>'
   ].join('');
@@ -763,6 +769,45 @@ window.importData = function(){
   reader.readAsText(f);
  };
  inp.click();
+};
+// ★ v1.157 两步验证：开启流程（扫码→输入动态码→绑定）
+window.setupTotp = function(){
+  var box = $('totpBox'); if(!box) return;
+  box.innerHTML = '<div style="color:var(--muted);font-size:13px">正在生成密钥...</div>';
+  api('/api/auth/totp/generate').then(function(r){
+   if(r.code !== 0){ box.innerHTML = '<div style="color:var(--red)">'+esc(r.msg||'生成失败')+'</div>'; return; }
+   var d = r.data || {};
+   box.innerHTML =
+    '<div style="font-size:13px;color:var(--text);margin-bottom:8px">1️⃣ 用身份验证器（Google Authenticator / 微软验证器 / 微信小程序「TOTP」）扫描或手动输入：</div>' +
+    '<div class="form-row"><label>密钥（手动输入）</label><div class="addr-line" onclick="copyText(\'' + esc(d.secret || '') + '\')"><b style="font-family:monospace;word-break:break-all">' + esc(d.secret || '') + '</b> <span class="copy-tag"></span></div></div>' +
+    '<div style="font-size:12px;color:var(--muted);margin:6px 0">💡 二维码：<a href="' + esc(d.otpauth || '') + '" target="_blank" style="color:var(--cyan)">点击打开 otpauth 链接（多数身份验证器可直接扫码/识别）</a></div>' +
+    '<div class="form-row"><label>2️⃣ 输入验证器显示的 6 位动态码</label><input id="totpCode" class="input" placeholder="6位数字" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\'Enter\')doBindTotp()"></div>' +
+    '<button class="btn" onclick="doBindTotp()">确认绑定</button>';
+  });
+};
+window.doBindTotp = function(){
+  var code = $('totpCode') ? $('totpCode').value.trim() : '';
+  if(!code || code.length !== 6){ toast('请输入6位动态码', false); return; }
+  // 重新生成一次密钥？不——先 get 到 secret 再绑定需要记住，这里从当前显示提取
+  var secretBox = $('totpBox') ? $('totpBox').querySelector('[style*="font-family:monospace"]') : null;
+  if(!secretBox){ toast('请先点击「开启两步验证」生成密钥', false); return; }
+  var secret = secretBox.textContent.trim();
+  api('/api/auth/totp/bind', { method:'POST', body: { secret: secret, code: code } }).then(function(r){
+   if(r.code === 0){ toast(r.msg, true); loaders.profile(); } else toast(r.msg, false);
+  });
+};
+window.disableTotp = function(){
+  var box = $('totpBox'); if(!box) return;
+  box.innerHTML =
+   '<div class="form-row"><label>输入当前验证器动态码以关闭</label><input id="totpCode" class="input" placeholder="6位数字" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\'Enter\')doDisableTotp()"></div>' +
+   '<button class="btn" onclick="doDisableTotp()">确认关闭</button>';
+};
+window.doDisableTotp = function(){
+  var code = $('totpCode') ? $('totpCode').value.trim() : '';
+  if(!code || code.length !== 6){ toast('请输入6位动态码', false); return; }
+  api('/api/auth/totp/disable', { method:'POST', body: { code: code } }).then(function(r){
+   if(r.code === 0){ toast(r.msg, true); loaders.profile(); } else toast(r.msg, false);
+  });
 };
 window.changePassword = function(){
  var oldPwd = $('chgOld').value;

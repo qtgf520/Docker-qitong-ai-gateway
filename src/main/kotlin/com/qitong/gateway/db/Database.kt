@@ -211,6 +211,7 @@ class Database(private val dbPath: String) {
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN notify_enabled INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN plan_expire_at INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''") } catch (_: Exception) {}
 
             // ★ v1.143 充值卡密表：管理员生成卡密，用户兑换充值
             st.executeUpdate(
@@ -244,7 +245,7 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.156 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
+            // ★ v1.157 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS model_prices (
                     model_id TEXT PRIMARY KEY,
@@ -253,7 +254,39 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
+            // ★ v1.157 模型映射（外部请求名 -> 内部模型Key有序列表，按序故障转移）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS model_mappings (
+                    alias TEXT PRIMARY KEY,
+                    targets TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
+            // ★ v1.157 表达式计费规则（条件命中 → 覆盖价或倍率；时段格式 HH:mm-HH:mm）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS pricing_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    model_pattern TEXT NOT NULL DEFAULT '',
+                    role TEXT NOT NULL DEFAULT '',
+                    time_range TEXT NOT NULL DEFAULT '',
+                    price REAL NOT NULL DEFAULT -1,
+                    multiplier REAL NOT NULL DEFAULT 1.0,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
             // ★ v1.146 内置五档套餐种子（仅首次初始化，INSERT OR IGNORE 不覆盖管理员修改）
+            // ★ v1.157 渠道分组（用户选组不选具体模型；组名如 fast/stable/cheap）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS channel_groups (
+                    name TEXT PRIMARY KEY,
+                    description TEXT NOT NULL DEFAULT '',
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
+            runCatching { st.executeUpdate("ALTER TABLE models ADD COLUMN channel_group TEXT NOT NULL DEFAULT ''") }
             runCatching {
                 val defs = listOf(
                     listOf("free", "免费版", 0.0, 1, 100000L, 30, 3000, "体验版：10 万 token 额度，QPS 30，适合试用", 1, 1),
@@ -856,17 +889,16 @@ class Database(private val dbPath: String) {
     fun addModel(m: AiModel): Long {
         val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUsers)
         stmt(
-            "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window,owner_id,is_public,price,authorized_users,supports_vision,supports_audio,supports_video) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0
+            "INSERT INTO models (provider_id,model_id,display_name,is_default,sync_status,is_enabled,custom_alias,use_proxy,context_window,owner_id,is_public,price,authorized_users,supports_vision,supports_audio,supports_video,weight,channel_group) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0, m.weight, m.channelGroup
         )
         return lastInsertId()
     }
-
     fun updateModel(m: AiModel) {
-        val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUsers)
+val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUsers)
         stmt(
-            "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=?,owner_id=?,is_public=?,price=?,authorized_users=?,supports_vision=?,supports_audio=?,supports_video=? WHERE id=?",
-            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0, m.id
+            "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=?,owner_id=?,is_public=?,price=?,authorized_users=?,supports_vision=?,supports_audio=?,supports_video=?,weight=?,channel_group=? WHERE id=?",
+            m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0, m.weight, m.channelGroup, m.id
         )
     }
 
@@ -1197,13 +1229,20 @@ class Database(private val dbPath: String) {
         email = it["email"] as? String ?: "",
         notifyEnabled = (it["notify_enabled"] as? Number)?.toInt() == 1,
         plan = it["plan"] as? String ?: "free",
-        planExpireAt = (it["plan_expire_at"] as? Number)?.toLong() ?: 0
+        planExpireAt = (it["plan_expire_at"] as? Number)?.toLong() ?: 0,
+        totpSecret = it["totp_secret"] as? String ?: ""
     )
 
     /** 更新用户绑定邮箱 + 通知开关（个人中心） */
     fun updateUserEmail(userId: Long, email: String, notifyEnabled: Boolean) {
         stmt("UPDATE users SET email=?, notify_enabled=? WHERE id=?", email, if (notifyEnabled) 1 else 0, userId)
     }
+
+    /** ★ v1.157 两步验证：设置/清除 TOTP 密钥 */
+    fun setTotpSecret(userId: Long, secret: String) {
+        stmt("UPDATE users SET totp_secret=? WHERE id=?", secret, userId)
+    }
+    fun getTotpSecret(userId: Long): String = getUserById(userId)?.totpSecret ?: ""
 
     fun updateUserDisplayName(userId: Long, displayName: String) {
         stmt("UPDATE users SET display_name=? WHERE id=?", displayName, userId)
@@ -1230,7 +1269,7 @@ class Database(private val dbPath: String) {
     fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = "", inviterId: Long = 0): Long {
         // 生成邀请码
         val code = "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0')
-        // ★ v1.156 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
+        // ★ v1.157 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
         //   避免新用户 quota_limit=0 显示「不限额度」而实际免费套餐是 10 万（对齐产品预期）
         val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         stmt(
@@ -1247,7 +1286,7 @@ fun updateUserLogin(id: Long) {
         stmt("UPDATE users SET password_hash=? WHERE id=?", newHash, id)
     }
 
-    // ★ v1.156 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
+    // ★ v1.157 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
     fun fixFreeUserQuotas(): Int {
         val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         val rows = query("SELECT id FROM users WHERE plan='free' AND quota_limit<=0")
@@ -1514,7 +1553,7 @@ fun updateUserLogin(id: Long) {
             )
         }
 
-    /** ★ v1.156 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
+    /** ★ v1.157 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
     fun getAllMemories(limit: Int = 500): List<Map<String, Any?>> =
         query("SELECT * FROM brain_memory ORDER BY importance DESC, timestamp DESC LIMIT $limit").map { it ->
             val tags = (it["tags"] as? String ?: "")
@@ -1599,21 +1638,21 @@ fun updateUserLogin(id: Long) {
         stmt("DELETE FROM brain_memory WHERE user_id=?", userId)
     }
 
-    /** ★ v1.156 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
+    /** ★ v1.157 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
     fun deleteMemoryAny(id: Long): Boolean {
         val exists = queryOne("SELECT id FROM brain_memory WHERE id=?", id) != null
         if (exists) stmt("DELETE FROM brain_memory WHERE id=?", id)
         return exists
     }
 
-    /** ★ v1.156 管理员清空全部记忆（含账号/QQ/微信/群来源） */
+    /** ★ v1.157 管理员清空全部记忆（含账号/QQ/微信/群来源） */
     fun clearAllMemories(): Int {
         val n = queryOne("SELECT COUNT(*) FROM brain_memory")?.toInt() ?: 0
         stmt("DELETE FROM brain_memory")
         return n
     }
 
-    // ============ ★ v1.156 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
+    // ============ ★ v1.157 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
 
     /** 全部自定义价格（model_id → input/output/updatedAt） */
     fun getAllModelPrices(): List<Map<String, Any?>> =
@@ -1657,6 +1696,87 @@ fun updateUserLogin(id: Long) {
     }
 
     /** 清空全部自定义价格（管理员） */
+    // ============ ★ v1.157 模型映射（alias -> targets 有序列表） ============
+    fun getModelMappings(): List<Map<String, Any?>> =
+        query("SELECT * FROM model_mappings ORDER BY updated_at DESC").map { row ->
+            mapOf(
+                "alias" to (row["alias"] as? String ?: ""),
+                "targets" to (row["targets"] as? String ?: ""),
+                "enabled" to (((row["enabled"] as? Number)?.toInt() ?: 1) == 1),
+                "updatedAt" to ((row["updated_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    fun getModelMapping(alias: String): Map<String, Any?>? = getModelMappings().firstOrNull { it["alias"] == alias }
+    fun saveModelMapping(alias: String, targets: String, enabled: Boolean) {
+        stmt(
+            "INSERT INTO model_mappings (alias,targets,enabled,updated_at) VALUES (?,?,?,?) ON CONFLICT(alias) DO UPDATE SET targets=?, enabled=?, updated_at=?",
+            alias, targets, if (enabled) 1 else 0, System.currentTimeMillis(), targets, if (enabled) 1 else 0, System.currentTimeMillis()
+        )
+    }
+    fun deleteModelMapping(alias: String): Boolean {
+        val exists = queryOne("SELECT alias FROM model_mappings WHERE alias=?", alias) != null
+        if (exists) stmt("DELETE FROM model_mappings WHERE alias=?", alias)
+        return exists
+    }
+    fun clearModelMappings(): Int {
+        val n = queryOne("SELECT COUNT(*) FROM model_mappings")?.toInt() ?: 0
+        stmt("DELETE FROM model_mappings")
+        return n
+    }
+
+    // ============ ★ v1.157 表达式计费规则 ============
+    fun getPricingRules(): List<Map<String, Any?>> =
+        query("SELECT * FROM pricing_rules ORDER BY updated_at DESC").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "name" to (row["name"] as? String ?: ""),
+                "modelPattern" to (row["model_pattern"] as? String ?: ""),
+                "role" to (row["role"] as? String ?: ""),
+                "timeRange" to (row["time_range"] as? String ?: ""),
+                "price" to ((row["price"] as? Number)?.toDouble() ?: -1.0),
+                "multiplier" to ((row["multiplier"] as? Number)?.toDouble() ?: 1.0),
+                "enabled" to (((row["enabled"] as? Number)?.toInt() ?: 1) == 1),
+                "updatedAt" to ((row["updated_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    fun savePricingRule(id: Long, name: String, modelPattern: String, role: String, timeRange: String, price: Double, multiplier: Double, enabled: Boolean) {
+        if (id > 0) stmt(
+            "UPDATE pricing_rules SET name=?,model_pattern=?,role=?,time_range=?,price=?,multiplier=?,enabled=?,updated_at=? WHERE id=?",
+            name, modelPattern, role, timeRange, price, multiplier, if (enabled) 1 else 0, System.currentTimeMillis(), id
+        )
+        else stmt(
+            "INSERT INTO pricing_rules (name,model_pattern,role,time_range,price,multiplier,enabled,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            name, modelPattern, role, timeRange, price, multiplier, if (enabled) 1 else 0, System.currentTimeMillis()
+        )
+    }
+    fun deletePricingRule(id: Long) { stmt("DELETE FROM pricing_rules WHERE id=?", id) }
+    fun clearPricingRules(): Int {
+        val n = queryOne("SELECT COUNT(*) FROM pricing_rules")?.toInt() ?: 0
+        stmt("DELETE FROM pricing_rules")
+        return n
+    }
+
+    // ============ ★ v1.157 渠道分组 ============
+    fun getChannelGroups(): List<Map<String, Any?>> =
+        query("SELECT * FROM channel_groups ORDER BY updated_at DESC").map { row ->
+            mapOf(
+                "name" to (row["name"] as? String ?: ""),
+                "description" to (row["description"] as? String ?: ""),
+                "updatedAt" to ((row["updated_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    fun saveChannelGroup(name: String, description: String) {
+        stmt(
+            "INSERT INTO channel_groups (name,description,updated_at) VALUES (?,?,?) ON CONFLICT(name) DO UPDATE SET description=?, updated_at=?",
+            name, description, System.currentTimeMillis(), description, System.currentTimeMillis()
+        )
+    }
+    fun deleteChannelGroup(name: String) {
+        stmt("DELETE FROM channel_groups WHERE name=?", name)
+        // 同步清掉该组下模型的 group
+        stmt("UPDATE models SET channel_group='' WHERE channel_group=?", name)
+    }
+
     fun clearAllModelPrices(): Int {
         val n = queryOne("SELECT COUNT(*) FROM model_prices")?.toInt() ?: 0
         stmt("DELETE FROM model_prices")
@@ -1737,6 +1857,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.157", "六大能力升级（2FA安全 + new-api四件套 + 冒烟测试）", "两步验证2FA（TOTP，个人中心开启，登录需动态码，防暴力破解）。模型映射（外部请求名→内部模型列表按序路由故障转移）。表达式计费（按模型/角色/时段差异化定价，覆盖价或倍率）。渠道分组（fast/cheap/stable，用户请求组名只在该组内自动选模型）。记忆分组管理（按来源筛选+批量删除）。自动化冒烟测试（scripts/smoke_test.sh发版后自动验证核心链路）。"),
             Triple("v1.156", "机器人提速 + 元宝Bot下线 + 模型权重 + 在线试用", "QQ/微信回复提速（单轮超时90→60s、网关流式空闲300→120s全链路收敛，超时快速失败触发故障转移）。元宝Bot彻底下线（路由/菜单/表/前端全链路移除）。沙盒System Prompt新增OpenClaw式自动化编排铁律（失败自动重试2次/多步任务不中断/异步长任务轮询/批量并行/主动补全）。模型权重负载均衡（new-api渠道优先级思路落地：weight字段默认50，故障转移同延迟权重高优先）。Playground在线试用（模型页每行「试用」按钮，弹窗输入流式试玩）。"),
             Triple("v1.155", "智能体全接口对齐：网关接口全部开放给沙盒 Agent", "沙盒智能体（QQ/微信/qtai-sj）新增 40+ 网关函数，实现后台全部接口远程可控：价格表查询/自定义维护、用量统计、网关总览、系统监控、数据备份/恢复、套餐管理、卡密生成/兑换、SSH 远程执行、工单列表/创建/详情、操作/登录/QQ/微信日志、记忆库查看/添加/清空、QQ用户列表/积分调整、网关全局启停、我的API开关、活跃模型查看/切换、强制故障池管理、自动测速开关、通知配置查看/测试发送、路由规则增删查、我的会话列表。按用户/管理员双层权限隔离，普通用户只读+自助，管理员全权。"),
             Triple("v1.154", "用户管理菜单修复 + 价格表可维护 + 个人中心额度显示", "修复用户管理菜单消失（历史版本误删入口，视图/loader一直在，已补回）。模型价格表可手动维护：新增 model_prices 表+接口（GET/POST/DELETE/clear），管理员可在价格表页添加/编辑/删除/清空自定义价格，计费优先级：自定义表→模型单价→内置表。个人中心账户卡补额度使用+到期时间显示。扫bug：价格表只读→可维护全链路，计费取价逻辑对齐自定义表（余额检查+扣费两处）"),

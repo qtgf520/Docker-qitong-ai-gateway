@@ -11,7 +11,7 @@ object WebUi {
 
     private const val VER = "v1.133"
 
-    /** ★ v1.156 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
+    /** ★ v1.157 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
     fun landingHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -164,6 +164,7 @@ input:focus{border-color:var(--primary)}
   <div class="pane on" id="paneL">
     <label>用户名</label><input id="lgUser" autocomplete="username">
     <label>密码</label><input id="lgPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    <label id="lgTotpLbl" style="display:none">两步验证码（身份验证器6位动态码）</label><input id="lgTotp" style="display:none" autocomplete="one-time-code" onkeydown="if(event.key==='Enter')doLogin()">
     <button class="btn" onclick="doLogin()">登 录</button>
   </div>
   <div class="pane" id="paneR">
@@ -192,8 +193,19 @@ async function doLogin(){
   var u=$('lgUser').value.trim(),p=$('lgPass').value;
   if(!u||!p){show('请输入用户名和密码');return}
   show('登录中...');
-  var r=await postJson('/api/auth/login',{username:u,password:p});
-  if(r.code===0){localStorage.setItem('qt_token',r.data.token);show('登录成功，跳转中...',true);setTimeout(function(){location.href='/admin'},400)}
+  var totp=$('lgTotp')?$('lgTotp').value.trim():'';
+  var body={username:u,password:p};
+  if(totp) body.totpCode=totp;
+  var r=await postJson('/api/auth/login',body);
+  if(r.code===0){
+    if(r.data&&r.data.needTotp){
+      // ★ v1.157 2FA：密码正确，弹验证码输入
+      $('lgTotpLbl').style.display='';$('lgTotp').style.display='';$('lgTotp').focus();
+      show('请输入两步验证码（身份验证器 6 位动态码）');
+      return;
+    }
+    localStorage.setItem('qt_token',r.data.token);show('登录成功，跳转中...',true);setTimeout(function(){location.href='/admin'},400)
+  }
   else show(r.msg||'登录失败');
 }
 async function doRegister(){

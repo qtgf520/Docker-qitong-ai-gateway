@@ -179,7 +179,7 @@ class GatewayProxy(private val database: Database) {
         return ""
     }
 
-    /** ★ v1.156 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移） */
+    /** ★ v1.157 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移） */
     fun modalityRouteModel(modality: String, modelId: String): String? {
         if (modality.isBlank()) return null
         val key = "modality_route_" + when (modality) {
@@ -205,7 +205,7 @@ class GatewayProxy(private val database: Database) {
         userId: Long = 0L,
         modality: String = ""   // ★ v1.123 多模态：vision/audio/video，空=纯文本
     ): List<AiModel> {
-        // ★ v1.156 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
+        // ★ v1.157 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
         val routed = modalityRouteModel(modality, modelId)
         if (routed != null && routed.isNotBlank()) {
             val matched = models.filter { it.isEnabled && it.modelId == routed }
@@ -252,7 +252,7 @@ class GatewayProxy(private val database: Database) {
         }
         val others = available.filter { it.modelId != (primary?.modelId) || it.providerId != (primary?.providerId) }
         var sortedOthers = GatewayScheduler.getSortedModels(others)
-        // ★ v1.156 模型权重负载均衡（new-api 渠道优先级思路落地）：同权重内按健康延迟，权重高者优先——管理员可调 weight 决定故障转移/默认选择偏好
+        // ★ v1.157 模型权重负载均衡（new-api 渠道优先级思路落地）：同权重内按健康延迟，权重高者优先——管理员可调 weight 决定故障转移/默认选择偏好
         sortedOthers = sortedOthers.sortedWith(compareByDescending<AiModel> { it.weight }.thenBy { GatewayScheduler.healthCache[GatewayScheduler.routeKey(it.providerId, it.modelId)]?.latencyMs ?: Long.MAX_VALUE })
         // ★ v1.123 多模态自动切换：图片/语音/视频请求，支持对应模态的模型优先（故障转移不会跳去纯文本模型）
         if (modality.isNotBlank()) {
@@ -296,6 +296,35 @@ class GatewayProxy(private val database: Database) {
         if (active == modelKey) {
             database.setUserConfig(userId, "active_model_key", list.firstOrNull() ?: "")
         }
+    }
+
+    // ★ v1.157 表达式计费：命中规则（模型匹配/角色匹配/时段匹配）→ 覆盖价或倍率
+    fun applyPricingRule(basePrice: Double, modelId: String, role: String): Double {
+        try {
+            val rules = database.getPricingRules().filter { it["enabled"] == true }
+            for (r in rules) {
+                val mp = (r["modelPattern"] as? String ?: "").trim()
+                val rl = (r["role"] as? String ?: "").trim()
+                val tr = (r["timeRange"] as? String ?: "").trim()
+                // 条件匹配（空=不限制）
+                if (mp.isNotEmpty() && !(modelId.contains(mp, true))) continue
+                if (rl.isNotEmpty() && rl != role) continue
+                if (tr.isNotEmpty()) {
+                    val parts = tr.split("-")
+                    if (parts.size != 2) continue
+                    val now = java.time.LocalTime.now()
+                    val start = runCatching { java.time.LocalTime.parse(parts[0].trim()) }.getOrNull() ?: continue
+                    val end = runCatching { java.time.LocalTime.parse(parts[1].trim()) }.getOrNull() ?: continue
+                    val inRange = if (start <= end) !now.isBefore(start) && !now.isAfter(end) else !now.isBefore(start) || !now.isAfter(end)
+                    if (!inRange) continue
+                }
+                // 命中：覆盖价优先，否则倍率
+                val p = (r["price"] as? Number)?.toDouble() ?: -1.0
+                val mul = (r["multiplier"] as? Number)?.toDouble() ?: 1.0
+                return if (p > 0) p else basePrice * mul
+            }
+        } catch (_: Exception) {}
+        return basePrice
     }
 
     // ============ 参数修正 ============
@@ -415,15 +444,51 @@ class GatewayProxy(private val database: Database) {
             if (rule.targetModelKey.isNotBlank()) targetModelOverride = rule.targetModelKey
         }
 
+        // ★ v1.157 模型映射：外部请求名命中映射 → 按映射 targets 有序列表路由（按序故障转移）
+        var mappingTargets: List<String>? = null
+        if (targetModelOverride.isNullOrBlank()) {
+            runCatching {
+                val mp = database.getModelMapping(modelId)
+                if (mp != null && (mp["enabled"] as? Boolean) == true) {
+                    val tgts = (mp["targets"] as? String ?: "").split(",").map { it.trim() }.filter { it.isNotBlank() }
+                    if (tgts.isNotEmpty()) mappingTargets = tgts
+                }
+            }
+        }
+        // ★ v1.157 渠道分组：请求模型名命中组名 → 只在该组内选模型（qtai-sj 也支持组名）
+        var groupFilter: String? = null
+        if (mappingTargets == null && targetModelOverride.isNullOrBlank()) {
+            runCatching {
+                val grp = database.getChannelGroups().firstOrNull { (it["name"] as? String) == modelId }
+                if (grp != null) groupFilter = modelId
+            }
+        }
+
         // qtai-sj 解析（传入 ownerId 实现用户级活跃模型/强制池隔离；★v97 传入用户消息做智能路由分档）
         val userMsg = runCatching {
             body["messages"]?.jsonArray?.lastOrNull()?.jsonObject?.get("content")?.jsonPrimitive?.content ?: ""
         }.getOrDefault("")
-        val resolvedModelId = targetModelOverride ?: resolveModelId(modelId, models, ownerId, userMsg)
+        // 映射命中：直接路由到映射列表（resolveModelId 对映射不适用）
+        val resolvedModelId = targetModelOverride ?: if (mappingTargets != null) mappingTargets!!.first().substringAfter("::", mappingTargets!!.first()) else resolveModelId(modelId, models, ownerId, userMsg)
         modelId = resolvedModelId
 
-        // 构建尝试列表（用户级池优先）
-        val attemptModels = buildAttemptModels(models, modelId, targetProviderOverride, ownerId, modality)
+        // 构建尝试列表（用户级池优先；映射命中则用映射目标列表；分组命中则只在该组内选）
+        val attemptModels = if (mappingTargets != null) {
+            // 映射 targets 转 AiModel 列表（按序，缺失跳过）
+            mappingTargets!!.mapNotNull { rk ->
+                val parts = rk.split("::")
+                if (parts.size == 2) models.firstOrNull { it.isEnabled && it.providerId.toString() == parts[0] && it.modelId == parts[1] }
+                else models.firstOrNull { it.isEnabled && it.modelId == rk }
+            }.distinctBy { it.providerId to it.modelId }.ifEmpty {
+                buildAttemptModels(models, modelId, targetProviderOverride, ownerId, modality)
+            }
+        } else if (groupFilter != null) {
+            // 渠道分组：只在该组内按健康/权重排序选
+            val grpModels = models.filter { it.isEnabled && it.channelGroup == groupFilter }
+            if (grpModels.isNotEmpty()) {
+                grpModels.sortedWith(compareByDescending<AiModel> { it.weight }.thenBy { GatewayScheduler.healthCache[GatewayScheduler.routeKey(it.providerId, it.modelId)]?.latencyMs ?: Long.MAX_VALUE })
+            } else buildAttemptModels(models, modelId, targetProviderOverride, ownerId, modality)
+        } else buildAttemptModels(models, modelId, targetProviderOverride, ownerId, modality)
 
         if (attemptModels.isEmpty()) {
             respondJson(call, openAIError(404, "No available model", "not_found"), 404)
@@ -450,15 +515,17 @@ class GatewayProxy(private val database: Database) {
         if (ownerUser != null && ownerUser.role != "admin") {
             // 查找请求模型的真实价格（按 modelId 匹配任意 provider）★v1.109 未设自定义价也用价格表默认价，均视为付费
             val requestedModel = models.firstOrNull { it.modelId == modelId }
-            // ★ v1.156 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表
+            // ★ v1.157 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表
             val dbPrice2 = runCatching { database.getModelPrice(modelId) }
                 .getOrNull()?.get("inputPrice") as? Double
             val requestedPrice = if (dbPrice2 != null && dbPrice2 > 0) dbPrice2
                 else requestedModel?.let { if (it.price > 0) it.price else PricingTable.priceOf(it.modelId).takeIf { p -> p > 0 } ?: PricingTable.DEFAULT_PRICE } ?: 0.0
-            val requestedPaid = requestedPrice > 0
+            // ★ v1.157 表达式计费：命中规则覆盖价/倍率
+            val effRequestedPrice = applyPricingRule(requestedPrice, modelId, ownerUser.role)
+            val requestedPaid = effRequestedPrice > 0
             if (requestedPaid && (ownerUser.quotaLimit <= 0 || ownerUser.quotaUsed >= ownerUser.quotaLimit)) {
                 val bal = database.getUserBalance(ownerUser.id)
-                val estCost = 0.001 * requestedPrice * com.qitong.gateway.http.PricingTable.OUTPUT_MULTIPLIER
+                val estCost = 0.001 * effRequestedPrice * com.qitong.gateway.http.PricingTable.OUTPUT_MULTIPLIER
                 if (ownerUser.quotaLimit > 0 || bal < estCost) {
                     val hint = if (ownerUser.quotaLimit > 0) {
                         "您的套餐额度已用尽（已用 ${ownerUser.quotaUsed}/${ownerUser.quotaLimit} tokens），请升级套餐或充值后再使用。"
@@ -710,7 +777,7 @@ class GatewayProxy(private val database: Database) {
                             val buf = ByteArray(8192)
                             var n: Int
                             val sb = StringBuilder()   // ★ v1.108 流式 token 统计：捕获 SSE 文本提取 usage
-                            // ★ v1.156 流式空闲超时：上游 120s 无数据视为挂起，断开触发故障转移（原来 300s 太久，QQ/微信慢根因之一）
+                            // ★ v1.157 流式空闲超时：上游 120s 无数据视为挂起，断开触发故障转移（原来 300s 太久，QQ/微信慢根因之一）
                             source.timeout().timeout(120, TimeUnit.SECONDS)
                             while (true) {
                                 n = runCatching { source.read(buf) }.getOrNull() ?: -1
@@ -822,13 +889,15 @@ class GatewayProxy(private val database: Database) {
             // token 缺省时按字节估算（兼容无 usage 字段的上游）
             val estTokens = if (totalTokens > 0) totalTokens.toLong()
                 else ((downloadBytes + uploadBytes) / 4).coerceAtLeast(1)
-            // ★ v1.109 成本计算：★v1.156 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表（不再免费 → 费用不再 0.000）
+            // ★ v1.109 成本计算：★v1.157 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表（不再免费 → 费用不再 0.000）
             val dbPrice = runCatching { database.getModelPrice(model.modelId) }
                 .getOrNull()?.get("inputPrice") as? Double
             val price = if (dbPrice != null && dbPrice > 0) dbPrice
                 else if (model.price > 0) model.price
                 else PricingTable.priceOf(model.modelId).takeIf { it > 0 } ?: PricingTable.DEFAULT_PRICE
-            val cost = estTokens / 1_000_000.0 * price * PricingTable.OUTPUT_MULTIPLIER
+            // ★ v1.157 表达式计费：命中规则覆盖价/倍率
+            val effPrice = applyPricingRule(price, model.modelId, ownerUser?.role ?: "user")
+            val cost = estTokens / 1_000_000.0 * effPrice * PricingTable.OUTPUT_MULTIPLIER
             val userId = ownerUser?.id ?: 0
 
             // 商业化扣款：付费模型扣自己余额（精确到分，余额不足则不扣不产生负数）；免费模型不扣

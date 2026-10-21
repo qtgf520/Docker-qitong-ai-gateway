@@ -139,7 +139,7 @@ fun main(args: Array<String>) {
         }
     }
     runCatching { database.seedUpdateLogsIfEmpty() }
-    // ★ v1.156 免费用户额度补全（老库 plan='free' 且 quota_limit=0 的用户补 10 万，与新注册逻辑对齐）
+    // ★ v1.157 免费用户额度补全（老库 plan='free' 且 quota_limit=0 的用户补 10 万，与新注册逻辑对齐）
     runCatching {
         val fixed = database.fixFreeUserQuotas()
         if (fixed > 0) println("[Gateway] 已补全 $fixed 个免费用户额度（10万 token）")
@@ -214,7 +214,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.156"))
+                put("version", JsonPrimitive("1.157"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -365,7 +365,7 @@ fun Application.moduleWeb(database: Database) {
         staticResources("/assets", "static/assets")
 
         get("/") {
-            // ★ v1.156 官网首页：未登录显示官网；已登录直接进控制台
+            // ★ v1.157 官网首页：未登录显示官网；已登录直接进控制台
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
             val logged = !token.isNullOrBlank() && AuthManager.getUserByToken(database, token) != null
             if (logged) call.respondText(WebUi.adminHtml(), ContentType.Text.Html.withCharset(Charsets.UTF_8))
@@ -400,21 +400,25 @@ fun Application.moduleWeb(database: Database) {
         }
         post("/api/auth/login") {
             val body = call.receive<JsonObject>()
-            val result = AuthManager.login(
+            val result = AuthManager.loginWithTotp(
                 database,
                 body["username"]?.jsonPrimitive?.content ?: "",
-                body["password"]?.jsonPrimitive?.content ?: ""
+                body["password"]?.jsonPrimitive?.content ?: "",
+                body["totpCode"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             )
-            if (result.isSuccess) {
-                val user = AuthManager.getUserByToken(database, result.getOrNull())
+            if (result.needTotp) {
+                // ★ v1.157 2FA：密码正确但需动态码，前端弹验证码输入
+                AdminApi.ok(call, mapOf("needTotp" to true), "请输入两步验证码")
+            } else if (result.token != null) {
+                val user = AuthManager.getUserByToken(database, result.token)
                 val loginIp = call.request.local.remoteHost
                 if (user != null) {
                     database.addOpLog(user.id, user.username, "登录", "后台登录成功", loginIp)
                     database.addLoginLog(user.id, user.username, true, loginIp, "登录成功")
                 }
                 AdminApi.ok(call, mapOf(
-                    "token" to result.getOrNull(),
-                    "user" to (user?.let { mapOf("id" to it.id, "username" to it.username, "role" to it.role, "displayName" to it.displayName) })
+                    "token" to result.token,
+                    "user" to (user?.let { mapOf("id" to it.id, "username" to it.username, "role" to it.role, "displayName" to it.displayName, "totpEnabled" to (it.totpSecret.isNotBlank())) })
                 ), "登录成功")
             } else {
                 // 记录失败登录日志（宝塔风格：失败 + IP + 原因）
@@ -440,13 +444,43 @@ fun Application.moduleWeb(database: Database) {
                 } else if (failCount > 20) {
                     loginFailCount.remove(failIp)  // 计数重置，避免无限告警
                 }
-                AdminApi.fail(call, result.exceptionOrNull()?.message ?: "登录失败", 401)
+                AdminApi.fail(call, result.error ?: "登录失败", 401)
             }
         }
         post("/api/auth/logout") {
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
             AuthManager.logout(database, token ?: "")
             AdminApi.ok(call, null, "已退出")
+        }
+        // ★ v1.157 两步验证：生成密钥（返回 otpauth URI 供扫码）/ 绑定（校验验证码后生效）/ 解绑
+        get("/api/auth/totp/generate") {
+            val user = call.requireAuth(database) ?: return@get
+            val secret = com.qitong.gateway.auth.Totp.generateSecret()
+            // 先临时保存，绑定成功才正式生效（未绑定直接用这密钥）
+            AdminApi.ok(call, mapOf(
+                "secret" to secret,
+                "otpauth" to com.qitong.gateway.auth.Totp.otpauthUri(secret, user.username)
+            ), "请用身份验证器扫码，并输入6位动态码完成绑定")
+        }
+        post("/api/auth/totp/bind") {
+            val user = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val secret = body["secret"]?.jsonPrimitive?.content ?: run { AdminApi.fail(call, "密钥缺失", 400); return@post }
+            val code = body["code"]?.jsonPrimitive?.content ?: run { AdminApi.fail(call, "验证码缺失", 400); return@post }
+            if (!com.qitong.gateway.auth.Totp.verify(secret, code)) { AdminApi.fail(call, "验证码错误，请重试", 400); return@post }
+            database.setTotpSecret(user.id, secret)
+            database.addOpLog(user.id, user.username, "安全", "开启两步验证(2FA)", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "两步验证已开启，下次登录需输入动态码")
+        }
+        post("/api/auth/totp/disable") {
+            val user = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val code = body["code"]?.jsonPrimitive?.content ?: run { AdminApi.fail(call, "验证码缺失", 400); return@post }
+            if (user.totpSecret.isBlank()) { AdminApi.fail(call, "未开启两步验证", 400); return@post }
+            if (!com.qitong.gateway.auth.Totp.verify(user.totpSecret, code)) { AdminApi.fail(call, "验证码错误", 400); return@post }
+            database.setTotpSecret(user.id, "")
+            database.addOpLog(user.id, user.username, "安全", "关闭两步验证(2FA)", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "两步验证已关闭")
         }
         get("/api/auth/me") {
             val user = call.authUser(database)
@@ -681,7 +715,7 @@ fun Application.moduleWeb(database: Database) {
                 put("data", AdminApi.getStats(database, u))
             }, 200)
         }
-                // ★ v1.156 套餐统计报表（管理员）：各套餐用户分布 + 续费收入 + 到期预警
+                // ★ v1.157 套餐统计报表（管理员）：各套餐用户分布 + 续费收入 + 到期预警
         get("/api/admin/plan-stats") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
@@ -709,7 +743,7 @@ fun Application.moduleWeb(database: Database) {
                 "totalBalance" to users.sumOf { it.balance }
             ), "ok")
         }
-        // ★ v1.126 全部模型价格表（前端「模型价格表」菜单；★v1.156 管理员可增删改自定义价格）
+        // ★ v1.126 全部模型价格表（前端「模型价格表」菜单；★v1.157 管理员可增删改自定义价格）
         get("/api/prices") {
             val u = call.requireAuth(database) ?: return@get
             val isAdmin = u.role == "admin"
@@ -734,7 +768,7 @@ fun Application.moduleWeb(database: Database) {
                 "isAdmin" to isAdmin
             ), "ok")
         }
-        // ★ v1.156 管理员保存/新增模型价格
+        // ★ v1.157 管理员保存/新增模型价格
         post("/api/prices") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员可维护价格表", 403); return@post }
@@ -747,7 +781,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "价格表", "保存模型价格 $modelId：¥$inputPrice/$outputPrice", call.request.local.remoteHost)
             AdminApi.ok(call, null, "价格已保存（$modelId：输入¥$inputPrice / 输出¥$outputPrice）")
         }
-        // ★ v1.156 管理员删除模型价格
+        // ★ v1.157 管理员删除模型价格
         delete("/api/prices/{modelId}") {
             val u = call.requireAuth(database) ?: return@delete
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员可维护价格表", 403); return@delete }
@@ -756,13 +790,113 @@ fun Application.moduleWeb(database: Database) {
             if (ok) { database.addOpLog(u.id, u.username, "价格表", "删除模型价格 $modelId", call.request.local.remoteHost); AdminApi.ok(call, null, "已删除 $modelId 自定义价格") }
             else AdminApi.fail(call, "该模型没有自定义价格", 404)
         }
-        // ★ v1.156 管理员清空全部自定义价格
+        // ★ v1.157 管理员清空全部自定义价格
         post("/api/prices/clear") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员可维护价格表", 403); return@post }
             val n = database.clearAllModelPrices()
             database.addOpLog(u.id, u.username, "价格表", "清空全部自定义价格 $n 条", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("deleted" to n), "已清空 $n 条自定义价格")
+        }
+        // ★ v1.157 模型映射（外部请求名 -> 内部模型有序列表，按序故障转移）
+        get("/api/model-mappings") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, database.getModelMappings(), "ok")
+        }
+        post("/api/model-mappings") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val alias = body["alias"]?.jsonPrimitive?.content?.trim() ?: run { AdminApi.fail(call, "映射名不能为空", 400); return@post }
+            val targets = body["targets"]?.jsonPrimitive?.content?.trim() ?: run { AdminApi.fail(call, "目标模型不能为空", 400); return@post }
+            val enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+            database.saveModelMapping(alias, targets, enabled)
+            database.addOpLog(u.id, u.username, "模型映射", "保存 $alias -> $targets", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "映射 $alias 已保存")
+        }
+        delete("/api/model-mappings/{alias}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            val alias = call.parameters["alias"] ?: return@delete
+            if (database.deleteModelMapping(alias)) { database.addOpLog(u.id, u.username, "模型映射", "删除 $alias", call.request.local.remoteHost); AdminApi.ok(call, null, "已删除映射 $alias") }
+            else AdminApi.fail(call, "映射不存在", 404)
+        }
+        post("/api/model-mappings/clear") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val n = database.clearModelMappings()
+            AdminApi.ok(call, mapOf("deleted" to n), "已清空 $n 条映射")
+        }
+        // ★ v1.157 表达式计费规则（条件：模型/角色/时段 → 覆盖价或倍率）
+        get("/api/pricing-rules") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            AdminApi.ok(call, database.getPricingRules(), "ok")
+        }
+        post("/api/pricing-rules") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            val name = body["name"]?.jsonPrimitive?.content?.trim() ?: run { AdminApi.fail(call, "规则名不能为空", 400); return@post }
+            val modelPattern = body["modelPattern"]?.jsonPrimitive?.content?.trim() ?: ""
+            val role = body["role"]?.jsonPrimitive?.content?.trim() ?: ""
+            val timeRange = body["timeRange"]?.jsonPrimitive?.content?.trim() ?: ""
+            val price = body["price"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: -1.0
+            val multiplier = body["multiplier"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 1.0
+            val enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+            database.savePricingRule(id, name, modelPattern, role, timeRange, price, multiplier, enabled)
+            database.addOpLog(u.id, u.username, "计费规则", "保存 $name", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "计费规则 $name 已保存")
+        }
+        delete("/api/pricing-rules/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            database.deletePricingRule(id)
+            AdminApi.ok(call, null, "已删除")
+        }
+        post("/api/pricing-rules/clear") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val n = database.clearPricingRules()
+            AdminApi.ok(call, mapOf("deleted" to n), "已清空 $n 条规则")
+        }
+        // ★ v1.157 渠道分组（用户选组不选具体模型；模型可归组）
+        get("/api/channel-groups") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, mapOf(
+                "groups" to database.getChannelGroups(),
+                "models" to database.getModels().map { m -> mapOf("id" to m.id, "modelId" to m.modelId, "channelGroup" to m.channelGroup) }
+            ), "ok")
+        }
+        post("/api/channel-groups") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val name = body["name"]?.jsonPrimitive?.content?.trim() ?: run { AdminApi.fail(call, "组名不能为空", 400); return@post }
+            val description = body["description"]?.jsonPrimitive?.content?.trim() ?: ""
+            database.saveChannelGroup(name, description)
+            AdminApi.ok(call, null, "渠道分组 $name 已保存")
+        }
+        delete("/api/channel-groups/{name}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
+            val name = call.parameters["name"] ?: return@delete
+            database.deleteChannelGroup(name)
+            AdminApi.ok(call, null, "已删除分组 $name")
+        }
+        // 给模型设置渠道分组
+        post("/api/models/{id}/group") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val body = call.receive<JsonObject>()
+            val group = body["group"]?.jsonPrimitive?.content?.trim() ?: ""
+            val m = database.getModelById(id) ?: run { AdminApi.fail(call, "模型不存在", 404); return@post }
+            database.updateModel(m.copy(channelGroup = group))
+            AdminApi.ok(call, null, "模型 ${m.modelId} 已归入分组「$group」")
         }
         // ★ v1.126 系统监控（实时快照：CPU/内存/磁盘/网络/负载）
         get("/api/monitor") {
@@ -1941,7 +2075,7 @@ fun Application.moduleWeb(database: Database) {
             val validPlans = listOf("free", "quota", "subscription", "agent", "business")
             if (newPlan !in validPlans) { AdminApi.fail(call, "无效套餐：$newPlan（可选 ${validPlans.joinToString("/")}）", 400); return@post }
             val expireAt = body["planExpireAt"]?.jsonPrimitive?.content?.toLongOrNull() ?: target.planExpireAt
-            // ★ v1.156 套餐权益自动填充：未显式传额度时，按套餐档位套用默认权益（额度 + 限速）
+            // ★ v1.157 套餐权益自动填充：未显式传额度时，按套餐档位套用默认权益（额度 + 限速）
             val planDefaults = mapOf(
                 "free" to Triple(100000L, "30", "3000"),        // 免费版：10万 token 额度，QPS 30，每日 3000 次
                 "quota" to Triple(10000000L, "120", "20000"),   // 额度版：1000万 token，QPS 120，每日 2 万次
@@ -1963,7 +2097,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "设置套餐", "将 ${target.username} 套餐设为 $newPlan（到期 $expireAt，额度 $newQuota，QPS $qps，日限 $daily）", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("plan" to newPlan, "planExpireAt" to expireAt, "quotaLimit" to newQuota, "rateQps" to qps, "rateDaily" to daily), "套餐已设为 $newPlan")
         }
-        // ★ v1.156 套餐月费表（元/月）：免费版 0，其余按档收费
+        // ★ v1.157 套餐月费表（元/月）：免费版 0，其余按档收费
         // 订阅续费：从用户余额扣月费，延长套餐到期时间（months 个月）
         post("/api/users/subscribe") {
             val u = call.requireAuth(database) ?: return@post
@@ -1975,7 +2109,7 @@ fun Application.moduleWeb(database: Database) {
             val plan = body["plan"]?.jsonPrimitive?.content ?: target.plan
             val months = body["months"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
             if (months !in 1..36) { AdminApi.fail(call, "续费月数无效（1-36）", 400); return@post }
-            // ★ v1.156 从 plan_defs 读取套餐定义（支持管理员自定义套餐）
+            // ★ v1.157 从 plan_defs 读取套餐定义（支持管理员自定义套餐）
             val planDef = database.getPlanDef(plan) ?: run { AdminApi.fail(call, "无效套餐：$plan", 400); return@post }
             if (planDef["enabled"] != true) { AdminApi.fail(call, "套餐已下架：$plan", 400); return@post }
             val monthPrice = (planDef["price"] as? Number)?.toDouble() ?: 0.0
@@ -1988,7 +2122,7 @@ fun Application.moduleWeb(database: Database) {
             // 延长到期时间：从当前到期时间（或现在）起顺延 months 个月（按 30 天/月）
             val base = if (target.planExpireAt > System.currentTimeMillis()) target.planExpireAt else System.currentTimeMillis()
             val newExpire = base + months * 30L * 24 * 3600 * 1000
-            // ★ v1.156 续费后套用套餐权益（额度 + 限速）
+            // ★ v1.157 续费后套用套餐权益（额度 + 限速）
             val q = (planDef["quotaLimit"] as? Number)?.toLong() ?: target.quotaLimit
             val rq = (planDef["rateQps"] as? Number)?.toInt() ?: 60
             val rd = (planDef["rateDaily"] as? Number)?.toInt() ?: 10000
@@ -1998,13 +2132,13 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, mapOf("plan" to plan, "planExpireAt" to newExpire, "paid" to total, "months" to months), "续费成功：$plan ${months} 个月")
         }
 
-        // ★ v1.156 套餐定义列表（用户可看已上架的；管理员可看全部）——供订阅预览
+        // ★ v1.157 套餐定义列表（用户可看已上架的；管理员可看全部）——供订阅预览
         get("/api/plans") {
             val u = call.requireAuth(database) ?: return@get
             val onlyEnabled = u.role != "admin"
             AdminApi.ok(call, database.getPlanDefs(onlyEnabled), "ok")
         }
-        // ★ v1.156 管理员新增/编辑套餐定义
+        // ★ v1.157 管理员新增/编辑套餐定义
         post("/api/admin/plan/save") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
@@ -2024,7 +2158,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "保存套餐", "套餐 $code（$name）价¥$price 额度$quotaLimit", call.request.local.remoteHost)
             AdminApi.ok(call, null, "套餐已保存")
         }
-        // ★ v1.156 管理员删除套餐（内置不可删）
+        // ★ v1.157 管理员删除套餐（内置不可删）
         post("/api/admin/plan/delete") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
@@ -2049,7 +2183,7 @@ fun Application.moduleWeb(database: Database) {
                 "totalRecharge" to u.totalRecharge
             ), "ok")
         }
-        // ★ v1.156 佣金提现申请（从余额扣减，记流水；最低 10 元）
+        // ★ v1.157 佣金提现申请（从余额扣减，记流水；最低 10 元）
         post("/api/me/withdraw") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -2061,7 +2195,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "提现申请", "提现 ¥$amount 到 $acct", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("amount" to amount, "balance" to database.getUserBalance(u.id)), "提现申请已提交，管理员审核后到账")
         }
-        // ★ v1.156 管理员生成充值卡密
+        // ★ v1.157 管理员生成充值卡密
         post("/api/admin/gen-cards") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
@@ -2074,14 +2208,14 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "生成卡密", "生成 ${codes.size} 张 ¥$amount 卡密（批次 $batch）", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("batch" to batch, "count" to codes.size, "codes" to codes), "已生成 ${codes.size} 张卡密")
         }
-        // ★ v1.156 卡密列表（管理员）
+        // ★ v1.157 卡密列表（管理员）
         get("/api/admin/cards") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
             val batch = call.request.queryParameters["batch"] ?: ""
             AdminApi.ok(call, database.getRechargeCards(batch), "ok")
         }
-        // ★ v1.156 兑换卡密（用户）
+        // ★ v1.157 兑换卡密（用户）
         post("/api/me/redeem") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -2123,15 +2257,16 @@ fun Application.moduleWeb(database: Database) {
                 "totalRecharge" to u.totalRecharge,
                 "inviteCode" to inviteCode,
                 "createdAt" to u.createdAt,
-                // ★ v1.156 个人中心套餐卡片字段
+                // ★ v1.157 个人中心套餐卡片字段
                 "plan" to u.plan,
                 "planExpireAt" to u.planExpireAt,
                 "quotaLimit" to (if (u.plan==="free" && u.quotaLimit<=0) (database.getPlanDef("free")?.get("quotaLimit") as? Number)?.toLong() ?: 100000L else u.quotaLimit),
                 "quotaUsed" to u.quotaUsed,
-                // ★ v1.156 返回套餐定义（名称/介绍/价格），免费版补齐默认额度供前端显示
+                // ★ v1.157 返回套餐定义（名称/介绍/价格），免费版补齐默认额度供前端显示
                 "planName" to (database.getPlanDef(u.plan)?.get("name") as? String ?: u.plan),
                 "planIntro" to (database.getPlanDef(u.plan)?.get("intro") as? String ?: ""),
-                "planPrice" to ((database.getPlanDef(u.plan)?.get("price") as? Number)?.toDouble() ?: 0.0)
+                "planPrice" to ((database.getPlanDef(u.plan)?.get("price") as? Number)?.toDouble() ?: 0.0),
+                "totpEnabled" to (u.totpSecret.isNotBlank())
             ), "ok")
         }
         // 个人中心：更新邮箱/昵称/通知开关
@@ -2209,7 +2344,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.156"))
+                put("version", JsonPrimitive("1.157"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2552,7 +2687,7 @@ fun Application.moduleWeb(database: Database) {
         // ===== 大脑记忆（按用户隔离） =====
         get("/api/memory") {
             val u = call.requireAuth(database) ?: return@get
-            // ★ v1.156 管理员看全部记忆（含 QQ/微信/群来源，备注来源用户）；普通用户看自己的
+            // ★ v1.157 管理员看全部记忆（含 QQ/微信/群来源，备注来源用户）；普通用户看自己的
             AdminApi.ok(call, if (u.role == "admin") database.getAllMemories(500) else database.getMemories(u.id), "ok")
         }
         post("/api/memory") {
@@ -2579,7 +2714,7 @@ fun Application.moduleWeb(database: Database) {
             database.clearMemories(user.id)
             AdminApi.ok(call, null, "记忆已清空")
         }
-        // ★ v1.156 批量删除记忆（管理员可删任意来源含QQ/微信/群；普通用户只能删自己的）
+        // ★ v1.157 批量删除记忆（管理员可删任意来源含QQ/微信/群；普通用户只能删自己的）
         post("/api/memory/batch-delete") {
             val user = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -2601,7 +2736,7 @@ fun Application.moduleWeb(database: Database) {
             }
             AdminApi.ok(call, mapOf("deleted" to deleted), "已删除 $deleted 条记忆")
         }
-        // ★ v1.156 管理员清空全部记忆（含QQ/微信/群来源）
+        // ★ v1.157 管理员清空全部记忆（含QQ/微信/群来源）
         post("/api/memory/clear-all") {
             val user = call.requireAuth(database) ?: return@post
             if (user.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
@@ -3038,8 +3173,8 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.156"))
-                    put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.156 前端据此隐藏普通用户的启停按钮
+                    put("version", JsonPrimitive("1.157"))
+                    put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.157 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()
@@ -3132,7 +3267,7 @@ fun Application.moduleWeb(database: Database) {
             }, 200)
         }
 
-        // 网关启停控制：★ v1.156 仅管理员可操作全局开关；普通用户无权限（403），用户级 API 开关走独立接口
+        // 网关启停控制：★ v1.157 仅管理员可操作全局开关；普通用户无权限（403），用户级 API 开关走独立接口
         post("/api/gateway/toggle") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -3143,7 +3278,7 @@ fun Application.moduleWeb(database: Database) {
             val newState = GatewayProxy.toggleGateway(action, database)
             AdminApi.ok(call, mapOf("running" to newState), if (newState) "网关已启动" else "网关已停止")
         }
-        // ★ v1.156 用户级 API 开关（普通用户只控制自己密钥的转发，不碰全局网关）
+        // ★ v1.157 用户级 API 开关（普通用户只控制自己密钥的转发，不碰全局网关）
         post("/api/gateway/user-toggle") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()

@@ -14,11 +14,15 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 后台认证 —— 注册/登录/会话Token
  * 密码 BCrypt 哈希，会话Token持久化到数据库（7天免登录）
+ * v1.157 新增两步验证（2FA）：开启后登录需额外 6 位 TOTP 动态码
  */
 object AuthManager {
 
     private const val SESSION_DAYS = 7L
     private val random = SecureRandom()
+
+    /** 登录结果：token 或 需要2FA（返回 pending 标记，前端弹验证码输入） */
+    data class LoginResult(val token: String?, val needTotp: Boolean, val error: String? = null)
 
     /** 注册新用户（支持邀请码） */
     fun register(database: Database, username: String, password: String, displayName: String = "", inviteCode: String = ""): Result<User> {
@@ -39,15 +43,29 @@ object AuthManager {
         return if (user != null) Result.success(user) else Result.failure(Exception("注册失败"))
     }
 
-    /** 登录，成功返回会话token（持久化7天） */
+    /** 登录（内部机器人绑定用，不走2FA）：成功返回会话token */
     fun login(database: Database, username: String, password: String): Result<String> {
         val user = database.getUserByUsername(username.trim()) ?: return Result.failure(Exception("用户名或密码错误"))
         if (!BCrypt.checkpw(password, user.passwordHash)) return Result.failure(Exception("用户名或密码错误"))
         database.updateUserLogin(user.id)
         val token = generateToken()
-        // 持久化会话：token -> userId, 7天有效
         database.saveSession(token, user.id, SESSION_DAYS)
         return Result.success(token)
+    }
+
+    /** 登录（后台用，支持2FA）：成功返回会话token；已开2FA且未传验证码 → needTotp=true（前端弹验证码）；传了验证码校验 */
+    fun loginWithTotp(database: Database, username: String, password: String, totpCode: String? = null): LoginResult {
+        val user = database.getUserByUsername(username.trim()) ?: return LoginResult(null, false, "用户名或密码错误")
+        if (!BCrypt.checkpw(password, user.passwordHash)) return LoginResult(null, false, "用户名或密码错误")
+        // ★ v1.157 两步验证：已绑定 TOTP → 校验动态码
+        if (user.totpSecret.isNotBlank()) {
+            if (totpCode.isNullOrBlank()) return LoginResult(null, true, "请输入两步验证码")
+            if (!Totp.verify(user.totpSecret, totpCode)) return LoginResult(null, false, "验证码错误")
+        }
+        database.updateUserLogin(user.id)
+        val token = generateToken()
+        database.saveSession(token, user.id, SESSION_DAYS)
+        return LoginResult(token, false, null)
     }
 
     /** 修改密码：验证旧密码，设置新密码 */
