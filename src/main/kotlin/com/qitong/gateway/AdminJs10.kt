@@ -52,7 +52,7 @@ loaders.prices = function(){
   box.innerHTML = html;
  });
 };
-// ★ v1.155 价格表管理：添加/编辑/删除（仅管理员）
+// ★ v1.156 价格表管理：添加/编辑/删除（仅管理员）
 window.addPrice = function(){
  openModal('添加自定义价格', '<div class="form-row"><label>模型ID *</label><input id="prModel" class="input" placeholder="如 deepseek-v4-flash"></div>' +
   '<div class="form-row"><label>输入价（元/百万token）*</label><input id="prIn" class="input" type="number" step="0.01" min="0" value="2"></div>' +

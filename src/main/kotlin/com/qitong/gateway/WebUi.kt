@@ -11,7 +11,7 @@ object WebUi {
 
     private const val VER = "v1.133"
 
-    /** ★ v1.155 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
+    /** ★ v1.156 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
     fun landingHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -98,7 +98,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
     <div class="fcard"><div class="ico">🎛️</div><h3>多模态路由</h3><p>文本 / 图片 / 语音 / 视频请求可指定模型转发，不设置则默认全通，灵活可控。</p></div>
     <div class="fcard"><div class="ico">📊</div><h3>测速排行</h3><p>TTFT / TPS / 总耗时三指标实时测速，后台持续跑带进度条，健康度一目了然。</p></div>
     <div class="fcard"><div class="ico">💰</div><h3>商业化计费</h3><p>用户余额 / 套餐 / 卡密 / 分销佣金，按模型定价扣费，用量统计精细到 token 与流量。</p></div>
-    <div class="fcard"><div class="ico">🤖</div><h3>机器人接入</h3><p>QQ / 微信 / 元宝 Bot 全接入，AI 自动回复、查余额、管模型、远程控制网关。</p></div>
+    <div class="fcard"><div class="ico">🤖</div><h3>机器人接入</h3><p></p></div>
     <div class="fcard"><div class="ico">🧠</div><h3>qtai-sj 智能体</h3><p>自动化切换最佳模型，自带记忆、技能、工作流、MCP、终端，像真人一样边想边干。</p></div>
     <div class="fcard"><div class="ico">🔐</div><h3>多租户安全</h3><p>用户数据按登录隔离，服务商 Key 原添加者可见，管理员全权，密钥独立管理。</p></div>
     <div class="fcard"><div class="ico">🚀</div><h3>一键 Docker 部署</h3><p>docker compose up 即起，SQLite 零依赖，备份/恢复一键完成，适合 VPS 与内网。</p></div>
@@ -263,7 +263,6 @@ ${adminCss()}
       <div class="nav-group">机器人</div>
       <a data-page="qqbot" class="admin-only"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg><b>QQ机器人</b></a>
       <a data-page="weixin" class="admin-only"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/><path d="M9 6.5a3 3 0 0 1 6 0"/></svg><b>微信机器人</b></a>
-      <a data-page="yuanbao" class="admin-only"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z"/><circle cx="12" cy="12" r="4"/></svg><b>元宝Bot</b></a>
       <div class="nav-group">智能体</div>
       <a data-page="chat"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><b>内置聊天</b></a>
       <a data-page="skills"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><b>技能</b></a>
@@ -290,7 +289,6 @@ ${adminCss()}
     <div id="view-keys" class="view"></div>
     <div id="view-qqbot" class="view"></div>
     <div id="view-weixin" class="view"></div>
-    <div id="view-yuanbao" class="view"></div>
     <div id="view-rules" class="view"></div>
     <div id="view-usage" class="view"></div>
     <div id="view-prices" class="view"></div>
@@ -675,6 +673,5 @@ background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none;box-
 }
 """.trimIndent()
 
-    /** 后台 JS：核心 + 模型测速聊天 + 密钥规则用量用户 + UX 增强包 + QQ + 技能工作流MCP + 微信 + 元宝Bot（v1.119） */
-    fun adminJs(): String = "var APP_VER = '" + VER + "';\n" + AdminJs1.js() + AdminJs2.js() + AdminJs3.js() + AdminJs4.js() + AdminJs5.js() + AdminJs6.js() + AdminJs7.js() + AdminJs9.js() + AdminJs10.js()
+    fun adminJs(): String = "var APP_VER = '" + VER + "';\n" + AdminJs1.js() + AdminJs2.js() + AdminJs3.js() + AdminJs4.js() + AdminJs5.js() + AdminJs6.js() + AdminJs7.js() + AdminJs10.js()
 }

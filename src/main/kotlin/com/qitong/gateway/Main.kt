@@ -139,7 +139,7 @@ fun main(args: Array<String>) {
         }
     }
     runCatching { database.seedUpdateLogsIfEmpty() }
-    // ★ v1.155 免费用户额度补全（老库 plan='free' 且 quota_limit=0 的用户补 10 万，与新注册逻辑对齐）
+    // ★ v1.156 免费用户额度补全（老库 plan='free' 且 quota_limit=0 的用户补 10 万，与新注册逻辑对齐）
     runCatching {
         val fixed = database.fixFreeUserQuotas()
         if (fixed > 0) println("[Gateway] 已补全 $fixed 个免费用户额度（10万 token）")
@@ -168,8 +168,6 @@ fun main(args: Array<String>) {
     // ★ v69 微信 ilink 机器人：启动所有已启用的微信 Bot 长轮询
     com.qitong.gateway.weixin.WeixinBotManager.startAll(database, gatewayPort)
 
-    // ★ v1.119 元宝 Bot：启动所有已启用的元宝 Bot（WS 长连接）
-    com.qitong.gateway.yuanbao.YuanbaoBotManager.startAll(database, gatewayPort)
 
     val gatewayServer = embeddedServer(Netty, port = gatewayPort) { moduleGateway(database) }
     val webServer = embeddedServer(Netty, port = webPort) { moduleWeb(database) }
@@ -216,7 +214,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.155"))
+                put("version", JsonPrimitive("1.156"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -367,7 +365,7 @@ fun Application.moduleWeb(database: Database) {
         staticResources("/assets", "static/assets")
 
         get("/") {
-            // ★ v1.155 官网首页：未登录显示官网；已登录直接进控制台
+            // ★ v1.156 官网首页：未登录显示官网；已登录直接进控制台
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
             val logged = !token.isNullOrBlank() && AuthManager.getUserByToken(database, token) != null
             if (logged) call.respondText(WebUi.adminHtml(), ContentType.Text.Html.withCharset(Charsets.UTF_8))
@@ -683,7 +681,7 @@ fun Application.moduleWeb(database: Database) {
                 put("data", AdminApi.getStats(database, u))
             }, 200)
         }
-                // ★ v1.155 套餐统计报表（管理员）：各套餐用户分布 + 续费收入 + 到期预警
+                // ★ v1.156 套餐统计报表（管理员）：各套餐用户分布 + 续费收入 + 到期预警
         get("/api/admin/plan-stats") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
@@ -711,7 +709,7 @@ fun Application.moduleWeb(database: Database) {
                 "totalBalance" to users.sumOf { it.balance }
             ), "ok")
         }
-        // ★ v1.126 全部模型价格表（前端「模型价格表」菜单；★v1.155 管理员可增删改自定义价格）
+        // ★ v1.126 全部模型价格表（前端「模型价格表」菜单；★v1.156 管理员可增删改自定义价格）
         get("/api/prices") {
             val u = call.requireAuth(database) ?: return@get
             val isAdmin = u.role == "admin"
@@ -736,7 +734,7 @@ fun Application.moduleWeb(database: Database) {
                 "isAdmin" to isAdmin
             ), "ok")
         }
-        // ★ v1.155 管理员保存/新增模型价格
+        // ★ v1.156 管理员保存/新增模型价格
         post("/api/prices") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员可维护价格表", 403); return@post }
@@ -749,7 +747,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "价格表", "保存模型价格 $modelId：¥$inputPrice/$outputPrice", call.request.local.remoteHost)
             AdminApi.ok(call, null, "价格已保存（$modelId：输入¥$inputPrice / 输出¥$outputPrice）")
         }
-        // ★ v1.155 管理员删除模型价格
+        // ★ v1.156 管理员删除模型价格
         delete("/api/prices/{modelId}") {
             val u = call.requireAuth(database) ?: return@delete
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员可维护价格表", 403); return@delete }
@@ -758,7 +756,7 @@ fun Application.moduleWeb(database: Database) {
             if (ok) { database.addOpLog(u.id, u.username, "价格表", "删除模型价格 $modelId", call.request.local.remoteHost); AdminApi.ok(call, null, "已删除 $modelId 自定义价格") }
             else AdminApi.fail(call, "该模型没有自定义价格", 404)
         }
-        // ★ v1.155 管理员清空全部自定义价格
+        // ★ v1.156 管理员清空全部自定义价格
         post("/api/prices/clear") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员可维护价格表", 403); return@post }
@@ -1097,99 +1095,6 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, "日志已清空")
         }
 
-        // ===== ★ v1.119 元宝 Bot（腾讯元宝开放平台 WS 通道） =====
-        get("/api/yuanbao/bots") {
-            val u = call.requireAuth(database) ?: return@get
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
-            AdminApi.ok(call, database.getYuanbaoBots().map { b ->
-                val st = com.qitong.gateway.yuanbao.YuanbaoBotManager.statusOf(b.id)
-                mapOf(
-                    "id" to b.id, "name" to b.name, "enabled" to b.enabled,
-                    "aiModel" to b.aiModel, "systemPrompt" to b.systemPrompt,
-                    "appKey" to b.appKey, "appSecret" to b.appSecret,
-                    "status" to st.status, "lastError" to st.lastError,
-                    "messagesHandled" to st.messagesHandled, "createdAt" to b.createdAt
-                )
-            }, "ok")
-        }
-        get("/api/yuanbao/overview") {
-            val u = call.requireAuth(database) ?: return@get
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
-            val bots = database.getYuanbaoBots()
-            val onlineCount = bots.count { com.qitong.gateway.yuanbao.YuanbaoBotManager.statusOf(it.id).status == "在线" }
-            val recent = database.getYuanbaoLogs(20)
-            AdminApi.ok(call, mapOf(
-                "bots" to bots.map { b ->
-                    val st = com.qitong.gateway.yuanbao.YuanbaoBotManager.statusOf(b.id)
-                    mapOf("id" to b.id, "name" to b.name, "online" to (st.status == "在线"),
-                        "status" to st.status, "lastError" to st.lastError, "messagesHandled" to st.messagesHandled)
-                },
-                "overview" to mapOf("onlineBots" to onlineCount, "totalBots" to bots.size),
-                "recent" to recent
-            ), "ok")
-        }
-        post("/api/yuanbao/bots") {
-            val u = call.requireAuth(database) ?: return@post
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
-            val body = call.receive<JsonObject>()
-            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
-            val old = if (id > 0) database.getYuanbaoBotById(id) else null
-            val bot = com.qitong.gateway.yuanbao.YuanbaoBot(
-                id = id,
-                name = body["name"]?.jsonPrimitive?.content ?: "元宝Bot",
-                appKey = body["appKey"]?.jsonPrimitive?.content ?: old?.appKey ?: "",
-                appSecret = body["appSecret"]?.jsonPrimitive?.content ?: old?.appSecret ?: "",
-                enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: (old?.enabled ?: true),
-                aiModel = body["aiModel"]?.jsonPrimitive?.content ?: "qtai-sj",
-                systemPrompt = body["systemPrompt"]?.jsonPrimitive?.content ?: ""
-            )
-            database.saveYuanbaoBot(bot)
-            val saved: com.qitong.gateway.yuanbao.YuanbaoBot = if (id > 0) {
-                database.getYuanbaoBotById(id) ?: bot
-            } else {
-                database.getYuanbaoBots().lastOrNull { it.name == bot.name } ?: bot
-            }
-            if (saved.enabled && saved.appKey.isNotBlank() && saved.appSecret.isNotBlank()) com.qitong.gateway.yuanbao.YuanbaoBotManager.startBot(saved)
-            else com.qitong.gateway.yuanbao.YuanbaoBotManager.stopBot(saved.id)
-            AdminApi.ok(call, mapOf("id" to saved.id, "hasSecret" to saved.appSecret.isNotBlank()), "元宝Bot已保存")
-        }
-        delete("/api/yuanbao/bots/{id}") {
-            val u = call.requireAuth(database) ?: return@delete
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
-            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
-            com.qitong.gateway.yuanbao.YuanbaoBotManager.stopBot(id)
-            database.deleteYuanbaoBot(id)
-            AdminApi.ok(call, null, "已删除")
-        }
-        post("/api/yuanbao/bots/{id}/restart") {
-            val u = call.requireAuth(database) ?: return@post
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
-            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
-            com.qitong.gateway.yuanbao.YuanbaoBotManager.restartBot(id)
-            AdminApi.ok(call, null, "已重连")
-        }
-        post("/api/yuanbao/bots/{id}/toggle") {
-            val u = call.requireAuth(database) ?: return@post
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
-            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
-            val bot = database.getYuanbaoBotById(id) ?: run { AdminApi.fail(call, "机器人不存在", 404); return@post }
-            val nowOn = !bot.enabled
-            database.saveYuanbaoBot(bot.copy(enabled = nowOn))
-            if (nowOn) com.qitong.gateway.yuanbao.YuanbaoBotManager.startBot(bot.copy(enabled = true))
-            else com.qitong.gateway.yuanbao.YuanbaoBotManager.stopBot(id)
-            AdminApi.ok(call, mapOf("enabled" to nowOn), if (nowOn) "已启用" else "已停用")
-        }
-        get("/api/yuanbao/logs") {
-            val u = call.requireAuth(database) ?: return@get
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
-            AdminApi.ok(call, database.getYuanbaoLogs(limit = 200), "ok")
-        }
-        post("/api/yuanbao/logs/clear") {
-            val u = call.requireAuth(database) ?: return@post
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
-            database.clearYuanbaoLogs()
-            AdminApi.ok(call, null, "日志已清空")
-        }
         // QQ 动态概览（流动面板数据源）
         get("/api/qq/overview") {
             val u = call.requireAuth(database) ?: return@get
@@ -2036,7 +1941,7 @@ fun Application.moduleWeb(database: Database) {
             val validPlans = listOf("free", "quota", "subscription", "agent", "business")
             if (newPlan !in validPlans) { AdminApi.fail(call, "无效套餐：$newPlan（可选 ${validPlans.joinToString("/")}）", 400); return@post }
             val expireAt = body["planExpireAt"]?.jsonPrimitive?.content?.toLongOrNull() ?: target.planExpireAt
-            // ★ v1.155 套餐权益自动填充：未显式传额度时，按套餐档位套用默认权益（额度 + 限速）
+            // ★ v1.156 套餐权益自动填充：未显式传额度时，按套餐档位套用默认权益（额度 + 限速）
             val planDefaults = mapOf(
                 "free" to Triple(100000L, "30", "3000"),        // 免费版：10万 token 额度，QPS 30，每日 3000 次
                 "quota" to Triple(10000000L, "120", "20000"),   // 额度版：1000万 token，QPS 120，每日 2 万次
@@ -2058,7 +1963,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "设置套餐", "将 ${target.username} 套餐设为 $newPlan（到期 $expireAt，额度 $newQuota，QPS $qps，日限 $daily）", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("plan" to newPlan, "planExpireAt" to expireAt, "quotaLimit" to newQuota, "rateQps" to qps, "rateDaily" to daily), "套餐已设为 $newPlan")
         }
-        // ★ v1.155 套餐月费表（元/月）：免费版 0，其余按档收费
+        // ★ v1.156 套餐月费表（元/月）：免费版 0，其余按档收费
         // 订阅续费：从用户余额扣月费，延长套餐到期时间（months 个月）
         post("/api/users/subscribe") {
             val u = call.requireAuth(database) ?: return@post
@@ -2070,7 +1975,7 @@ fun Application.moduleWeb(database: Database) {
             val plan = body["plan"]?.jsonPrimitive?.content ?: target.plan
             val months = body["months"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
             if (months !in 1..36) { AdminApi.fail(call, "续费月数无效（1-36）", 400); return@post }
-            // ★ v1.155 从 plan_defs 读取套餐定义（支持管理员自定义套餐）
+            // ★ v1.156 从 plan_defs 读取套餐定义（支持管理员自定义套餐）
             val planDef = database.getPlanDef(plan) ?: run { AdminApi.fail(call, "无效套餐：$plan", 400); return@post }
             if (planDef["enabled"] != true) { AdminApi.fail(call, "套餐已下架：$plan", 400); return@post }
             val monthPrice = (planDef["price"] as? Number)?.toDouble() ?: 0.0
@@ -2083,7 +1988,7 @@ fun Application.moduleWeb(database: Database) {
             // 延长到期时间：从当前到期时间（或现在）起顺延 months 个月（按 30 天/月）
             val base = if (target.planExpireAt > System.currentTimeMillis()) target.planExpireAt else System.currentTimeMillis()
             val newExpire = base + months * 30L * 24 * 3600 * 1000
-            // ★ v1.155 续费后套用套餐权益（额度 + 限速）
+            // ★ v1.156 续费后套用套餐权益（额度 + 限速）
             val q = (planDef["quotaLimit"] as? Number)?.toLong() ?: target.quotaLimit
             val rq = (planDef["rateQps"] as? Number)?.toInt() ?: 60
             val rd = (planDef["rateDaily"] as? Number)?.toInt() ?: 10000
@@ -2093,13 +1998,13 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, mapOf("plan" to plan, "planExpireAt" to newExpire, "paid" to total, "months" to months), "续费成功：$plan ${months} 个月")
         }
 
-        // ★ v1.155 套餐定义列表（用户可看已上架的；管理员可看全部）——供订阅预览
+        // ★ v1.156 套餐定义列表（用户可看已上架的；管理员可看全部）——供订阅预览
         get("/api/plans") {
             val u = call.requireAuth(database) ?: return@get
             val onlyEnabled = u.role != "admin"
             AdminApi.ok(call, database.getPlanDefs(onlyEnabled), "ok")
         }
-        // ★ v1.155 管理员新增/编辑套餐定义
+        // ★ v1.156 管理员新增/编辑套餐定义
         post("/api/admin/plan/save") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
@@ -2119,7 +2024,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "保存套餐", "套餐 $code（$name）价¥$price 额度$quotaLimit", call.request.local.remoteHost)
             AdminApi.ok(call, null, "套餐已保存")
         }
-        // ★ v1.155 管理员删除套餐（内置不可删）
+        // ★ v1.156 管理员删除套餐（内置不可删）
         post("/api/admin/plan/delete") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
@@ -2144,7 +2049,7 @@ fun Application.moduleWeb(database: Database) {
                 "totalRecharge" to u.totalRecharge
             ), "ok")
         }
-        // ★ v1.155 佣金提现申请（从余额扣减，记流水；最低 10 元）
+        // ★ v1.156 佣金提现申请（从余额扣减，记流水；最低 10 元）
         post("/api/me/withdraw") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -2156,7 +2061,7 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "提现申请", "提现 ¥$amount 到 $acct", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("amount" to amount, "balance" to database.getUserBalance(u.id)), "提现申请已提交，管理员审核后到账")
         }
-        // ★ v1.155 管理员生成充值卡密
+        // ★ v1.156 管理员生成充值卡密
         post("/api/admin/gen-cards") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
@@ -2169,14 +2074,14 @@ fun Application.moduleWeb(database: Database) {
             database.addOpLog(u.id, u.username, "生成卡密", "生成 ${codes.size} 张 ¥$amount 卡密（批次 $batch）", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("batch" to batch, "count" to codes.size, "codes" to codes), "已生成 ${codes.size} 张卡密")
         }
-        // ★ v1.155 卡密列表（管理员）
+        // ★ v1.156 卡密列表（管理员）
         get("/api/admin/cards") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
             val batch = call.request.queryParameters["batch"] ?: ""
             AdminApi.ok(call, database.getRechargeCards(batch), "ok")
         }
-        // ★ v1.155 兑换卡密（用户）
+        // ★ v1.156 兑换卡密（用户）
         post("/api/me/redeem") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -2218,12 +2123,12 @@ fun Application.moduleWeb(database: Database) {
                 "totalRecharge" to u.totalRecharge,
                 "inviteCode" to inviteCode,
                 "createdAt" to u.createdAt,
-                // ★ v1.155 个人中心套餐卡片字段
+                // ★ v1.156 个人中心套餐卡片字段
                 "plan" to u.plan,
                 "planExpireAt" to u.planExpireAt,
                 "quotaLimit" to (if (u.plan==="free" && u.quotaLimit<=0) (database.getPlanDef("free")?.get("quotaLimit") as? Number)?.toLong() ?: 100000L else u.quotaLimit),
                 "quotaUsed" to u.quotaUsed,
-                // ★ v1.155 返回套餐定义（名称/介绍/价格），免费版补齐默认额度供前端显示
+                // ★ v1.156 返回套餐定义（名称/介绍/价格），免费版补齐默认额度供前端显示
                 "planName" to (database.getPlanDef(u.plan)?.get("name") as? String ?: u.plan),
                 "planIntro" to (database.getPlanDef(u.plan)?.get("intro") as? String ?: ""),
                 "planPrice" to ((database.getPlanDef(u.plan)?.get("price") as? Number)?.toDouble() ?: 0.0)
@@ -2304,7 +2209,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.155"))
+                put("version", JsonPrimitive("1.156"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -2647,7 +2552,7 @@ fun Application.moduleWeb(database: Database) {
         // ===== 大脑记忆（按用户隔离） =====
         get("/api/memory") {
             val u = call.requireAuth(database) ?: return@get
-            // ★ v1.155 管理员看全部记忆（含 QQ/微信/群来源，备注来源用户）；普通用户看自己的
+            // ★ v1.156 管理员看全部记忆（含 QQ/微信/群来源，备注来源用户）；普通用户看自己的
             AdminApi.ok(call, if (u.role == "admin") database.getAllMemories(500) else database.getMemories(u.id), "ok")
         }
         post("/api/memory") {
@@ -2674,7 +2579,7 @@ fun Application.moduleWeb(database: Database) {
             database.clearMemories(user.id)
             AdminApi.ok(call, null, "记忆已清空")
         }
-        // ★ v1.155 批量删除记忆（管理员可删任意来源含QQ/微信/群；普通用户只能删自己的）
+        // ★ v1.156 批量删除记忆（管理员可删任意来源含QQ/微信/群；普通用户只能删自己的）
         post("/api/memory/batch-delete") {
             val user = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -2696,7 +2601,7 @@ fun Application.moduleWeb(database: Database) {
             }
             AdminApi.ok(call, mapOf("deleted" to deleted), "已删除 $deleted 条记忆")
         }
-        // ★ v1.155 管理员清空全部记忆（含QQ/微信/群来源）
+        // ★ v1.156 管理员清空全部记忆（含QQ/微信/群来源）
         post("/api/memory/clear-all") {
             val user = call.requireAuth(database) ?: return@post
             if (user.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
@@ -3133,8 +3038,8 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.155"))
-                    put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.155 前端据此隐藏普通用户的启停按钮
+                    put("version", JsonPrimitive("1.156"))
+                    put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.156 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
                     else if (viewerId > 0) database.getUserConfig(viewerId, "api_enabled", "true").toBoolean()
@@ -3227,7 +3132,7 @@ fun Application.moduleWeb(database: Database) {
             }, 200)
         }
 
-        // 网关启停控制：★ v1.155 仅管理员可操作全局开关；普通用户无权限（403），用户级 API 开关走独立接口
+        // 网关启停控制：★ v1.156 仅管理员可操作全局开关；普通用户无权限（403），用户级 API 开关走独立接口
         post("/api/gateway/toggle") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -3238,7 +3143,7 @@ fun Application.moduleWeb(database: Database) {
             val newState = GatewayProxy.toggleGateway(action, database)
             AdminApi.ok(call, mapOf("running" to newState), if (newState) "网关已启动" else "网关已停止")
         }
-        // ★ v1.155 用户级 API 开关（普通用户只控制自己密钥的转发，不碰全局网关）
+        // ★ v1.156 用户级 API 开关（普通用户只控制自己密钥的转发，不碰全局网关）
         post("/api/gateway/user-toggle") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()

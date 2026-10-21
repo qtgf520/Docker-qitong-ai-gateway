@@ -171,7 +171,7 @@ object HeartbeatEngine {
                 }
             }
 
-            // ★ v1.155 模型健康告警：可用模型占比低（<30%）时主动汇报（OpenClaw 式主动感知健康）
+            // ★ v1.156 模型健康告警：可用模型占比低（<30%）时主动汇报（OpenClaw 式主动感知健康）
             runCatching {
                 val health = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
                 val healthy = health.count { (it["isHealthy"] as? Boolean) == true }

@@ -26,15 +26,16 @@ loaders.models = function(){
      '<td style="font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+auTxt+'</td>'+
      '<td class="md-health" style="min-width:90px"><span class="badge gray">未测</span></td>'+
      '<td>'+(m.supportsVision?'<span title="支持图片理解">🖼</span> ':'')+(m.supportsAudio?'<span title="支持语音">🎤</span> ':'')+(m.supportsVideo?'<span title="支持视频">🎬</span> ':'')+enBtn+'</td>'+
-     '<td style="white-space:nowrap"><button class="btn-ghost btn-sm md-test-btn" onclick="testOneModel('+m.providerId+',\''+esc(m.modelId)+'\',\''+esc(key)+'\')">测速</button> '+
-     '<button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
+'<td style="white-space:nowrap"><button class="btn-ghost btn-sm md-test-btn" onclick="testOneModel('+m.providerId+',\''+esc(m.modelId)+'\',\''+esc(key)+'\')">测速</button> '+
+      '<button class="btn-ghost btn-sm" style="color:var(--cyan)" onclick="tryModel('+m.id+',\''+esc(m.modelId)+'\',\''+esc(m.displayName)+'\')">试用</button> '+
+      '<button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
    }).join('');
    box.innerHTML = [
     '<div class="action-bar">',
      '<button class="btn" onclick="editModel(0)">手动添加模型</button>',
      '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">自动全部测速</button>',
      '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
-     // ★ v1.155 多选批量操作（下拉式）
+     // ★ v1.156 多选批量操作（下拉式）
      '<span style="border-left:1px solid var(--border);padding-left:10px;display:inline-flex;gap:6px;align-items:center">' +
       '<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)"><input type="checkbox" id="mdChkAll" onclick="mdSelAll(this.checked)">全选</label>' +
       '<select id="mdBatchSel" class="input" style="width:130px;padding:5px 24px 5px 8px"><option value="">批量操作...</option><option value="enable">批量启用</option><option value="disable">批量停用</option><option value="public">批量设公用</option><option value="delete">批量删除</option></select>' +
@@ -72,6 +73,50 @@ loaders.models = function(){
    });
   });
  };
+// ★ v1.156 Playground 在线试用（new-api 思路落地）：选模型→输入→流式试玩
+var tryModelAbort = null;
+window.tryModel = function(id, modelId, displayName){
+  var mid = modelId;
+  var html =
+   '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">在线试用模型 <b style="color:var(--cyan)">'+esc(displayName||mid)+'</b>（'+esc(mid)+'）— 走网关真实转发</div>'+
+   '<div class="form-row"><label>输入内容（对模型说的话）</label><textarea class="input" id="tryInput" rows="3" placeholder="例如：用一句话介绍你自己">你好</textarea></div>'+
+   '<div id="tryResult" style="font-family:ui-monospace,monospace;font-size:12px;background:var(--inset);padding:10px;border-radius:6px;max-height:260px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;min-height:60px">等待试玩…</div>';
+  openModal('🧪 在线试用 · '+esc(displayName||mid), html, function(){
+   var inp = $('tryInput'); if(!inp){ toast('输入框不存在', false); return; }
+   var msg = inp.value.trim(); if(!msg){ toast('请输入内容', false); return; }
+   var out = $('tryResult'); if(out) out.innerHTML = '⏳ 正在请求模型…';
+   var body = JSON.stringify({ model: mid, messages: [{role:'user', content: msg}], stream: true });
+   // 用 fetch 流式读取 /api/chat/stream（已登录鉴权 + SSE 透传）
+   fetch('/api/chat/stream', { method:'POST', headers:{'Content-Type':'application/json'}, body: body })
+    .then(function(res){
+     if(!res.ok){ out.innerHTML = '❌ HTTP '+res.status; return; }
+     var reader = res.body.getReader();
+     var decoder = new TextDecoder();
+     var acc = '';
+     function pump(){
+      return reader.read().then(function(r){
+       if(r.done){ if(!acc.trim()) out.innerHTML += '\\n✅ 完成（无内容）'; return; }
+       acc += decoder.decode(r.value, {stream:true});
+       // 解析 SSE：data: {...}
+       var lines = acc.split('\\n');
+       acc = lines.pop() || '';
+       lines.forEach(function(ln){
+        if(ln.indexOf('data:') !== 0) return;
+        var payload = ln.slice(5).trim();
+        if(!payload || payload === '[DONE]') return;
+        try{
+         var j = JSON.parse(payload);
+         var delta = (j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content) || '';
+         if(delta){ out.innerHTML += delta; out.scrollTop = out.scrollHeight; }
+        }catch(e){}
+       });
+       return pump();
+      }).catch(function(e){ out.innerHTML += '\\n❌ 流读取失败：'+esc(e.message||e); });
+     }
+     return pump();
+    }).catch(function(e){ out.innerHTML = '❌ 请求失败：'+esc(e.message||e); });
+  });
+};
 // 单模型测速：点某行「测速」按钮直接测
 window.testOneModel = function(providerId, modelId, key){
   var row = document.getElementById('mdRow-' + key);
@@ -137,7 +182,7 @@ function pollMdProgress(){
   });
  },1200);
 };
-// ★ v1.155 模型多选批量操作（下拉式：选操作→执行）
+// ★ v1.156 模型多选批量操作（下拉式：选操作→执行）
 function mdSelAll(checked){
  var chks = document.querySelectorAll('.md-chk');
  for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }

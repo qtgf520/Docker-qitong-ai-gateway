@@ -84,6 +84,7 @@ class Database(private val dbPath: String) {
                     supports_vision INTEGER NOT NULL DEFAULT 0,
                     supports_audio INTEGER NOT NULL DEFAULT 0,
                     supports_video INTEGER NOT NULL DEFAULT 0,
+                    weight INTEGER NOT NULL DEFAULT 50,
                     FOREIGN KEY(provider_id) REFERENCES providers(id) ON DELETE CASCADE
                 )"""
             )
@@ -197,6 +198,7 @@ class Database(private val dbPath: String) {
             try { st.executeUpdate("ALTER TABLE models ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE models ADD COLUMN supports_audio INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE models ADD COLUMN supports_video INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
+            try { st.executeUpdate("ALTER TABLE models ADD COLUMN weight INTEGER NOT NULL DEFAULT 50") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE routing_rule ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE api_keys ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             try { st.executeUpdate("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'") } catch (_: Exception) {}
@@ -242,7 +244,7 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.155 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
+            // ★ v1.156 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS model_prices (
                     model_id TEXT PRIMARY KEY,
@@ -438,32 +440,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.119 元宝 Bot（腾讯元宝开放平台 WS 通道，对齐 weixin_bots）
-            st.executeUpdate(
-                """CREATE TABLE IF NOT EXISTS yuanbao_bots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL DEFAULT '',
-                    app_key TEXT NOT NULL DEFAULT '',
-                    app_secret TEXT NOT NULL DEFAULT '',
-                    enabled INTEGER NOT NULL DEFAULT 1,
-                    ai_model TEXT NOT NULL DEFAULT 'qtai-sj',
-                    system_prompt TEXT NOT NULL DEFAULT '',
-                    created_at INTEGER NOT NULL
-                )"""
-            )
-            // ★ v1.119 元宝运行日志（对齐 weixin_logs）
-            st.executeUpdate(
-                """CREATE TABLE IF NOT EXISTS yuanbao_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    bot_id INTEGER NOT NULL DEFAULT 0,
-                    from_account TEXT NOT NULL DEFAULT '',
-                    type TEXT NOT NULL DEFAULT '',
-                    content TEXT NOT NULL DEFAULT '',
-                    latency_ms INTEGER NOT NULL DEFAULT 0,
-                    created_at INTEGER NOT NULL
-                )"""
-            )
-            // ★ v69 微信用户绑定（对齐 qq_user_bindings）
+            // ★ v69 微信用户绑定
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS weixin_user_bindings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -799,7 +776,8 @@ class Database(private val dbPath: String) {
         },
         supportsVision = (r["supports_vision"] as? Number)?.toInt() == 1,
         supportsAudio = (r["supports_audio"] as? Number)?.toInt() == 1,
-        supportsVideo = (r["supports_video"] as? Number)?.toInt() == 1
+        supportsVideo = (r["supports_video"] as? Number)?.toInt() == 1,
+        weight = (r["weight"] as? Number)?.toInt() ?: 50
     )
 
     private fun rowToRoute(r: Map<String, Any?>) = RoutingRule(
@@ -1252,7 +1230,7 @@ class Database(private val dbPath: String) {
     fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = "", inviterId: Long = 0): Long {
         // 生成邀请码
         val code = "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0')
-        // ★ v1.155 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
+        // ★ v1.156 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
         //   避免新用户 quota_limit=0 显示「不限额度」而实际免费套餐是 10 万（对齐产品预期）
         val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         stmt(
@@ -1269,7 +1247,7 @@ fun updateUserLogin(id: Long) {
         stmt("UPDATE users SET password_hash=? WHERE id=?", newHash, id)
     }
 
-    // ★ v1.155 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
+    // ★ v1.156 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
     fun fixFreeUserQuotas(): Int {
         val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         val rows = query("SELECT id FROM users WHERE plan='free' AND quota_limit<=0")
@@ -1536,7 +1514,7 @@ fun updateUserLogin(id: Long) {
             )
         }
 
-    /** ★ v1.155 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
+    /** ★ v1.156 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
     fun getAllMemories(limit: Int = 500): List<Map<String, Any?>> =
         query("SELECT * FROM brain_memory ORDER BY importance DESC, timestamp DESC LIMIT $limit").map { it ->
             val tags = (it["tags"] as? String ?: "")
@@ -1621,21 +1599,21 @@ fun updateUserLogin(id: Long) {
         stmt("DELETE FROM brain_memory WHERE user_id=?", userId)
     }
 
-    /** ★ v1.155 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
+    /** ★ v1.156 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
     fun deleteMemoryAny(id: Long): Boolean {
         val exists = queryOne("SELECT id FROM brain_memory WHERE id=?", id) != null
         if (exists) stmt("DELETE FROM brain_memory WHERE id=?", id)
         return exists
     }
 
-    /** ★ v1.155 管理员清空全部记忆（含账号/QQ/微信/群来源） */
+    /** ★ v1.156 管理员清空全部记忆（含账号/QQ/微信/群来源） */
     fun clearAllMemories(): Int {
         val n = queryOne("SELECT COUNT(*) FROM brain_memory")?.toInt() ?: 0
         stmt("DELETE FROM brain_memory")
         return n
     }
 
-    // ============ ★ v1.155 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
+    // ============ ★ v1.156 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
 
     /** 全部自定义价格（model_id → input/output/updatedAt） */
     fun getAllModelPrices(): List<Map<String, Any?>> =
@@ -1755,9 +1733,11 @@ fun updateUserLogin(id: Long) {
         runCatching { stmt("ALTER TABLE models ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0") }
         runCatching { stmt("ALTER TABLE models ADD COLUMN supports_audio INTEGER NOT NULL DEFAULT 0") }
         runCatching { stmt("ALTER TABLE models ADD COLUMN supports_video INTEGER NOT NULL DEFAULT 0") }
+        runCatching { stmt("ALTER TABLE models ADD COLUMN weight INTEGER NOT NULL DEFAULT 50") }
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.156", "机器人提速 + 元宝Bot下线 + 模型权重 + 在线试用", "QQ/微信回复提速（单轮超时90→60s、网关流式空闲300→120s全链路收敛，超时快速失败触发故障转移）。元宝Bot彻底下线（路由/菜单/表/前端全链路移除）。沙盒System Prompt新增OpenClaw式自动化编排铁律（失败自动重试2次/多步任务不中断/异步长任务轮询/批量并行/主动补全）。模型权重负载均衡（new-api渠道优先级思路落地：weight字段默认50，故障转移同延迟权重高优先）。Playground在线试用（模型页每行「试用」按钮，弹窗输入流式试玩）。"),
             Triple("v1.155", "智能体全接口对齐：网关接口全部开放给沙盒 Agent", "沙盒智能体（QQ/微信/qtai-sj）新增 40+ 网关函数，实现后台全部接口远程可控：价格表查询/自定义维护、用量统计、网关总览、系统监控、数据备份/恢复、套餐管理、卡密生成/兑换、SSH 远程执行、工单列表/创建/详情、操作/登录/QQ/微信日志、记忆库查看/添加/清空、QQ用户列表/积分调整、网关全局启停、我的API开关、活跃模型查看/切换、强制故障池管理、自动测速开关、通知配置查看/测试发送、路由规则增删查、我的会话列表。按用户/管理员双层权限隔离，普通用户只读+自助，管理员全权。"),
             Triple("v1.154", "用户管理菜单修复 + 价格表可维护 + 个人中心额度显示", "修复用户管理菜单消失（历史版本误删入口，视图/loader一直在，已补回）。模型价格表可手动维护：新增 model_prices 表+接口（GET/POST/DELETE/clear），管理员可在价格表页添加/编辑/删除/清空自定义价格，计费优先级：自定义表→模型单价→内置表。个人中心账户卡补额度使用+到期时间显示。扫bug：价格表只读→可维护全链路，计费取价逻辑对齐自定义表（余额检查+扣费两处）"),
             Triple("v1.153", "心跳指定目标推送 + 记忆并入总记忆多选 + 页面多选下拉", "心跳推送只发指定目标：不再全群/全联系人广播（QQ发配置的群 heartbeat_target_qq，微信发配置的openid heartbeat_target_wx，没配兜底发第一个群/最近联系人）。记忆并入总记忆+备注来源：管理员记忆页可见全部来源（账号/QQ用户/微信用户/QQ群），每条备注来源；普通用户只看自己的。记忆页多选：复选框全选+批量删除+按来源筛选下拉。模型页多选改下拉：批量操作从按钮改下拉（批量启用/停用/设公用/删除）+执行。服务商页多选：全选+下拉批量删除/启用/停用。修复记忆批量删除接口类型错误、心跳推送目标逻辑"),
@@ -1776,7 +1756,6 @@ val logs = listOf(
             Triple("v1.122", "聊天 Markdown 渲染全面增强 + 消息一键复制", "标题/表格/无序有序列表/任务清单(- [x])/引用块/行内代码/斜体/链接全部原生渲染；每条助手回复右上角加📋一键复制按钮（含代码/表格原文）；表格引用任务配套样式（主色边框、hover高亮、响应式滚动）"),
             Triple("v1.121", "聊天理解链结构化流水渲染（思考→工具→结果→答案）", "助手回复里的思考过程/工具调用/工具结果/最终答案自动拆成折叠卡片按顺序铺开（💭思考卡/🔧工具调用卡/📦结果卡，点击展开收起）；多轮工具自动成组「思考与工具(N)」；打开旧会话自动对历史消息结构化；纯自研内容解析器（thinking/think/tool/tool_result/search/details），无外部依赖"),
             Triple("v1.120", "聊天界面全新改版（全屏贴合）", "左上角☰三横线展开/关闭会话列表抽屉；聊天区撑满整个可视区不再中间留白；消息气泡圆角优化+用户气泡主色半透明+输入框胶囊样式；移动端会话抽屉84vw紧凑撑满避开底部导航"),
-            Triple("v1.119", "元宝Bot接入（腾讯元宝开放平台）", "后台「机器人→元宝Bot」填 AppKey/AppSecret 接入腾讯元宝，WS 直连收发消息（私聊+群聊）；协议自研（sign-token HMAC 认证+AuthBind+Protobuf 编解码+心跳）；收到消息自动调网关 qtai-sj 完整沙盒 Agent 循环，支持查余额/网关状态/体检/绑定账号等全功能；动态预览/机器人列表/运行日志+掉线看门狗"),
             Triple("v1.118", "技能/工具用户自管理", "QQ/微信发「添加技能 名称|触发词|回复内容」创建自己的技能，「我的技能/删除技能 编号/停用技能 编号」管理；qtai-sj 新增 skill_my/add/del/toggle（普通用户可加自己的技能，管理员可管公共）；三端自动生效；技能归属隔离"),
             Triple("v1.117", "机器人全接口远程化", "网关全部功能远程可查可改：新增 provider_list/add/update/delete/enable/disable、model_set_name/price/public/authorized/delete、api_key_list/create/delete、user_list/set_balance/set_role/delete、config_get/set、announcement_list/add/delete、ticket_reply/close 等智能体管理函数；QQ/微信/qtai-sj 三通道共用；权限模型：管理员全量读写，普通用户只读自己的，公告人人可读"),
             Triple("v1.116", "页面重划+机器人流畅性三连修+Git版本查询", "个人中心/网关设置重划（人格/改密/大脑绑定/语言/限流移个人中心）；机器人停止即时生效（发停止立即中断模型调用）；不间断追问（执行中发新消息立即接入上下文继续干）；Agent轮数8→20单轮等待90秒（多思考不停息）；长任务每30秒推进度；qtai-sj新增git_version/git_log查版本与提交历史"),
@@ -2783,86 +2762,6 @@ val logs = listOf(
     }
 
     fun deleteWeixinBot(id: Long) { stmt("DELETE FROM weixin_bots WHERE id=?", id) }
-
-    // ============ ★ v1.119 元宝 Bot CRUD（对齐 weixin_bots） ============
-
-    fun getYuanbaoBots(): List<com.qitong.gateway.yuanbao.YuanbaoBot> =
-        query("SELECT * FROM yuanbao_bots ORDER BY id").map { row ->
-            com.qitong.gateway.yuanbao.YuanbaoBot(
-                id = (row["id"] as Number).toLong(),
-                name = row["name"] as? String ?: "",
-                appKey = row["app_key"] as? String ?: "",
-                appSecret = row["app_secret"] as? String ?: "",
-                enabled = (row["enabled"] as? Number)?.toInt() == 1,
-                aiModel = row["ai_model"] as? String ?: "qtai-sj",
-                systemPrompt = row["system_prompt"] as? String ?: "",
-                createdAt = (row["created_at"] as? Number)?.toLong() ?: 0
-            )
-        }
-
-    fun getYuanbaoBotById(id: Long): com.qitong.gateway.yuanbao.YuanbaoBot? =
-        query("SELECT * FROM yuanbao_bots WHERE id=?", id).firstOrNull()?.let { row ->
-            com.qitong.gateway.yuanbao.YuanbaoBot(
-                id = (row["id"] as Number).toLong(),
-                name = row["name"] as? String ?: "",
-                appKey = row["app_key"] as? String ?: "",
-                appSecret = row["app_secret"] as? String ?: "",
-                enabled = (row["enabled"] as? Number)?.toInt() == 1,
-                aiModel = row["ai_model"] as? String ?: "qtai-sj",
-                systemPrompt = row["system_prompt"] as? String ?: "",
-                createdAt = (row["created_at"] as? Number)?.toLong() ?: 0
-            )
-        }
-
-    fun saveYuanbaoBot(b: com.qitong.gateway.yuanbao.YuanbaoBot) {
-        if (b.id > 0) {
-            stmt("UPDATE yuanbao_bots SET name=?, app_key=?, app_secret=?, enabled=?, ai_model=?, system_prompt=? WHERE id=?",
-                b.name, b.appKey, b.appSecret, if (b.enabled) 1 else 0, b.aiModel, b.systemPrompt, b.id)
-        } else {
-            stmt("INSERT INTO yuanbao_bots (name,app_key,app_secret,enabled,ai_model,system_prompt,created_at) VALUES (?,?,?,?,?,?,?)",
-                b.name, b.appKey, b.appSecret, if (b.enabled) 1 else 0, b.aiModel, b.systemPrompt, System.currentTimeMillis())
-        }
-    }
-
-    fun deleteYuanbaoBot(id: Long) { stmt("DELETE FROM yuanbao_bots WHERE id=?", id) }
-
-    /** 元宝运行日志 */
-    fun addYuanbaoLog(botId: Long, fromAccount: String, type: String, content: String, latencyMs: Long = 0) {
-        stmt("INSERT INTO yuanbao_logs (bot_id,from_account,type,content,latency_ms,created_at) VALUES (?,?,?,?,?,?)",
-            botId, fromAccount, type, content.take(500), latencyMs, System.currentTimeMillis())
-        runCatching {
-            val cnt = (queryOne("SELECT COUNT(*) FROM yuanbao_logs") as? Number)?.toLong() ?: 0
-            if (cnt > 100) stmt("DELETE FROM yuanbao_logs WHERE id NOT IN (SELECT id FROM yuanbao_logs ORDER BY id DESC LIMIT 100)")
-        }
-    }
-
-    fun getYuanbaoLogs(limit: Int = 200): List<Map<String, Any?>> =
-        query("SELECT * FROM yuanbao_logs ORDER BY id DESC LIMIT $limit").map { row ->
-            mapOf(
-                "id" to ((row["id"] as Number).toLong()),
-                "botId" to ((row["bot_id"] as? Number)?.toLong() ?: 0),
-                "fromAccount" to (row["from_account"] as? String ?: ""),
-                "type" to (row["type"] as? String ?: ""),
-                "content" to (row["content"] as? String ?: ""),
-                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0)
-            )
-        }
-
-    fun clearYuanbaoLogs() { stmt("DELETE FROM yuanbao_logs") }
-
-    // ============ ★ v1.119 元宝大脑记忆（复用 brain_memory 表，tags=yb:{key}） ============
-
-    fun getYuanbaoBrainMemories(key: String, limit: Int = 6): List<String> {
-        val rows = query("SELECT content FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit", "yb:$key")
-        return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
-    }
-
-    fun saveYuanbaoBrainMemory(key: String, content: String, type: String = "short") {
-        stmt("INSERT INTO brain_memory (user_id,title,content,type,emotion,importance,timestamp,access_count,source,tags,model_id) VALUES (0,?,?,?,?,?,?,0,'yuanbao',?, '')",
-            key, content.take(500), type, "neutral", 5, System.currentTimeMillis(), "yb:$key")
-    }
-
-    /** 绑定微信 openid 到网关账号 users.id */
     fun setWeixinUserBound(openid: String, userId: Long) {
         val exists = queryOne("SELECT COUNT(*) FROM weixin_user_bindings WHERE wx_openid=?", openid) ?: 0
         if (exists == 0L) stmt("INSERT INTO weixin_user_bindings (wx_openid,bound_user_id,created_at) VALUES (?,?,?)", openid, userId, System.currentTimeMillis())

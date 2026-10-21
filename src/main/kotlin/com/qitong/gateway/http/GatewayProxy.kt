@@ -179,7 +179,7 @@ class GatewayProxy(private val database: Database) {
         return ""
     }
 
-    /** ★ v1.155 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移） */
+    /** ★ v1.156 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移） */
     fun modalityRouteModel(modality: String, modelId: String): String? {
         if (modality.isBlank()) return null
         val key = "modality_route_" + when (modality) {
@@ -205,7 +205,7 @@ class GatewayProxy(private val database: Database) {
         userId: Long = 0L,
         modality: String = ""   // ★ v1.123 多模态：vision/audio/video，空=纯文本
     ): List<AiModel> {
-        // ★ v1.155 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
+        // ★ v1.156 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
         val routed = modalityRouteModel(modality, modelId)
         if (routed != null && routed.isNotBlank()) {
             val matched = models.filter { it.isEnabled && it.modelId == routed }
@@ -252,6 +252,8 @@ class GatewayProxy(private val database: Database) {
         }
         val others = available.filter { it.modelId != (primary?.modelId) || it.providerId != (primary?.providerId) }
         var sortedOthers = GatewayScheduler.getSortedModels(others)
+        // ★ v1.156 模型权重负载均衡（new-api 渠道优先级思路落地）：同权重内按健康延迟，权重高者优先——管理员可调 weight 决定故障转移/默认选择偏好
+        sortedOthers = sortedOthers.sortedWith(compareByDescending<AiModel> { it.weight }.thenBy { GatewayScheduler.healthCache[GatewayScheduler.routeKey(it.providerId, it.modelId)]?.latencyMs ?: Long.MAX_VALUE })
         // ★ v1.123 多模态自动切换：图片/语音/视频请求，支持对应模态的模型优先（故障转移不会跳去纯文本模型）
         if (modality.isNotBlank()) {
             val (mm, rest) = sortedOthers.partition { m ->
@@ -448,7 +450,7 @@ class GatewayProxy(private val database: Database) {
         if (ownerUser != null && ownerUser.role != "admin") {
             // 查找请求模型的真实价格（按 modelId 匹配任意 provider）★v1.109 未设自定义价也用价格表默认价，均视为付费
             val requestedModel = models.firstOrNull { it.modelId == modelId }
-            // ★ v1.155 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表
+            // ★ v1.156 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表
             val dbPrice2 = runCatching { database.getModelPrice(modelId) }
                 .getOrNull()?.get("inputPrice") as? Double
             val requestedPrice = if (dbPrice2 != null && dbPrice2 > 0) dbPrice2
@@ -708,8 +710,8 @@ class GatewayProxy(private val database: Database) {
                             val buf = ByteArray(8192)
                             var n: Int
                             val sb = StringBuilder()   // ★ v1.108 流式 token 统计：捕获 SSE 文本提取 usage
-                            // ★ v1.109 流式空闲超时：上游 5 分钟无数据视为挂起，断开触发故障转移（防止调佣不回复）
-                            source.timeout().timeout(300, TimeUnit.SECONDS)
+                            // ★ v1.156 流式空闲超时：上游 120s 无数据视为挂起，断开触发故障转移（原来 300s 太久，QQ/微信慢根因之一）
+                            source.timeout().timeout(120, TimeUnit.SECONDS)
                             while (true) {
                                 n = runCatching { source.read(buf) }.getOrNull() ?: -1
                                 if (n < 0) break
@@ -820,7 +822,7 @@ class GatewayProxy(private val database: Database) {
             // token 缺省时按字节估算（兼容无 usage 字段的上游）
             val estTokens = if (totalTokens > 0) totalTokens.toLong()
                 else ((downloadBytes + uploadBytes) / 4).coerceAtLeast(1)
-            // ★ v1.109 成本计算：★v1.155 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表（不再免费 → 费用不再 0.000）
+            // ★ v1.109 成本计算：★v1.156 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表（不再免费 → 费用不再 0.000）
             val dbPrice = runCatching { database.getModelPrice(model.modelId) }
                 .getOrNull()?.get("inputPrice") as? Double
             val price = if (dbPrice != null && dbPrice > 0) dbPrice

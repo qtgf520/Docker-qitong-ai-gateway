@@ -48,7 +48,8 @@ data class AiModel(
     val authorizedUsers: List<Long> = emptyList(),  // ★ v1.105 授权用户ID列表（定制模型只对这些人+属主+公用可见）
     val supportsVision: Boolean = false,   // ★ v1.123 多模态：图片理解
     val supportsAudio: Boolean = false,    // ★ v1.123 多模态：语音/音频
-    val supportsVideo: Boolean = false     // ★ v1.123 多模态：视频
+    val supportsVideo: Boolean = false,    // ★ v1.123 多模态：视频
+    val weight: Int = 50                      // ★ v1.156 模型权重（new-api 渠道优先级思路）：故障转移同延迟时权重高优先，50 默认
 )
 
 /** 会话（对齐 conversations 表） */
@@ -191,7 +192,7 @@ data class GatewayConfig(
 data class GatewayStatus(
     val status: String = "ok",
     val service: String = "qitong-ai-gateway-docker",
-    val version: String = "1.155",
+    val version: String = "1.156",
     val running: Boolean = true,
     val port: Int,
     val failover: Boolean,

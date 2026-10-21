@@ -3,7 +3,7 @@ package com.qitong.gateway.sandbox
 import com.qitong.gateway.db.Database
 
 /**
- * v1.155 沙盒补齐 Ext2：工单 / 日志 / 记忆 / QQ用户 / 网关控制 / 通知 / 规则 / 会话
+ * v1.156 沙盒补齐 Ext2：工单 / 日志 / 记忆 / QQ用户 / 网关控制 / 通知 / 规则 / 会话
  * 返回值 null = 本文件不处理该函数（交给未知提示）
  */
 object V155Ext2 {
