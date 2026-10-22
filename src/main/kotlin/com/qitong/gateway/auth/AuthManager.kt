@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 后台认证 —— 注册/登录/会话Token
  * 密码 BCrypt 哈希，会话Token持久化到数据库（7天免登录）
- * v1.158 新增两步验证（2FA）：开启后登录需额外 6 位 TOTP 动态码
+ * v1.159 新增两步验证（2FA）：开启后登录需额外 6 位 TOTP 动态码
  */
 object AuthManager {
 
@@ -57,7 +57,7 @@ object AuthManager {
     fun loginWithTotp(database: Database, username: String, password: String, totpCode: String? = null): LoginResult {
         val user = database.getUserByUsername(username.trim()) ?: return LoginResult(null, false, "用户名或密码错误")
         if (!BCrypt.checkpw(password, user.passwordHash)) return LoginResult(null, false, "用户名或密码错误")
-        // ★ v1.158 两步验证：已绑定 TOTP → 校验动态码
+        // ★ v1.159 两步验证：已绑定 TOTP → 校验动态码
         if (user.totpSecret.isNotBlank()) {
             if (totpCode.isNullOrBlank()) return LoginResult(null, true, "请输入两步验证码")
             if (!Totp.verify(user.totpSecret, totpCode)) return LoginResult(null, false, "验证码错误")

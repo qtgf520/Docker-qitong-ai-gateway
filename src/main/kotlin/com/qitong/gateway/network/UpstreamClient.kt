@@ -32,7 +32,7 @@ object UpstreamClient {
     private fun createClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)   // ★ v1.158 流式读超时 300→120s：QQ/微信回复慢根因（上游挂起等 5 分钟才切），120s 兜底足够覆盖长思考，超时快速触发故障转移
+            .readTimeout(120, TimeUnit.SECONDS)   // ★ v1.159 流式读超时 300→120s：QQ/微信回复慢根因（上游挂起等 5 分钟才切），120s 兜底足够覆盖长思考，超时快速触发故障转移
             .writeTimeout(120, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .callTimeout(0, TimeUnit.SECONDS)
@@ -101,7 +101,7 @@ object UpstreamClient {
     private fun createDirectClient(): OkHttpClient {
         return OkHttpClient.Builder()
             .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)   // ★ v1.158 流式读超时 300→120s：与代理通道一致，快速失败触发故障转移
+            .readTimeout(120, TimeUnit.SECONDS)   // ★ v1.159 流式读超时 300→120s：与代理通道一致，快速失败触发故障转移
             .writeTimeout(120, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .callTimeout(0, TimeUnit.SECONDS)

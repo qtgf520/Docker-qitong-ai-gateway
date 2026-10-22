@@ -371,6 +371,11 @@ object GatewayScheduler {
             }
             delay(500) // 串行间隔，防限流
         }
+        // ★ v1.159 系统动态持久化：测速完成（每次完整测速跑完记录一次）
+        val healthyCount = results.count { it.isHealthy }
+        runCatching {
+            database.addGatewayLog("speedtest", "测速完成：${healthyCount}/${results.size} 正常")
+        }
         return results
     }
 

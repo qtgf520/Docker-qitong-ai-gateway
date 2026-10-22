@@ -102,19 +102,29 @@ class GatewayProxy(private val database: Database) {
             id.contains("gemini-2") || id.contains("gemini-3") || id.contains("qwen-max") || id.contains("qwen2.5")
     }
 
-    /** 解析请求模型：qtai-sj → 当前用户活跃模型 / 用户强制池首位 / 全局强制池首位 / 健康缓存最优 / ★v97 智能路由 */
+    /** 解析请求模型：qtai-sj → 大脑绑定(专用配置) / 用户活跃模型 / 用户强制池首位 / 全局活跃 / 全局池首位 / 健康缓存最优 / ★v97 智能路由
+     *  ★ v1.159 对齐原APP：qtai-sj 专用配置=大脑绑定（qtai_brain）最高优先，其次是用户点灯/强制池，再全局配置，最后智能路由兜底 */
     fun resolveModelId(requested: String, models: List<AiModel>, userId: Long = 0L, userMessage: String = ""): String {
         if (requested != "qtai-sj") return requested
-        // 用户级活跃模型（点灯/强制选择后写入，key属主独立）——用户明确指定最高优先
+        // ① 用户级大脑绑定（qtai-sj 专用配置，按用户隔离）——用户明确指定 qtai-sj 用哪个模型做大脑，最高优先
+        if (userId > 0) {
+            val brain = database.getUserConfig(userId, "qtai_brain", "")
+            if (brain.isNotBlank()) return brain.substringAfter("::", brain)
+        }
+        // ② 用户级活跃模型（点灯/强制选择后写入，key属主独立）——用户明确指定最高优先
         if (userId > 0) {
             val userActive = database.getUserConfig(userId, "active_model_key", "")
             if (userActive.isNotBlank()) return userActive.substringAfter("::", userActive)
-            // 用户池首位
+            // ③ 用户池首位
             val userPool = database.getUserConfig(userId, "forced_pool_keys", "")
             if (userPool.isNotBlank()) return userPool.split(",").first().trim().substringAfter("::", userPool.split(",").first().trim())
         }
+        // ④ 全局活跃模型
         val active = database.getConfig("active_model_key", "")
         if (active.isNotBlank()) return active.substringAfter("::", active)
+        // ⑤ 全局强制池首位
+        val globalPool = database.getConfig("forced_pool_keys", "")
+        if (globalPool.isNotBlank()) return globalPool.split(",").first().trim().substringAfter("::", globalPool.split(",").first().trim())
 
         // ★ v97 智能路由（RouteLLM 思路落地）：无用户指定时按消息复杂度自动选模型
         val complexity = messageComplexity(userMessage)
@@ -179,7 +189,7 @@ class GatewayProxy(private val database: Database) {
         return ""
     }
 
-    /** ★ v1.158 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移） */
+    /** ★ v1.159 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移） */
     fun modalityRouteModel(modality: String, modelId: String): String? {
         if (modality.isBlank()) return null
         val key = "modality_route_" + when (modality) {
@@ -205,22 +215,30 @@ class GatewayProxy(private val database: Database) {
         userId: Long = 0L,
         modality: String = ""   // ★ v1.123 多模态：vision/audio/video，空=纯文本
     ): List<AiModel> {
-        // ★ v1.158 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
+        // ★ v1.159 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
         val routed = modalityRouteModel(modality, modelId)
         if (routed != null && routed.isNotBlank()) {
             val matched = models.filter { it.isEnabled && it.modelId == routed }
             if (matched.isNotEmpty()) return matched
         }
-        // 强制故障池：用户自己的池优先；用户无池时**不回退全局池**（qtai-sj 按用户独立，不跑全部）
-        val forcedPool = if (userId > 0) {
+        // ★ v1.159 强制故障池：大脑绑定/用户池/全局池三级回退（对齐原APP：池空→当前模型+排行榜兜底）
+        val brainKey = if (userId > 0) database.getUserConfig(userId, "qtai_brain", "") else ""
+        val forcedPoolRaw = if (userId > 0) {
             database.getUserConfig(userId, "forced_pool_keys", "")
         } else {
             database.getConfig("forced_pool_keys", "")
         }
+        val forcedPool = forcedPoolRaw.split(",").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+        // 用户有大脑绑定但池空 → 把大脑绑定作为池首项（专用配置=最高优先，对齐APP qtai-sj 专用配置语义）
+        if (userId > 0 && brainKey.isNotBlank() && forcedPool.isEmpty()) {
+            forcedPool.add(brainKey)
+        }
+        // 用户无池且全局有池 → 回退全局池（qtai-sj 按用户独立，但用户没配置时用全局管理员配置）
+        if (userId > 0 && forcedPool.isEmpty()) {
+            val globalPool = database.getConfig("forced_pool_keys", "").split(",").map { it.trim() }.filter { it.isNotBlank() }
+            if (globalPool.isNotEmpty()) forcedPool.addAll(globalPool)
+        }
         val forcedList = forcedPool
-            .split(",")
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
 
         var available = models.filter { it.isEnabled }
         // ★ 余额不足的用户：只保留免费模型（price=0），付费模型全过滤（避免免费模型故障转移跳到付费模型）
@@ -252,7 +270,7 @@ class GatewayProxy(private val database: Database) {
         }
         val others = available.filter { it.modelId != (primary?.modelId) || it.providerId != (primary?.providerId) }
         var sortedOthers = GatewayScheduler.getSortedModels(others)
-        // ★ v1.158 模型权重负载均衡（new-api 渠道优先级思路落地）：同权重内按健康延迟，权重高者优先——管理员可调 weight 决定故障转移/默认选择偏好
+        // ★ v1.159 模型权重负载均衡（new-api 渠道优先级思路落地）：同权重内按健康延迟，权重高者优先——管理员可调 weight 决定故障转移/默认选择偏好
         sortedOthers = sortedOthers.sortedWith(compareByDescending<AiModel> { it.weight }.thenBy { GatewayScheduler.healthCache[GatewayScheduler.routeKey(it.providerId, it.modelId)]?.latencyMs ?: Long.MAX_VALUE })
         // ★ v1.123 多模态自动切换：图片/语音/视频请求，支持对应模态的模型优先（故障转移不会跳去纯文本模型）
         if (modality.isNotBlank()) {
@@ -298,7 +316,7 @@ class GatewayProxy(private val database: Database) {
         }
     }
 
-    /** ★ v1.158 强制故障池内移动（对齐原APP reorderForcedPool：序号=切换优先，越靠前越优先）
+    /** ★ v1.159 强制故障池内移动（对齐原APP reorderForcedPool：序号=切换优先，越靠前越优先）
      *  userId>0 操作用户自己的池；userId<=0 操作全局池。dir=up(往前移一位)/down(往后移一位) */
     fun moveForcedModel(userId: Long, modelKey: String, dir: String): List<String> {
         val key = "forced_pool_keys"
@@ -315,7 +333,7 @@ class GatewayProxy(private val database: Database) {
         return list
     }
 
-    // ★ v1.158 表达式计费：命中规则（模型匹配/角色匹配/时段匹配）→ 覆盖价或倍率
+    // ★ v1.159 表达式计费：命中规则（模型匹配/角色匹配/时段匹配）→ 覆盖价或倍率
     fun applyPricingRule(basePrice: Double, modelId: String, role: String): Double {
         try {
             val rules = database.getPricingRules().filter { it["enabled"] == true }
@@ -461,7 +479,7 @@ class GatewayProxy(private val database: Database) {
             if (rule.targetModelKey.isNotBlank()) targetModelOverride = rule.targetModelKey
         }
 
-        // ★ v1.158 模型映射：外部请求名命中映射 → 按映射 targets 有序列表路由（按序故障转移）
+        // ★ v1.159 模型映射：外部请求名命中映射 → 按映射 targets 有序列表路由（按序故障转移）
         var mappingTargets: List<String>? = null
         if (targetModelOverride.isNullOrBlank()) {
             runCatching {
@@ -472,7 +490,7 @@ class GatewayProxy(private val database: Database) {
                 }
             }
         }
-        // ★ v1.158 渠道分组：请求模型名命中组名 → 只在该组内选模型（qtai-sj 也支持组名）
+        // ★ v1.159 渠道分组：请求模型名命中组名 → 只在该组内选模型（qtai-sj 也支持组名）
         var groupFilter: String? = null
         if (mappingTargets == null && targetModelOverride.isNullOrBlank()) {
             runCatching {
@@ -532,12 +550,12 @@ class GatewayProxy(private val database: Database) {
         if (ownerUser != null && ownerUser.role != "admin") {
             // 查找请求模型的真实价格（按 modelId 匹配任意 provider）★v1.109 未设自定义价也用价格表默认价，均视为付费
             val requestedModel = models.firstOrNull { it.modelId == modelId }
-            // ★ v1.158 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表
+            // ★ v1.159 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表
             val dbPrice2 = runCatching { database.getModelPrice(modelId) }
                 .getOrNull()?.get("inputPrice") as? Double
             val requestedPrice = if (dbPrice2 != null && dbPrice2 > 0) dbPrice2
                 else requestedModel?.let { if (it.price > 0) it.price else PricingTable.priceOf(it.modelId).takeIf { p -> p > 0 } ?: PricingTable.DEFAULT_PRICE } ?: 0.0
-            // ★ v1.158 表达式计费：命中规则覆盖价/倍率
+            // ★ v1.159 表达式计费：命中规则覆盖价/倍率
             val effRequestedPrice = applyPricingRule(requestedPrice, modelId, ownerUser.role)
             val requestedPaid = effRequestedPrice > 0
             if (requestedPaid && (ownerUser.quotaLimit <= 0 || ownerUser.quotaUsed >= ownerUser.quotaLimit)) {
@@ -621,6 +639,13 @@ class GatewayProxy(private val database: Database) {
                     // 记录实际命中的模型，首页灯跟随它
                     lastServedKey = "${targetModel.providerId}::${targetModel.modelId}"
                     lastServedAt = System.currentTimeMillis()
+                    // ★ v1.159 系统动态持久化：记录模型切换（去重：与上一条相同不重复记）
+                    val newKey = lastServedKey
+                    val lastLog = database.getGatewayLogs(1).firstOrNull()
+                    val lastContent = lastLog?.get("content") as? String ?: ""
+                    if (!lastContent.contains(newKey.substringAfter("::", ""))) {
+                        database.addGatewayLog("switch", "自动切换 → ${newKey.substringAfter("::", "")} (P${targetModel.providerId})")
+                    }
                     return
                 }
                 // 非流式失败时记录错误并切换到下一模型（间隔缩短到 150ms，切换更流畅）
@@ -794,7 +819,7 @@ class GatewayProxy(private val database: Database) {
                             val buf = ByteArray(8192)
                             var n: Int
                             val sb = StringBuilder()   // ★ v1.108 流式 token 统计：捕获 SSE 文本提取 usage
-                            // ★ v1.158 流式空闲超时：上游 120s 无数据视为挂起，断开触发故障转移（原来 300s 太久，QQ/微信慢根因之一）
+                            // ★ v1.159 流式空闲超时：上游 120s 无数据视为挂起，断开触发故障转移（原来 300s 太久，QQ/微信慢根因之一）
                             source.timeout().timeout(120, TimeUnit.SECONDS)
                             while (true) {
                                 n = runCatching { source.read(buf) }.getOrNull() ?: -1
@@ -906,13 +931,13 @@ class GatewayProxy(private val database: Database) {
             // token 缺省时按字节估算（兼容无 usage 字段的上游）
             val estTokens = if (totalTokens > 0) totalTokens.toLong()
                 else ((downloadBytes + uploadBytes) / 4).coerceAtLeast(1)
-            // ★ v1.109 成本计算：★v1.158 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表（不再免费 → 费用不再 0.000）
+            // ★ v1.109 成本计算：★v1.159 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表（不再免费 → 费用不再 0.000）
             val dbPrice = runCatching { database.getModelPrice(model.modelId) }
                 .getOrNull()?.get("inputPrice") as? Double
             val price = if (dbPrice != null && dbPrice > 0) dbPrice
                 else if (model.price > 0) model.price
                 else PricingTable.priceOf(model.modelId).takeIf { it > 0 } ?: PricingTable.DEFAULT_PRICE
-            // ★ v1.158 表达式计费：命中规则覆盖价/倍率
+            // ★ v1.159 表达式计费：命中规则覆盖价/倍率
             val effPrice = applyPricingRule(price, model.modelId, ownerUser?.role ?: "user")
             val cost = estTokens / 1_000_000.0 * effPrice * PricingTable.OUTPUT_MULTIPLIER
             val userId = ownerUser?.id ?: 0

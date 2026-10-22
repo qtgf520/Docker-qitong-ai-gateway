@@ -245,7 +245,7 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.158 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
+            // ★ v1.159 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS model_prices (
                     model_id TEXT PRIMARY KEY,
@@ -254,7 +254,7 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.158 模型映射（外部请求名 -> 内部模型Key有序列表，按序故障转移）
+            // ★ v1.159 模型映射（外部请求名 -> 内部模型Key有序列表，按序故障转移）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS model_mappings (
                     alias TEXT PRIMARY KEY,
@@ -263,7 +263,7 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.158 表达式计费规则（条件命中 → 覆盖价或倍率；时段格式 HH:mm-HH:mm）
+            // ★ v1.159 表达式计费规则（条件命中 → 覆盖价或倍率；时段格式 HH:mm-HH:mm）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS pricing_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,7 +278,7 @@ class Database(private val dbPath: String) {
                 )"""
             )
             // ★ v1.146 内置五档套餐种子（仅首次初始化，INSERT OR IGNORE 不覆盖管理员修改）
-            // ★ v1.158 渠道分组（用户选组不选具体模型；组名如 fast/stable/cheap）
+            // ★ v1.159 渠道分组（用户选组不选具体模型；组名如 fast/stable/cheap）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS channel_groups (
                     name TEXT PRIMARY KEY,
@@ -641,6 +641,16 @@ class Database(private val dbPath: String) {
                 )"""
             )
             try { st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_qq_logs_time ON qq_logs(created_at DESC)") } catch (_: Exception) {}
+            // ★ v1.159 系统动态持久化（首页 ⚡系统动态 历史记录数据源：模型切换/测速完成/故障转移/启动停止）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS gateway_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type TEXT NOT NULL DEFAULT 'info',
+                    content TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            try { st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_gateway_logs_time ON gateway_logs(created_at DESC)") } catch (_: Exception) {}
             // QQ 用户积分（签到系统，按群独立：同一用户在不同群积分隔离）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_points (
@@ -1238,7 +1248,7 @@ val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUser
         stmt("UPDATE users SET email=?, notify_enabled=? WHERE id=?", email, if (notifyEnabled) 1 else 0, userId)
     }
 
-    /** ★ v1.158 两步验证：设置/清除 TOTP 密钥 */
+    /** ★ v1.159 两步验证：设置/清除 TOTP 密钥 */
     fun setTotpSecret(userId: Long, secret: String) {
         stmt("UPDATE users SET totp_secret=? WHERE id=?", secret, userId)
     }
@@ -1269,7 +1279,7 @@ val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUser
     fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = "", inviterId: Long = 0): Long {
         // 生成邀请码
         val code = "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0')
-        // ★ v1.158 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
+        // ★ v1.159 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
         //   避免新用户 quota_limit=0 显示「不限额度」而实际免费套餐是 10 万（对齐产品预期）
         val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         stmt(
@@ -1286,7 +1296,7 @@ fun updateUserLogin(id: Long) {
         stmt("UPDATE users SET password_hash=? WHERE id=?", newHash, id)
     }
 
-    // ★ v1.158 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
+    // ★ v1.159 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
     fun fixFreeUserQuotas(): Int {
         val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         val rows = query("SELECT id FROM users WHERE plan='free' AND quota_limit<=0")
@@ -1553,7 +1563,7 @@ fun updateUserLogin(id: Long) {
             )
         }
 
-    /** ★ v1.158 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
+    /** ★ v1.159 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签 */
     fun getAllMemories(limit: Int = 500): List<Map<String, Any?>> =
         query("SELECT * FROM brain_memory ORDER BY importance DESC, timestamp DESC LIMIT $limit").map { it ->
             val tags = (it["tags"] as? String ?: "")
@@ -1638,21 +1648,21 @@ fun updateUserLogin(id: Long) {
         stmt("DELETE FROM brain_memory WHERE user_id=?", userId)
     }
 
-    /** ★ v1.158 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
+    /** ★ v1.159 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
     fun deleteMemoryAny(id: Long): Boolean {
         val exists = queryOne("SELECT id FROM brain_memory WHERE id=?", id) != null
         if (exists) stmt("DELETE FROM brain_memory WHERE id=?", id)
         return exists
     }
 
-    /** ★ v1.158 管理员清空全部记忆（含账号/QQ/微信/群来源） */
+    /** ★ v1.159 管理员清空全部记忆（含账号/QQ/微信/群来源） */
     fun clearAllMemories(): Int {
         val n = queryOne("SELECT COUNT(*) FROM brain_memory")?.toInt() ?: 0
         stmt("DELETE FROM brain_memory")
         return n
     }
 
-    // ============ ★ v1.158 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
+    // ============ ★ v1.159 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
 
     /** 全部自定义价格（model_id → input/output/updatedAt） */
     fun getAllModelPrices(): List<Map<String, Any?>> =
@@ -1696,7 +1706,7 @@ fun updateUserLogin(id: Long) {
     }
 
     /** 清空全部自定义价格（管理员） */
-    // ============ ★ v1.158 模型映射（alias -> targets 有序列表） ============
+    // ============ ★ v1.159 模型映射（alias -> targets 有序列表） ============
     fun getModelMappings(): List<Map<String, Any?>> =
         query("SELECT * FROM model_mappings ORDER BY updated_at DESC").map { row ->
             mapOf(
@@ -1724,7 +1734,7 @@ fun updateUserLogin(id: Long) {
         return n
     }
 
-    // ============ ★ v1.158 表达式计费规则 ============
+    // ============ ★ v1.159 表达式计费规则 ============
     fun getPricingRules(): List<Map<String, Any?>> =
         query("SELECT * FROM pricing_rules ORDER BY updated_at DESC").map { row ->
             mapOf(
@@ -1756,7 +1766,7 @@ fun updateUserLogin(id: Long) {
         return n
     }
 
-    // ============ ★ v1.158 渠道分组 ============
+    // ============ ★ v1.159 渠道分组 ============
     fun getChannelGroups(): List<Map<String, Any?>> =
         query("SELECT * FROM channel_groups ORDER BY updated_at DESC").map { row ->
             mapOf(
@@ -1857,6 +1867,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.159", "强制故障池对齐原APP结构 + 主页动态持久化", "①qtai-sj专用配置（大脑绑定）真正生效：请求qtai-sj时优先走大脑绑定→用户强制池→全局池→活跃模型，最后才是智能路由/测速排行兜底，不再一上来就跳测速排行。②强制池卡片改表格化展示（对齐测速排行榜：序号/模型/服务商/状态/操作列），每个模型独立一行，▲▼调序/点灯强制切换/移出池按钮分开独立。③新增gateway_logs表持久化系统动态（模型切换/测速完成/故障转移/启动停止），首页「⚡系统动态」先渲染最近10条历史、刷新不丢，再实时增量推送。修复WebUi顶栏VER历史残留。"),
             Triple("v1.158", "强制故障池支持调顺序（序号=切换优先）", "首页强制故障池每个模型新增▲▼排序按钮，点▲上移提高切换优先、点▼下移降低；序号=切换优先，越靠前越先尝试，故障转移严格按池顺序。接口 POST /api/gateway/forced-pool 新增 action=move（dir=up/down），管理员全局池、普通用户自己的池。沙盒 gateway_forced_pool 新增 move 动作+dir 参数，QQ/微信/qtai-sj 可远程调顺序。修复 WebUi 顶栏版本号 VER 历史残留（v1.133→v1.158）。"),
             Triple("v1.157", "六大能力升级（2FA安全 + new-api四件套 + 冒烟测试）", "两步验证2FA（TOTP，个人中心开启，登录需动态码，防暴力破解）。模型映射（外部请求名→内部模型列表按序路由故障转移）。表达式计费（按模型/角色/时段差异化定价，覆盖价或倍率）。渠道分组（fast/cheap/stable，用户请求组名只在该组内自动选模型）。记忆分组管理（按来源筛选+批量删除）。自动化冒烟测试（scripts/smoke_test.sh发版后自动验证核心链路）。"),
             Triple("v1.156", "机器人提速 + 元宝Bot下线 + 模型权重 + 在线试用", "QQ/微信回复提速（单轮超时90→60s、网关流式空闲300→120s全链路收敛，超时快速失败触发故障转移）。元宝Bot彻底下线（路由/菜单/表/前端全链路移除）。沙盒System Prompt新增OpenClaw式自动化编排铁律（失败自动重试2次/多步任务不中断/异步长任务轮询/批量并行/主动补全）。模型权重负载均衡（new-api渠道优先级思路落地：weight字段默认50，故障转移同延迟权重高优先）。Playground在线试用（模型页每行「试用」按钮，弹窗输入流式试玩）。"),
@@ -2997,6 +3008,34 @@ val logs = listOf(
 
     /** QQ 运行日志：清空全部 */
     fun clearQqLogs() { stmt("DELETE FROM qq_logs") }
+
+    // ============ 系统动态日志（首页⚡系统动态持久化，v1.159） ============
+
+    /** 写入系统动态：模型切换/测速完成/故障转移/启动停止等重要事件 */
+    fun addGatewayLog(type: String, content: String) {
+        try {
+            stmt("INSERT INTO gateway_logs (type,content,created_at) VALUES (?,?,?)",
+                type, content.take(300), System.currentTimeMillis())
+            // 只保留最近 30 条，避免无限堆积
+            stmt("DELETE FROM gateway_logs WHERE id NOT IN (SELECT id FROM gateway_logs ORDER BY id DESC LIMIT 30)")
+        } catch (_: Exception) {}
+    }
+
+    /** 读取最近系统动态（limit 默认 10 条，管理员可见全部，普通用户也可见全局动态但不含敏感信息） */
+    fun getGatewayLogs(limit: Int = 10): List<Map<String, Any?>> {
+        val rows = query("SELECT * FROM gateway_logs ORDER BY id DESC LIMIT $limit")
+        return rows.map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "type" to (row["type"] as? String ?: "info"),
+                "content" to (row["content"] as? String ?: ""),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+    }
+
+    /** 清空系统动态（管理员） */
+    fun clearGatewayLogs() { stmt("DELETE FROM gateway_logs") }
 
     /** 按群清理聊天记录（群聊天记录单独管理） */
     fun clearQqLogsByGroup(groupOpenid: String) { stmt("DELETE FROM qq_logs WHERE group_openid=?", groupOpenid) }
