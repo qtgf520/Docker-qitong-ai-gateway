@@ -9,9 +9,9 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v1.133"
+    private const val VER = "v1.158"
 
-    /** ★ v1.157 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
+    /** ★ v1.158 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
     fun landingHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -199,7 +199,7 @@ async function doLogin(){
   var r=await postJson('/api/auth/login',body);
   if(r.code===0){
     if(r.data&&r.data.needTotp){
-      // ★ v1.157 2FA：密码正确，弹验证码输入
+      // ★ v1.158 2FA：密码正确，弹验证码输入
       $('lgTotpLbl').style.display='';$('lgTotp').style.display='';$('lgTotp').focus();
       show('请输入两步验证码（身份验证器 6 位动态码）');
       return;
@@ -446,6 +446,9 @@ th .sort-ind{color:var(--primary);font-size:10px;margin-left:3px}
 .pool-dot{width:10px;height:10px;border-radius:50%;background:var(--surface2);border:1.5px solid var(--border);display:inline-block;cursor:pointer;transition:.15s;vertical-align:middle}
 .pool-dot.on{background:var(--green);border-color:var(--green)}
 .pool-dot.pooled{background:var(--amber);border-color:var(--amber)}
+.pool-move{display:inline-block;font-size:9px;margin:0 2px;color:var(--primary);cursor:pointer;user-select:none;vertical-align:middle;line-height:1}
+.pool-move:hover{color:var(--cyan)}
+.pool-move.dim{color:var(--muted);opacity:.4;cursor:default}
 .btn-ghost.danger{color:var(--red)!important;border-color:rgba(229,99,106,.4)!important}
 .btn-ghost.danger:hover{background:rgba(229,99,106,.1)!important}
 /* ===== 按钮 ===== */

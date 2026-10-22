@@ -6,7 +6,7 @@ import java.security.SecureRandom
 import java.util.Base64
 
 /**
- * v1.157 两步验证（2FA/TOTP，RFC6238 标准，纯自研不依赖外部库）
+ * v1.158 两步验证（2FA/TOTP，RFC6238 标准，纯自研不依赖外部库）
  * 生成密钥 → 提供 otpauth URI（用户用身份验证器/微信小程序扫）→ 校验 6 位动态码
  */
 object Totp {

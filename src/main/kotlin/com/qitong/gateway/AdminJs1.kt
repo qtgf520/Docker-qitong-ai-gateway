@@ -44,7 +44,7 @@ function applyLang(){
 function saveLangLocal(lang){ curLang = lang; localStorage.setItem('qt_lang', lang); applyLang(); }
 function openModal(title, html, onSave, opts){
  opts = opts || {};
- // ★ v1.157 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
+ // ★ v1.158 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
  if(typeof onSave !== 'function'){ opts.hideFooter = true; onSave = function(){}; }
  $('modalTitle').textContent = title;
  var footer = opts.hideFooter ? '' : '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn" onclick="modalSave()">保存</button><button class="btn-ghost" onclick="closeModal()">取消</button></div>';
@@ -155,7 +155,7 @@ loaders.dashboard = function(){
    var activeBadge = isServed ? ' <span class="badge cyan">实际服务中</span>' : (isActive && !runtimeKey ? ' <span class="badge green">强制</span>' : '');
    rankRows += '<tr><td>' + poolDot + '</td><td>' + (i+1) + '</td><td>' + esc(mid) + activeBadge + '</td><td>P' + esc(pid) + '</td><td>' + ttft + '</td><td>' + tps + '</td><td>' + lat + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td><td>' + poolBtn + '</td></tr>';
   });
-  // 强制故障池（常驻展示，首位=当前活跃）
+  // 强制故障池（常驻展示，首位=当前活跃；支持 ↑↓ 调顺序，序号=切换优先）
   var poolHtml;
   if(pool.length){
    poolHtml = '<div class="card"><h3>强制故障池 (' + pool.length + ')</h3><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' +
@@ -164,8 +164,10 @@ loaders.dashboard = function(){
      var isTop = idx === 0;
      var isRt = runtimeKey && runtimeKey === k;
      var cls = isRt ? 'cyan' : (isTop ? 'green' : 'purple');
-     return '<span class="badge ' + cls + '" style="cursor:pointer" onclick="forceSwitchModel(\'' + k.replace(/'/g, '') + '\')" title="点击强制切换">' + '' + esc(mid) + (isRt ? ' ★实际' : '') + ' <span class="pool-dot ' + (isRt ? 'on' : (isTop ? 'on' : '')) + '"></span></span>';
-    }).join('') + '</div><span style="font-size:12px;color:var(--muted)">点灯/点击=强制切换；绿=池首，★=最近实际命中（自动故障转移会自动跟到能用的那个）</span><div style="margin-top:8px"><button class="btn-ghost" onclick="clearForcedPool()">清空故障池</button></div></div>';
+     var upBtn = idx > 0 ? '<span class="pool-move" title="上移（提高切换优先）" onclick="movePoolItem(\'' + k.replace(/'/g, '') + '\',\'up\',event)">▲</span>' : '<span class="pool-move dim">▲</span>';
+     var downBtn = idx < pool.length-1 ? '<span class="pool-move" title="下移（降低切换优先）" onclick="movePoolItem(\'' + k.replace(/'/g, '') + '\',\'down\',event)">▼</span>' : '<span class="pool-move dim">▼</span>';
+     return '<span class="badge ' + cls + '" style="cursor:pointer" onclick="forceSwitchModel(\'' + k.replace(/'/g, '') + '\')" title="点击强制切换">' + '' + esc(mid) + (isRt ? ' ★实际' : '') + ' <span class="pool-dot ' + (isRt ? 'on' : (isTop ? 'on' : '')) + '"></span>' + upBtn + downBtn + '</span>';
+    }).join('') + '</div><span style="font-size:12px;color:var(--muted)">点灯/点击=强制切换；绿=池首，★=最近实际命中；▲▼=调整顺序（序号=切换优先，越靠前越先切）</span><div style="margin-top:8px"><button class="btn-ghost" onclick="clearForcedPool()">清空故障池</button></div></div>';
   } else {
    poolHtml = '<div class="card"><h3>强制故障池 (0)</h3><div style="color:var(--muted);font-size:13px;padding:6px 0">故障池为空。在下方「模型排行榜」点 灯 把模型加入池，加入后 qtai-sj 会按池顺序自动故障转移；★灯跟随最近实际命中的模型。</div></div>';
   }
@@ -321,7 +323,7 @@ function startPerfTimer(){
    }, 5000);
 }
 
-// ★ v1.157 系统动态实时流（更克制：只推重要事件、模型切换去重合并、样式低调不打扰）
+// ★ v1.158 系统动态实时流（更克制：只推重要事件、模型切换去重合并、样式低调不打扰）
 var _sysFeedTimer = null;
 function startSysFeed(){
   var feed = $('sysFeed');
@@ -330,7 +332,7 @@ function startSysFeed(){
   if(_sysFeedTimer) clearInterval(_sysFeedTimer);
   function push(txt, cls, icon){
     var f = $('sysFeed'); if(!f) return;
-    // ★ v1.157 去重：同内容 10 秒内不重复推
+    // ★ v1.158 去重：同内容 10 秒内不重复推
     var now = Date.now();
     if(window._lastFeedText === txt && now - (window._lastFeedAt || 0) < 10000) return;
     window._lastFeedText = txt; window._lastFeedAt = now;
@@ -469,6 +471,16 @@ window.forceSwitchModel = function(key){
   } else toast(r.msg, false);
  });
 };
+// ★ v1.158 调整强制池顺序（序号=切换优先）：up=上移提高优先 / down=下移降低优先
+window.movePoolItem = function(key, dir, ev){
+ if(ev){ ev.stopPropagation(); ev.preventDefault(); }
+ api('/api/gateway/forced-pool', { method:'POST', body: { action: 'move', modelKey: key, dir: dir } }).then(function(r){
+  if(r.code === 0){
+   toast('顺序已调整（越靠前越先切换）', true);
+   loaders.dashboard();
+  } else toast(r.msg, false);
+ });
+};
 window.clearForcedPool = function(){
  api('/api/gateway/forced-pool', { method:'POST', body: { action: 'clear' } }).then(function(r){
   toast(r.msg, r.code === 0);
@@ -504,7 +516,7 @@ loaders.providers = function(){
   state.providers = r.data || [];
   var rows = state.providers.map(function(p){
    var canSeeKey = p.apiKey && p.apiKey.indexOf('****') < 0;
-   // ★ v1.157 Key 可见性：原添加者(owner)或管理员能看到完整 key，其他人显示 **** + 提示
+   // ★ v1.158 Key 可见性：原添加者(owner)或管理员能看到完整 key，其他人显示 **** + 提示
    var keyTxt = p.apiKey ? (p.apiKey.indexOf('****')>=0 ? '<span style="font-size:11px;color:var(--muted)">'+esc(p.apiKey)+'（仅属主可见）</span>' : '<span style="font-family:monospace">'+esc(p.apiKey)+'</span>') : '<span style="color:var(--muted)">无</span>';
    var pubTxt = p.isPublic ? '<span class="badge green">公用</span>' : (p.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
    return '<tr data-pvid="'+p.id+'"><td><input type="checkbox" class="pv-chk" value="'+p.id+'" onclick="pvSelChange()"></td><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
@@ -546,7 +558,7 @@ window.editProvider = function(id){
   });
  });
 };
-// ★ v1.157 服务商多选批量操作（下拉式）
+// ★ v1.158 服务商多选批量操作（下拉式）
 function pvSelAll(checked){
  var chks = document.querySelectorAll('.pv-chk');
  for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }

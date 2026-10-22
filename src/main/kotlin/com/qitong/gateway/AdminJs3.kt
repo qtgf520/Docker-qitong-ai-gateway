@@ -207,7 +207,7 @@ window.clearKeyUsage = function(label){
 // ===== 记忆独立页（大脑记忆 + 记忆配置） =====
 loaders.memory = function(){
  var box = $('view-memory');
- // ★ v1.157 多选批量操作 + 来源筛选下拉（管理员可看全部来源含QQ/微信/群）
+ // ★ v1.158 多选批量操作 + 来源筛选下拉（管理员可看全部来源含QQ/微信/群）
  box.innerHTML = '<div class="action-bar">' +
   '<button class="btn" onclick="addMemory()">+ 添加记忆</button>' +
   '<button class="btn-ghost" onclick="loaders.memory()">刷新</button>' +
@@ -225,7 +225,7 @@ loaders.memory = function(){
  api('/api/memory').then(function(mr){
   var mc = $('memListCard'); if(!mc) return;
   var mems = (mr && mr.data) || [];
-  // ★ v1.157 按来源筛选
+  // ★ v1.158 按来源筛选
   var srcFilter = $('memSrcFilter') ? $('memSrcFilter').value : '';
   if(srcFilter){
    mems = mems.filter(function(m){
@@ -272,7 +272,7 @@ window.saveMemoryCfg2 = function(){
   communicationStyle: $('mc2Style').value
  } }).then(function(r){ if(r.code===0){ toast(r.msg, true); } else toast(r.msg, false); });
 };
-// ★ v1.157 记忆多选批量操作
+// ★ v1.158 记忆多选批量操作
 function memSelAll(checked){
  var chks = document.querySelectorAll('.mem-chk');
  for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }
@@ -770,7 +770,7 @@ window.importData = function(){
  };
  inp.click();
 };
-// ★ v1.157 两步验证：开启流程（扫码→输入动态码→绑定）
+// ★ v1.158 两步验证：开启流程（扫码→输入动态码→绑定）
 window.setupTotp = function(){
   var box = $('totpBox'); if(!box) return;
   box.innerHTML = '<div style="color:var(--muted);font-size:13px">正在生成密钥...</div>';
