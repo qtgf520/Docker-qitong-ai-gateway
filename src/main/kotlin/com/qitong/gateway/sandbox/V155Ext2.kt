@@ -3,7 +3,7 @@ package com.qitong.gateway.sandbox
 import com.qitong.gateway.db.Database
 
 /**
- * v1.159 沙盒补齐 Ext2：工单 / 日志 / 记忆 / QQ用户 / 网关控制 / 通知 / 规则 / 会话
+ * v1.160 沙盒补齐 Ext2：工单 / 日志 / 记忆 / QQ用户 / 网关控制 / 通知 / 规则 / 会话
  * 返回值 null = 本文件不处理该函数（交给未知提示）
  */
 object V155Ext2 {
@@ -132,7 +132,7 @@ object V155Ext2 {
         "gateway_forced_pool" -> {
             val action = args["action"] ?: "add"
             val modelKey = args["modelKey"]?.trim().orEmpty()
-            val dir = args["dir"]?.trim() ?: "down"   // ★ v1.159 move 用：up=往前(提高优先)/down=往后
+            val dir = args["dir"]?.trim() ?: "down"   // ★ v1.160 move 用：up=往前(提高优先)/down=往后
             if (modelKey.isBlank() && action != "clear") return "⚠️ 语法：gateway_forced_pool(action=add/remove/move/clear, modelKey=模型Key, dir=up/down)"
             val key = "forced_pool_keys"
             val current = db.getConfig(key, "").split(",").filter { it.isNotBlank() }.toMutableList()
@@ -140,7 +140,7 @@ object V155Ext2 {
                 "add" -> if (modelKey.isNotBlank()) { current.remove(modelKey); current.add(0, modelKey); db.setConfig("active_model_key", modelKey) }
                 "remove" -> current.remove(modelKey)
                 "move" -> {
-                    // ★ v1.159 调池内顺序（序号=切换优先）：up=往前移一位 / down=往后移一位
+                    // ★ v1.160 调池内顺序（序号=切换优先）：up=往前移一位 / down=往后移一位
                     val idx = current.indexOf(modelKey)
                     val target = if (dir == "up") idx - 1 else idx + 1
                     if (idx >= 0 && target >= 0 && target < current.size) {

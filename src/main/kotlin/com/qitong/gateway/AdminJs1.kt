@@ -44,7 +44,7 @@ function applyLang(){
 function saveLangLocal(lang){ curLang = lang; localStorage.setItem('qt_lang', lang); applyLang(); }
 function openModal(title, html, onSave, opts){
  opts = opts || {};
- // ★ v1.159 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
+ // ★ v1.160 修复“保存无保存”：未传 onSave 的纯展示弹窗自动隐藏保存按钮，不覆盖 window.modalSave
  if(typeof onSave !== 'function'){ opts.hideFooter = true; onSave = function(){}; }
  $('modalTitle').textContent = title;
  var footer = opts.hideFooter ? '' : '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn" onclick="modalSave()">保存</button><button class="btn-ghost" onclick="closeModal()">取消</button></div>';
@@ -155,7 +155,7 @@ loaders.dashboard = function(){
    var activeBadge = isServed ? ' <span class="badge cyan">实际服务中</span>' : (isActive && !runtimeKey ? ' <span class="badge green">强制</span>' : '');
    rankRows += '<tr><td>' + poolDot + '</td><td>' + (i+1) + '</td><td>' + esc(mid) + activeBadge + '</td><td>P' + esc(pid) + '</td><td>' + ttft + '</td><td>' + tps + '</td><td>' + lat + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td><td>' + poolBtn + '</td></tr>';
   });
-  // 强制故障池（★ v1.159 表格化展示对齐测速排行榜：序号/模型/服务商/状态/操作列，每个模型独立一行，▲▼/灯/移出按钮分开独立）
+  // 强制故障池（★ v1.160 表格化展示对齐测速排行榜：序号/模型/服务商/状态/操作列，每个模型独立一行，▲▼/灯/移出按钮分开独立）
   var poolHtml;
   if(pool.length){
    var poolRows = pool.map(function(k, idx){
@@ -333,7 +333,7 @@ function startPerfTimer(){
    }, 5000);
 }
 
-// ★ v1.159 系统动态实时流（更克制：只推重要事件、模型切换去重合并、样式低调不打扰；★ 先渲染历史记录再实时增量，刷新不丢）
+// ★ v1.160 系统动态实时流（更克制：只推重要事件、模型切换去重合并、样式低调不打扰；★ 先渲染历史记录再实时增量，刷新不丢）
 var _sysFeedTimer = null;
 function startSysFeed(){
   var feed = $('sysFeed');
@@ -341,7 +341,7 @@ function startSysFeed(){
   if(_sysFeedTimer) clearInterval(_sysFeedTimer);
   function push(txt, cls, icon){
     var f = $('sysFeed'); if(!f) return;
-    // ★ v1.159 去重：同内容 10 秒内不重复推
+    // ★ v1.160 去重：同内容 10 秒内不重复推
     var now = Date.now();
     if(window._lastFeedText === txt && now - (window._lastFeedAt || 0) < 10000) return;
     window._lastFeedText = txt; window._lastFeedAt = now;
@@ -353,7 +353,7 @@ function startSysFeed(){
     f.insertBefore(row, f.firstChild);
     while(f.children.length > 15) f.removeChild(f.lastChild);
   }
-  // ★ v1.159 先渲染最近10条历史记录（刷新页面不丢，来自 gateway_logs 持久化表）
+  // ★ v1.160 先渲染最近10条历史记录（刷新页面不丢，来自 gateway_logs 持久化表）
   api('/api/status').then(function(r){
     if(r.code!==0 || !r.data) return;
     var logs = r.data.gatewayLogs || [];
@@ -373,7 +373,7 @@ function startSysFeed(){
     api('/api/status').then(function(r){
       if(r.code!==0 || !r.data) return;
       var st = r.data;
-      // ★ v1.159 实时增量：新 gatewayLogs 记录（id 大于当前最大 id 才推）
+      // ★ v1.160 实时增量：新 gatewayLogs 记录（id 大于当前最大 id 才推）
       var logs = st.gatewayLogs || [];
       var maxId = window._lastFeedMaxId || 0;
       logs.reverse().forEach(function(l){
@@ -507,7 +507,7 @@ window.forceSwitchModel = function(key){
   } else toast(r.msg, false);
  });
 };
-// ★ v1.159 调整强制池顺序（序号=切换优先）：up=上移提高优先 / down=下移降低优先
+// ★ v1.160 调整强制池顺序（序号=切换优先）：up=上移提高优先 / down=下移降低优先
 window.movePoolItem = function(key, dir, ev){
  if(ev){ ev.stopPropagation(); ev.preventDefault(); }
  api('/api/gateway/forced-pool', { method:'POST', body: { action: 'move', modelKey: key, dir: dir } }).then(function(r){
@@ -552,7 +552,7 @@ loaders.providers = function(){
   state.providers = r.data || [];
   var rows = state.providers.map(function(p){
    var canSeeKey = p.apiKey && p.apiKey.indexOf('****') < 0;
-   // ★ v1.159 Key 可见性：原添加者(owner)或管理员能看到完整 key，其他人显示 **** + 提示
+   // ★ v1.160 Key 可见性：原添加者(owner)或管理员能看到完整 key，其他人显示 **** + 提示
    var keyTxt = p.apiKey ? (p.apiKey.indexOf('****')>=0 ? '<span style="font-size:11px;color:var(--muted)">'+esc(p.apiKey)+'（仅属主可见）</span>' : '<span style="font-family:monospace">'+esc(p.apiKey)+'</span>') : '<span style="color:var(--muted)">无</span>';
    var pubTxt = p.isPublic ? '<span class="badge green">公用</span>' : (p.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
    return '<tr data-pvid="'+p.id+'"><td><input type="checkbox" class="pv-chk" value="'+p.id+'" onclick="pvSelChange()"></td><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
@@ -594,7 +594,7 @@ window.editProvider = function(id){
   });
  });
 };
-// ★ v1.159 服务商多选批量操作（下拉式）
+// ★ v1.160 服务商多选批量操作（下拉式）
 function pvSelAll(checked){
  var chks = document.querySelectorAll('.pv-chk');
  for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }

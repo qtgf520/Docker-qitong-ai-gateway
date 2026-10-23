@@ -373,7 +373,7 @@ private fun providerToMap(p: Provider) = mapOf(
 
     /**
      * 同步服务商模型列表（调上游 /v1/models）
-     * ★ v1.159 修复「服务商无法获取模型」：直连优先+代理兜底双通道；区分 HTTP 状态码/网络异常/解析失败；
+     * ★ v1.160 修复「服务商无法获取模型」：直连优先+代理兜底双通道；区分 HTTP 状态码/网络异常/解析失败；
      *   兼容 OpenAI data[] 与 Ollama models[] 两种返回格式；返回具体错误原因
      */
     suspend fun syncProviderModels(database: Database, providerId: Long): SyncResult {
@@ -954,16 +954,18 @@ private fun providerToMap(p: Provider) = mapOf(
         val visibleModels = if (user?.role == "admin") allModels
             else if (userId > 0) allModels.filter { it.isPublic || it.ownerId == userId }
             else allModels.filter { it.isPublic }
-        // ★ v1.159 大脑绑定（qtai-sj 专用配置）最高优先：用户绑定了大脑模型 → 无论是否喊人格名都优先用大脑模型
+        // ★ v1.160 大脑绑定（qtai-sj 专用配置）最高优先：用户绑定了大脑模型 → 无论是否喊人格名都优先用大脑模型
         // 对齐原APP：qtai-sj 专用配置（qtai_brain）决定 qtai-sj 用哪个模型，其次强制池，再活跃，最后智能路由
+        // ★ v1.160 记录是否 qtai-sj：决定 buildAttemptModels 是否整体走强制池（具体模型不接管）
+        val isQtaiSj = effectiveModel == "qtai-sj"
         val brainKey = if (userId > 0) database.getUserConfig(userId, "qtai_brain", "") else ""
         val attemptModels = if (brainKey.isNotBlank()) {
             // 直接解析大脑绑定模型
             val brainModels = visibleModels.filter { "${it.providerId}::${it.modelId}" == brainKey || it.modelId == brainKey }
-            if (brainModels.isNotEmpty()) brainModels else proxy.buildAttemptModels(visibleModels, effectiveModel, null, userId)
+            if (brainModels.isNotEmpty()) brainModels else proxy.buildAttemptModels(visibleModels, effectiveModel, null, userId, "", isQtaiSj)
         } else {
             // ★ v97 智能路由：传入用户消息按复杂度自动选模型（简单走轻快、复杂走强模型）
-            proxy.buildAttemptModels(visibleModels, proxy.resolveModelId(effectiveModel, visibleModels, userId, userContent), null, userId)
+            proxy.buildAttemptModels(visibleModels, proxy.resolveModelId(effectiveModel, visibleModels, userId, userContent), null, userId, "", isQtaiSj)
         }
         if (attemptModels.isEmpty()) return mapOf("conversationId" to conversationId, "error" to "No available model", "reply" to "没有可用模型，请先测速或添加服务商")
 

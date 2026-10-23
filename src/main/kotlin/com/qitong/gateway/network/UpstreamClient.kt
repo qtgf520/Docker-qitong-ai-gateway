@@ -31,9 +31,9 @@ object UpstreamClient {
 
     private fun createClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
-            .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)   // ★ v1.159 流式读超时 300→120s：QQ/微信回复慢根因（上游挂起等 5 分钟才切），120s 兜底足够覆盖长思考，超时快速触发故障转移
-            .writeTimeout(120, TimeUnit.SECONDS)
+            .connectTimeout(8, TimeUnit.SECONDS)   // ★ v1.160 连接超时 60→8s：provider 网络不通立即切下一个，杜绝"发出去卡60秒"
+            .readTimeout(60, TimeUnit.SECONDS)    // ★ v1.160 读超时 120→60s：流式长思考兜底；非流式走 clientShort 20s 快速失败
+            .writeTimeout(60, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .callTimeout(0, TimeUnit.SECONDS)
             // ★ v1.107 万人并发转发：连接池 5→200、每host并发 5→200、Dispatcher 256 线程（顶得住高并发）
@@ -100,9 +100,9 @@ object UpstreamClient {
 
     private fun createDirectClient(): OkHttpClient {
         return OkHttpClient.Builder()
-            .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)   // ★ v1.159 流式读超时 300→120s：与代理通道一致，快速失败触发故障转移
-            .writeTimeout(120, TimeUnit.SECONDS)
+            .connectTimeout(8, TimeUnit.SECONDS)   // ★ v1.160 连接超时 60→8s
+            .readTimeout(60, TimeUnit.SECONDS)    // ★ v1.160 读超时 120→60s
+            .writeTimeout(60, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .callTimeout(0, TimeUnit.SECONDS)
             // ★ v1.107 万人并发转发：连接池 5→200、每host并发 5→200、Dispatcher 256 线程
@@ -127,10 +127,10 @@ object UpstreamClient {
     fun getClient(useProxy: Boolean, stream: Boolean): OkHttpClient {
         if (stream) return getClient(useProxy)
         if (useProxy) {
-            if (clientShort == null) clientShort = createClient().newBuilder().readTimeout(60, TimeUnit.SECONDS).callTimeout(120, TimeUnit.SECONDS).build()
+            if (clientShort == null) clientShort = createClient().newBuilder().readTimeout(20, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS).build()
             return clientShort!!
         }
-        if (directShort == null) directShort = createDirectClient().newBuilder().readTimeout(60, TimeUnit.SECONDS).callTimeout(120, TimeUnit.SECONDS).build()
+        if (directShort == null) directShort = createDirectClient().newBuilder().readTimeout(20, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS).build()
         return directShort!!
     }
 
