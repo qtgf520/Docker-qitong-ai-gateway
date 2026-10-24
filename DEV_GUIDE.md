@@ -249,6 +249,7 @@ git push origin master
 | 41 | **sanitizeRequestBody 拼接坏 JSON** | 想加 safety 剥离时 bodyStr2+sb 两个 JSON 拼接→坏 JSON | 直接对同一 sb 变量做所有替换，返回单个完整 JSON |
 | 42 | **内网 git 仓库路径是 /home/gitdev/** | 误以为 gitdev 仓库在 /home/git/，ls-remote 报 not a repository（gitdev 是纯 git 账号不能执行 shell） | 正确路径 `ssh://gitdev@qitong.pve.jili5.cn:6062/home/gitdev/docker-qitong-111.git`；探测用 for 循环 ls-remote 对比 HEAD |
 | 43 | **DEV_GUIDE 存真实密码被开源包带出** | 踩坑 31 样例写了内网 git 密码明文，git archive 打开源包把密码带出去，红线违规 | DEV_GUIDE 任何样例只写 `<内网git密码>` 占位不写真值；发版前 grep 全包敏感词（内网git密码 / 服务器密码 / 证书口令 / github令牌 模式）清零 |
+| 44 | **Kotlin 块注释里写 `/*` 触发嵌套注释未闭合** | detectModality 注释写 `(/v1/images/*)` 里的 `/*` 开启内层注释 → 编译器报 Missing '}' + Unclosed comment，连带后续所有代码错位（大量 Unresolved reference 看似其他文件坏了，v1.161 排查 40+ 分钟） | Kotlin 块注释支持嵌套，注释内严禁出现 `/*` 组合（路径描述改写成 `images接口` 等）；改注释后编译报奇怪的 Missing '}' 先 grep 注释里的 `/*` |
 
 ---
 
