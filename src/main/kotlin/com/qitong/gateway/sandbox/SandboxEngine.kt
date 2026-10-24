@@ -28,7 +28,7 @@ object SandboxEngine {
         "provider_get_all", "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
         "user_balance", "user_recharge", "user_deduct",
         "terminal_run", "terminal_create", "terminal_list", "terminal_status",
-        "web_browse",  // ★ v1.160 网页浏览（curl 抓取转文本，felinks 风格）
+        "web_browse",  // ★ v1.161 网页浏览（curl 抓取转文本，felinks 风格）
         "qq_bots_list", "qq_bots_groups", "qq_points_rank", "help",
         "mcp_list", "mcp_call", "web_search",
         "workflow_run", "workflow_list",
@@ -270,13 +270,13 @@ $KNOWLEDGE_JSON
 3. 【缓存意识】相同问题短时间内重复问（如反复查状态/排行），网关响应缓存会自动命中加速；用户问「缓存」相关 → [[沙盒:cache_stats(action=stats)]] 查看，管理员可 [[沙盒:cache_stats(action=clear)]] 清空。
 4. 【持续成长】每次任务后想想：这次学到了什么？有没有更优路径？下次同类任务直接走最优路径。
 
-## 7. 重要消息醒目呈现（v1.160：OpenClaw 式「用户要的结果才重点推」）
+## 7. 重要消息醒目呈现（v1.161：OpenClaw 式「用户要的结果才重点推」）
 1. 【关键结果前置】任务完成时，把用户真正需要的核心结果用最醒目方式呈现（如「✅ 充值成功：用户 xxx 到账 ¥50，当前余额 ¥128.50」「🔴 模型 deepseek-v4-flash 已掉线，已自动切换到 gpt-4o」），不要把关键数字埋在长文里。
 2. 【异常主动汇报】执行中发现异常（模型全挂/余额不足/服务商失效/接口报错）时，立即用⚠️/🔴醒目格式汇报，并给出可执行的下一步（如「建议先测速看看哪些模型可用」），不要默默失败。
 3. 【过程克制，结果满足】过程推送（💭/🔧/✅）只用于「用户点名的任务在推进」的场景；纯闲聊/简单问答不要刷过程，直接给结果。用户要的看得见的步骤才推步骤，用户只要结果就只给结果。
 4. 【任务完成必收尾】工具链跑完后，最终回复必须包含「做完了什么 + 关键结果 + 可做的下一步（如有）」，像真人办完事一样交代清楚，再问「还需要我做什么吗」。
 
-## 8. 自动化任务编排（v1.160：OpenClaw 式自主闭环）
+## 8. 自动化任务编排（v1.161：OpenClaw 式自主闭环）
 1. 【失败自动重试】工具返回失败（❌/⚠️/权限不足/超时）时，先自己分析原因（参数错→改参数重试；上游挂→换模型重试；权限缺→提示管理员），不要失败一次就放弃或直接告诉用户失败。同一工具最多自动重试 2 次，仍失败才向用户如实汇报+给替代方案。
 2. 【多步任务不中断】用户要的结果需要多步（查→算→汇总/查→对比→建议），必须一步步调工具推进到底，每步结果都基于真实返回；只有任务真正完成（拿到最终结果）才给最终答复，绝不中途停止说「已完成」。
 3. 【自主决策】能自己定的（默认参数/顺序/表达方式）自己定，不要反复问用户；只有影响结果的关键歧义才问一次。
@@ -448,7 +448,7 @@ $KNOWLEDGE_JSON
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
-            "web_browse",  // ★ v1.160 网页浏览（user/read）
+            "web_browse",  // ★ v1.161 网页浏览（user/read）
             "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list", "skill_list",
             "git_version", "git_log", "announcement_list", "skill_my" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
@@ -461,14 +461,14 @@ $KNOWLEDGE_JSON
             "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
             "api_key_create", "api_key_delete", "user_set_balance", "user_set_role", "user_delete",
             "config_set", "announcement_add", "announcement_delete", "ticket_reply", "ticket_close" -> "admin" to "modify"
-            // v1.160 新增：普通用户只读/自助
+            // v1.161 新增：普通用户只读/自助
             "price_get", "plan_list", "conversation_list", "usage_recent", "usage_stats", "overall_stats",
             "ticket_list", "ticket_create", "card_redeem", "memory_add",
             "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool" -> "user" to "read"
-            // v1.160 新增：管理员只读
+            // v1.161 新增：管理员只读
             "price_list", "sys_monitor", "plan_stats", "backup_list", "card_list", "ssh_list", "ticket_detail",
             "op_logs", "login_logs", "qq_logs", "wx_logs", "qq_users_list", "memory_list", "notify_config", "rule_list" -> "admin" to "read"
-            // v1.160 新增：管理员修改
+            // v1.161 新增：管理员修改
             "price_set", "price_delete", "price_clear", "backup_create", "backup_restore", "plan_save", "plan_delete",
             "card_gen", "ssh_exec", "qq_point_adjust", "memory_clear", "gateway_toggle", "gateway_auto_speedtest",
             "notify_test", "rule_add", "rule_delete" -> "admin" to "modify"
@@ -1086,7 +1086,7 @@ $KNOWLEDGE_JSON
                     else com.qitong.gateway.http.TerminalManager.asyncStatus(id.trim())
                 }
                 "web_browse" -> {
-                    // ★ v1.160 网页浏览（felinks 式文本抓取）：curl 抓 HTML → 去标签 → 提取标题/正文/链接
+                    // ★ v1.161 网页浏览（felinks 式文本抓取）：curl 抓 HTML → 去标签 → 提取标题/正文/链接
                     val url = args["url"] ?: ""
                     if (url.isBlank() || !url.startsWith("http")) "⚠️ 语法：web_browse(url=http(s)://网页地址)"
                     else try {
@@ -1428,7 +1428,7 @@ $KNOWLEDGE_JSON
                     else if (content.isBlank()) "⚠️ 邮件内容不能为空"
                     else com.qitong.gateway.notify.NotificationManager.sendMail(db, to, title, content)
                 }
-                // ===== v1.160 网关全接口补齐（实现见 V155Ext1/2） =====
+                // ===== v1.161 网关全接口补齐（实现见 V155Ext1/2） =====
                 "price_list", "price_get", "price_set", "price_delete", "price_clear",
                 "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
                 "backup_list", "backup_create", "backup_restore",

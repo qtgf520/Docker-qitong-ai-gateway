@@ -207,42 +207,68 @@ window.clearKeyUsage = function(label){
 // ===== 记忆独立页（大脑记忆 + 记忆配置） =====
 loaders.memory = function(){
  var box = $('view-memory');
- // ★ v1.160 多选批量操作 + 来源筛选下拉（管理员可看全部来源含QQ/微信/群）
- box.innerHTML = '<div class="action-bar">' +
-  '<button class="btn" onclick="addMemory()">+ 添加记忆</button>' +
-  '<button class="btn-ghost" onclick="loaders.memory()">刷新</button>' +
-  '<select id="memSrcFilter" class="input" style="width:150px" onchange="loaders.memory()"><option value="">全部来源</option><option value="account">账号记忆</option><option value="qq">QQ用户</option><option value="wx">微信用户</option><option value="group">QQ群</option></select>' +
-  '<span style="display:inline-flex;gap:6px;align-items:center">' +
-   '<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)"><input type="checkbox" id="memChkAll" onclick="memSelAll(this.checked)">全选</label>' +
-   '<button class="btn-ghost btn-sm" onclick="memBatchDelete()">批量删除</button>' +
-   '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="clearMemories()">清空全部</button>' +
-   '<span id="memSelCount" style="font-size:11px;color:var(--muted)"></span>' +
-  '</span>' +
-  '<span style="font-size:12px;color:var(--muted);margin-left:auto">🧠 管理员可见全部来源记忆（账号/QQ用户/微信用户/群），来源已备注</span></div>' +
-  '<div class="card" id="memListCard"><div style="color:var(--muted);padding:20px">加载中...</div></div>' +
-  '<div class="card" id="memCfgCard2" style="margin-top:14px"><div style="color:var(--muted);padding:20px">加载配置中...</div></div>';
- // 记忆列表
- api('/api/memory').then(function(mr){
-  var mc = $('memListCard'); if(!mc) return;
-  var mems = (mr && mr.data) || [];
-  // ★ v1.160 按来源筛选
-  var srcFilter = $('memSrcFilter') ? $('memSrcFilter').value : '';
-  if(srcFilter){
-   mems = mems.filter(function(m){
-    var t = m.tags || '';
-    if(srcFilter==='account') return t==='';
-    if(srcFilter==='qq') return t.indexOf('qq:')===0;
-    if(srcFilter==='wx') return t.indexOf('wx:')===0;
-    if(srcFilter==='group') return t.indexOf('group:')===0;
-    return true;
-   });
+ if(!box) return;
+ box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
+ // ★ v1.161 记忆隔离升级：先取当前用户角色（管理员默认只看自己的记忆；可切「全部来源」或「按用户查」）
+ api('/api/auth/me').then(function(meRes){
+  var me = (meRes && meRes.code === 0 && meRes.data) || {};
+  var isAdmin = me.role === 'admin';
+  var memView = localStorage.getItem('qt_memView') || 'mine';
+  var memUid = localStorage.getItem('qt_memUid') || '';
+  var memOpenid = localStorage.getItem('qt_memOpenid') || '';
+  var memBotId = localStorage.getItem('qt_memBotId') || '';
+  box.innerHTML = '<div class="action-bar">' +
+   '<button class="btn" onclick="addMemory()">+ 添加记忆</button>' +
+   '<button class="btn-ghost" onclick="loaders.memory()">刷新</button>' +
+   (isAdmin ? '<select id="memViewSel" class="input" style="width:130px" onchange="memViewChange()"><option value="mine"'+(memView==='mine'?' selected':'')+'>我的记忆</option><option value="all"'+(memView==='all'?' selected':'')+'>全部来源</option><option value="user"'+(memView==='user'?' selected':'')+'>按用户查</option></select>' : '') +
+   (isAdmin && memView==='user' ? '<span style="display:inline-flex;gap:6px;align-items:center">' +
+    '<input id="memUidInput" class="input" style="width:110px" placeholder="账号ID" value="'+esc(memUid)+'">' +
+    '<input id="memOpenidInput" class="input" style="width:150px" placeholder="QQ/微信 openid" value="'+esc(memOpenid)+'">' +
+    '<input id="memBotIdInput" class="input" style="width:90px" placeholder="微信bot ID" value="'+esc(memBotId)+'">' +
+    '<button class="btn-ghost btn-sm" onclick="memQueryUser()">查询</button></span>' : '') +
+   '<span style="display:inline-flex;gap:6px;align-items:center">' +
+    '<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)"><input type="checkbox" id="memChkAll" onclick="memSelAll(this.checked)">全选</label>' +
+    '<button class="btn-ghost btn-sm" onclick="memBatchDelete()">批量删除</button>' +
+    '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="clearMemories()">清空</button>' +
+    '<span id="memSelCount" style="font-size:11px;color:var(--muted)"></span>' +
+   '</span>' +
+   '<span style="font-size:12px;color:var(--muted);margin-left:auto">🧠 ' + (isAdmin ? '默认只看自己的记忆；「全部来源」看账号/QQ/微信/群所有，来源已备注' : '只显示你自己的记忆，按用户隔离') + '</span></div>' +
+   '<div class="card" id="memListCard"><div style="color:var(--muted);padding:20px">加载中...</div></div>' +
+   '<div class="card" id="memCfgCard2" style="margin-top:14px"><div style="color:var(--muted);padding:20px">加载配置中...</div></div>';
+  // 记忆列表：按视图模式请求
+  var q = '';
+  if(isAdmin){
+   if(memView==='all') q = '?all=1';
+   else if(memView==='user'){
+    if(memUid) q += '?uid=' + encodeURIComponent(memUid);
+    else if(memOpenid){
+     q = '?openid=' + encodeURIComponent(memOpenid);
+     if(memBotId) q += '&botId=' + encodeURIComponent(memBotId);
+    }
+   }
+   // mine：不传参（后端默认返回管理员自己的账号记忆）
   }
-  if(!mems.length){ mc.innerHTML = '<h3>🧠 大脑记忆（'+mems.length+'条）</h3><div style="color:var(--muted);padding:12px">暂无记忆。AI 对话会自动保存关键信息到这里。</div>'; return; }
-  var rows = mems.map(function(m){
-   var srcNote = m.sourceNote || '';
-   return '<tr data-memid="'+m.id+'">' +
-    '<td><input type="checkbox" class="mem-chk" value="'+m.id+'" onclick="memSelChange()"></td>' +
-    '<td><b>'+esc(m.title||'(无标题)')+'</b></td>' +
+  api('/api/memory' + q).then(function(mr){
+   var mc = $('memListCard'); if(!mc) return;
+   var mems = (mr && mr.data) || [];
+   // ★ v1.161 按来源筛选（全部来源视图下可用）
+   var srcFilter = $('memSrcFilter') ? $('memSrcFilter').value : '';
+   if(srcFilter){
+    mems = mems.filter(function(m){
+     var t = m.tags || '';
+     if(srcFilter==='account') return t==='';
+     if(srcFilter==='qq') return t.indexOf('qq:')===0;
+     if(srcFilter==='wx') return t.indexOf('wx:')===0;
+     if(srcFilter==='group') return t.indexOf('group:')===0;
+     return true;
+    });
+   }
+   if(!mems.length){ mc.innerHTML = '<h3>🧠 大脑记忆（'+mems.length+'条）</h3><div style="color:var(--muted);padding:12px">暂无记忆。AI 对话会自动保存关键信息到这里。</div>'; return; }
+   var rows = mems.map(function(m){
+    var srcNote = m.sourceNote || '';
+    return '<tr data-memid="'+m.id+'">' +
+     '<td><input type="checkbox" class="mem-chk" value="'+m.id+'" onclick="memSelChange()"></td>' +
+     '<td><b>'+esc(m.title||'(无标题)')+'</b></td>' +
     '<td style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.content)+'</td>' +
     '<td><span class="badge '+(m.emotion==='happy'?'green':m.emotion==='sad'?'red':'purple')+'">'+esc(m.emotion)+'</span></td>' +
     '<td>'+m.importance+'</td>' +
@@ -262,7 +288,8 @@ loaders.memory = function(){
    '<div class="form-row"><label>保存模式</label><select class="input" id="mc2Mode"><option value="frequent"'+(c.saveMode==='frequent'?' selected':'')+'>频繁保存</option><option value="normal"'+(c.saveMode==='normal'||!c.saveMode?' selected':'')+'>正常保存</option><option value="occasional"'+(c.saveMode==='occasional'?' selected':'')+'>偶尔保存</option></select></div>' +
    '<div class="form-row"><label>沟通风格</label><input class="input" id="mc2Style" value="'+esc(c.communicationStyle||'自然亲切、像朋友聊天')+'"></div>' +
    '<button class="btn" onclick="saveMemoryCfg2()">保存配置</button>';
- });
+  });
+ });   // ★ v1.161 闭合 /api/auth/me 回调
 };
 window.saveMemoryCfg2 = function(){
  api('/api/memory/config', { method:'POST', body: {
@@ -272,7 +299,7 @@ window.saveMemoryCfg2 = function(){
   communicationStyle: $('mc2Style').value
  } }).then(function(r){ if(r.code===0){ toast(r.msg, true); } else toast(r.msg, false); });
 };
-// ★ v1.160 记忆多选批量操作
+// ★ v1.161 记忆多选批量操作
 function memSelAll(checked){
  var chks = document.querySelectorAll('.mem-chk');
  for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }
@@ -670,12 +697,39 @@ window.delMemory = function(id){
   if(r.code === 0){ toast('已删除', true); loaders.settings(); } else toast(r.msg, false);
  });
 };
-window.clearMemories = function(){
- if(!confirm('清空全部记忆？')) return;
- api('/api/memory/clear', { method:'POST' }).then(function(r){
-  if(r.code === 0){ toast('已清空', true); loaders.settings(); } else toast(r.msg, false);
- });
+// ★ v1.161 记忆视图切换（管理员：我的记忆 / 全部来源 / 按用户查）
+window.memViewChange = function(){
+ var v = $('memViewSel') ? $('memViewSel').value : 'mine';
+ localStorage.setItem('qt_memView', v);
+ if(v !== 'user'){ localStorage.removeItem('qt_memUid'); localStorage.removeItem('qt_memOpenid'); localStorage.removeItem('qt_memBotId'); }
+ loaders.memory();
 };
+window.memQueryUser = function(){
+ var uid = $('memUidInput') ? $('memUidInput').value.trim() : '';
+ var openid = $('memOpenidInput') ? $('memOpenidInput').value.trim() : '';
+ var botId = $('memBotIdInput') ? $('memBotIdInput').value.trim() : '';
+ if(!uid && !openid){ toast('请输入账号ID 或 openid', false); return; }
+ localStorage.setItem('qt_memView', 'user');
+ localStorage.setItem('qt_memUid', uid);
+ localStorage.setItem('qt_memOpenid', openid);
+ localStorage.setItem('qt_memBotId', botId);
+ loaders.memory();
+};
+window.clearMemories = function(){
+ var v = localStorage.getItem('qt_memView') || 'mine';
+ // ★ v1.161 记忆隔离：管理员「全部来源」视图=清空全部记忆；其他视图=只清自己的账号记忆
+ if(v === 'all'){
+  if(!confirm('确定清空【全部来源】记忆（含所有账号/QQ/微信/群）？此操作不可恢复！')) return;
+  api('/api/memory/clear-all', { method:'POST' }).then(function(r){
+   if(r.code === 0){ toast(r.msg, true); loaders.memory(); } else toast(r.msg, false);
+  });
+  } else {
+   if(!confirm('清空自己的记忆？')) return;
+   api('/api/memory/clear', { method:'POST' }).then(function(r){
+    if(r.code === 0){ toast(r.msg, true); loaders.memory(); } else toast(r.msg, false);
+   });
+  }
+ };
 window.saveBrain = function(){
  var brain = $('qtBrain').value.trim();
  api('/api/qtai/brain', { method:'POST', body: { brain: brain } }).then(function(r){
@@ -770,7 +824,7 @@ window.importData = function(){
  };
  inp.click();
 };
-// ★ v1.160 两步验证：开启流程（扫码→输入动态码→绑定）
+// ★ v1.161 两步验证：开启流程（扫码→输入动态码→绑定）
 window.setupTotp = function(){
   var box = $('totpBox'); if(!box) return;
   box.innerHTML = '<div style="color:var(--muted);font-size:13px">正在生成密钥...</div>';

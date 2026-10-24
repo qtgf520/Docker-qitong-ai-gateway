@@ -50,7 +50,7 @@ loaders.prices = function(){
    '</tbody></table></div>' +
 '<div style="font-size:11px;color:var(--muted);margin-top:8px">💰 价格单位：元 / 百万 Token（输入价）。模型可单独设置自定义单价（编辑模型时设置），自定义价格表优先于模型单价与默认价。未收录模型统一按默认价计费。</div></div>';
    box.innerHTML = html;
-   // ★ v1.160 模型映射区（外部请求名 -> 内部模型有序列表，按序故障转移）
+   // ★ v1.161 模型映射区（外部请求名 -> 内部模型有序列表，按序故障转移）
    if(isAdmin){
     api('/api/model-mappings').then(function(mr){
      var mapBox = document.createElement('div');
@@ -73,7 +73,7 @@ loaders.prices = function(){
       '</tbody></table></div>' +
       '<div style="font-size:11px;color:var(--muted);margin-top:6px">💡 例：映射名填 <b>fast-ai</b>，目标填 <b>deepseek-chat, kimi-k2.6, qwen-max</b> → 客户端请求 model=fast-ai 时，网关先试 deepseek-chat，失败自动切 kimi-k2.6，再失败切 qwen-max</div></div>';
      box.appendChild(mapBox);
-     // ★ v1.160 计费规则区（条件：模型/角色/时段 → 覆盖价或倍率）
+     // ★ v1.161 计费规则区（条件：模型/角色/时段 → 覆盖价或倍率）
      api('/api/pricing-rules').then(function(pr){
       var ruleBox = document.createElement('div');
       ruleBox.style.marginTop = '14px';
@@ -97,7 +97,7 @@ loaders.prices = function(){
        '</tbody></table></div>' +
        '<div style="font-size:11px;color:var(--muted);margin-top:6px">💡 命中规则时：覆盖价(price>0)优先，否则按倍率；条件空=不限。计费优先级：计费规则 → 自定义价格表 → 模型单价 → 内置表</div></div>';
       box.appendChild(ruleBox);
-      // ★ v1.160 渠道分组区（用户选组不选具体模型）
+      // ★ v1.161 渠道分组区（用户选组不选具体模型）
       api('/api/channel-groups').then(function(cgr){
        var grpBox = document.createElement('div');
        grpBox.style.marginTop = '14px';
@@ -133,7 +133,7 @@ loaders.prices = function(){
    }
   });
  };
-// ★ v1.160 价格表管理：添加/编辑/删除（仅管理员）
+// ★ v1.161 价格表管理：添加/编辑/删除（仅管理员）
 window.addPrice = function(){
  openModal('添加自定义价格', '<div class="form-row"><label>模型ID *</label><input id="prModel" class="input" placeholder="如 deepseek-v4-flash"></div>' +
   '<div class="form-row"><label>输入价（元/百万token）*</label><input id="prIn" class="input" type="number" step="0.01" min="0" value="2"></div>' +
@@ -174,7 +174,7 @@ window.clearAllPrices = function(){
    if(r.code === 0) loaders.prices();
   });
 };
-// ★ v1.160 模型映射管理（外部请求名 -> 内部模型列表按序路由）
+// ★ v1.161 模型映射管理（外部请求名 -> 内部模型列表按序路由）
 window.addMapping = function(){
  openModal('添加模型映射', '<div class="form-row"><label>外部模型名 *（客户端请求时用这个当 model）</label><input id="mpAlias" class="input" placeholder="如 fast-ai"></div>' +
   '<div class="form-row"><label>目标模型列表 *（逗号分隔，按顺序故障转移）</label><input id="mpTargets" class="input" placeholder="如 deepseek-chat, kimi-k2.6, qwen-max"></div>', function(){
@@ -215,7 +215,7 @@ window.clearMappings = function(){
   if(r.code === 0) loaders.prices();
  });
 };
-// ★ v1.160 计费规则管理
+// ★ v1.161 计费规则管理
 window.addRule = function(){
  openModal('添加计费规则', '<div class="form-row"><label>规则名 *</label><input id="rlName" class="input" placeholder="如 晚高峰加价"></div>' +
   '<div class="form-row"><label>模型匹配（空=全部，支持模糊如 deepseek）</label><input id="rlModel" class="input" placeholder="如 deepseek / gpt-4 / 留空全部"></div>' +
@@ -269,7 +269,7 @@ window.clearRules = function(){
   if(r.code === 0) loaders.prices();
  });
 };
-// ★ v1.160 渠道分组管理
+// ★ v1.161 渠道分组管理
 window.addGroup = function(){
  openModal('添加渠道分组', '<div class="form-row"><label>组名 *（客户端请求时用这个当 model）</label><input id="cgName" class="input" placeholder="如 fast / cheap / stable"></div>' +
   '<div class="form-row"><label>描述</label><input id="cgDesc" class="input" placeholder="如 低延迟优先"></div>', function(){

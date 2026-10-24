@@ -34,7 +34,7 @@ object WeixinBotManager {
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
-        // ★ v1.160 提速：单轮 60s（原来 90s 读 + 120s 总）——微信机器人回复慢根因是等超时太久；超时快速失败触发故障转移
+        // ★ v1.161 提速：单轮 60s（原来 90s 读 + 120s 总）——微信机器人回复慢根因是等超时太久；超时快速失败触发故障转移
         .callTimeout(60, TimeUnit.SECONDS)
         .build()
     private val jsonCt = "application/json; charset=utf-8".toMediaType()
@@ -73,7 +73,7 @@ object WeixinBotManager {
         }
     }
 
-    /** ★ v1.160 指定目标推送（心跳/计划任务到期只发管理员配置的微信 openid；未配置则发最近活跃联系人兜底，不再全广播） */
+    /** ★ v1.161 指定目标推送（心跳/计划任务到期只发管理员配置的微信 openid；未配置则发最近活跃联系人兜底，不再全广播） */
     fun sendToTargets(targets: List<String>, text: String) {
         try {
             val bots = db?.getWeixinBots()?.filter { it.enabled } ?: return
@@ -494,8 +494,9 @@ object WeixinBotManager {
     /** loopback 调用网关大脑（qtai-sj 走完整沙盒 Agent 循环：思考推送→调工具→结果回填→多轮） */
     private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long, send: (String) -> Unit): String? {
         val d = db ?: return null
-        val key = msg.from  // 每用户上下文隔离
-        // ★ v1.160 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
+        // ★ v1.161 每用户上下文隔离 key 增加 botId：同一个微信联系人被多个 bot 服务时，各 bot 上下文/记忆互不串
+        val key = if (bot.id > 0) "${bot.id}:${msg.from}" else msg.from
+        // ★ v1.161 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
         val sandboxOn = true
         // ★ v71 人设优先：用户设置的 systemPrompt 始终注入（沙盒时追加到提示词后，不被覆盖）
         val userPrompt = bot.systemPrompt.trim()
@@ -506,6 +507,7 @@ object WeixinBotManager {
             userPrompt.ifBlank { "你是綦桐小助理，运行在綦桐AI网关微信渠道。" }
         }
         // ★ v76 微信长期记忆：绑定账号后按 userId 注入大脑记忆；★v1.115 未绑定用户也按 openid 注入（对齐 QQ），不再「没记忆」
+        // ★ v1.161 未绑定用户按 openid+botId 走微信独立记忆（多 bot 分开）
         if (userId > 0) {
             runCatching {
                 val mems = d.getMemories(userId, limit = 8)
@@ -519,7 +521,7 @@ object WeixinBotManager {
         } else {
             // ★ v1.115 未绑定账号：按 openid 走微信独立记忆（对齐 QQ 的 qq:{openid} 通道）
             runCatching {
-                val mems = d.getWxBrainMemories(msg.from, limit = 8)
+                val mems = d.getWxBrainMemories(msg.from, limit = 8, botId = bot.id)
                 if (mems.isNotEmpty()) {
                     baseSys += "\n\n【你对这位用户的长期记忆】\n" + mems.reversed().joinToString("\n") { "- " + it }
                 }
@@ -630,7 +632,7 @@ object WeixinBotManager {
                             "工具执行异常（" + fn + "）：" + e.message
                         }
                         results.append("【$fn 执行结果】\n$r\n")
-                        // ★ v1.160 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文由 send 内部分段
+                        // ★ v1.161 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文由 send 内部分段
                         val rShow = r.trim()
                         send("✅ $fn 完成：\n$rShow")
                         executedCalls = true
@@ -653,7 +655,7 @@ object WeixinBotManager {
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append("【$fn 执行结果】\n$r\n")
-                                    // ★ v1.160 修复长文截断：并行工具结果完整推送（不再 take(120)）
+                                    // ★ v1.161 修复长文截断：并行工具结果完整推送（不再 take(120)）
                                     val rShow = r.trim()
                                     send("✅ $fn 完成：\n$rShow")
                                     executedCalls = true
@@ -704,7 +706,7 @@ object WeixinBotManager {
                     hist.add("assistant" to cleanText)
                     hist.add("user" to "【工具执行结果】\n$results")
                     content = nextContent
-                    // ★ v1.160 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
+                    // ★ v1.161 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
                         send("💭 好的，我继续查…")
@@ -754,7 +756,7 @@ object WeixinBotManager {
                         if (memText.length in 4..200 && !memText.startsWith("绑定") && !memText.startsWith("停止") &&
                             !memText.startsWith("管理") && memText != "我的账号" && memText != "退出账号") {
                             if (userId > 0) d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
-                            else d.saveWxBrainMemory(msg.from, memText.take(200))
+                            else d.saveWxBrainMemory(msg.from, memText.take(200), botId = bot.id)
                         }
                     }
                 }
@@ -804,7 +806,7 @@ object WeixinBotManager {
                         if (memText.length in 4..200 && !memText.startsWith("绑定") && !memText.startsWith("停止") &&
                             !memText.startsWith("管理") && memText != "我的账号" && memText != "退出账号") {
                             if (userId > 0) d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
-                            else d.saveWxBrainMemory(msg.from, memText.take(200))
+                            else d.saveWxBrainMemory(msg.from, memText.take(200), botId = bot.id)
                         }
                     }
                 }
@@ -816,7 +818,7 @@ object WeixinBotManager {
         }
     }
 
-    /** ★ v1.160 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
+    /** ★ v1.161 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
     private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
         text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
         text.contains("让我", true) || text.contains("我去", true) || text.contains("我来", true) ||
