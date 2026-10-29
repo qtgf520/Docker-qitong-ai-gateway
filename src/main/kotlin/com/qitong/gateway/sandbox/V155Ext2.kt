@@ -3,7 +3,7 @@ package com.qitong.gateway.sandbox
 import com.qitong.gateway.db.Database
 
 /**
- * v1.161 沙盒补齐 Ext2：工单 / 日志 / 记忆 / QQ用户 / 网关控制 / 通知 / 规则 / 会话
+ * v1.162 沙盒补齐 Ext2：工单 / 日志 / 记忆 / QQ用户 / 网关控制 / 通知 / 规则 / 会话
  * 返回值 null = 本文件不处理该函数（交给未知提示）
  */
 object V155Ext2 {
@@ -106,6 +106,45 @@ object V155Ext2 {
                 "✅ QQ用户 $openid 积分已调整 $delta"
             }
         }
+        // ★ v1.162 微信用户函数（对齐 QQ：用户列表/记忆查看/记忆清空）
+        "wx_users_list" -> {
+            if (!isAdmin) return "⛔ 仅管理员"
+            val rows = db.getWeixinUsers(100)
+            if (rows.isEmpty()) "📭 暂无微信用户"
+            else "👥 【微信用户(最近100)】\n" + rows.joinToString("\n") { r ->
+                val bound = (r["boundUserId"] as? Long ?: 0L)
+                "• ${(r["displayName"] as? String)?.takeIf { it.isNotBlank() } ?: r["openid"]}" +
+                    (if (bound > 0) "｜已绑账号#$bound" else "｜未绑定") +
+                    "｜权限${r["permLevel"] ?: 1}"
+            }.take(1600)
+        }
+        "wx_user_memory" -> {
+            if (!isAdmin) return "⛔ 仅管理员"
+            val openid = args["openid"]?.trim().orEmpty()
+            if (openid.isBlank()) "⚠️ 语法：wx_user_memory(openid=微信用户openid, botId=可选)"
+            else {
+                val botId = args["botId"]?.toLongOrNull() ?: 0L
+                val rows = db.getWxBrainMemoryItems(openid, limit = 30, botId = botId)
+                if (rows.isEmpty()) "📭 该微信用户还没有记忆"
+                else "🧠 【微信用户记忆】\n" + rows.joinToString("\n") { m ->
+                    val ts = m["timestamp"] as? Long ?: 0L
+                    val dateStr = if (ts > 0) {
+                        val sdf = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.CHINA)
+                        sdf.format(java.util.Date(ts))
+                    } else ""
+                    "• [$dateStr] ${m["content"]}"
+                }.take(1600)
+            }
+        }
+        "wx_user_memory_clear" -> {
+            if (!isAdmin) return "⛔ 仅管理员"
+            val openid = args["openid"]?.trim().orEmpty()
+            if (openid.isBlank()) "⚠️ 语法：wx_user_memory_clear(openid=微信用户openid)"
+            else {
+                db.clearWxUserAllMemories(openid)
+                "✅ 微信用户 $openid 记忆已清空"
+            }
+        }
         "gateway_toggle" -> {
             if (!isAdmin) return "⛔ 仅管理员可控制网关全局启停"
             val action = args["action"] ?: "toggle"
@@ -132,7 +171,7 @@ object V155Ext2 {
         "gateway_forced_pool" -> {
             val action = args["action"] ?: "add"
             val modelKey = args["modelKey"]?.trim().orEmpty()
-            val dir = args["dir"]?.trim() ?: "down"   // ★ v1.161 move 用：up=往前(提高优先)/down=往后
+            val dir = args["dir"]?.trim() ?: "down"   // ★ v1.162 move 用：up=往前(提高优先)/down=往后
             if (modelKey.isBlank() && action != "clear") return "⚠️ 语法：gateway_forced_pool(action=add/remove/move/clear, modelKey=模型Key, dir=up/down)"
             val key = "forced_pool_keys"
             val current = db.getConfig(key, "").split(",").filter { it.isNotBlank() }.toMutableList()
@@ -140,7 +179,7 @@ object V155Ext2 {
                 "add" -> if (modelKey.isNotBlank()) { current.remove(modelKey); current.add(0, modelKey); db.setConfig("active_model_key", modelKey) }
                 "remove" -> current.remove(modelKey)
                 "move" -> {
-                    // ★ v1.161 调池内顺序（序号=切换优先）：up=往前移一位 / down=往后移一位
+                    // ★ v1.162 调池内顺序（序号=切换优先）：up=往前移一位 / down=往后移一位
                     val idx = current.indexOf(modelKey)
                     val target = if (dir == "up") idx - 1 else idx + 1
                     if (idx >= 0 && target >= 0 && target < current.size) {

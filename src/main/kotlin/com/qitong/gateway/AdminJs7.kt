@@ -1,6 +1,6 @@
 package com.qitong.gateway
 
-/** 后台 JS 第七部分：微信机器人 —— 扫码登录 / 机器人列表 / 启停 / 日志（v69） */
+/** 后台 JS 第七部分：微信机器人 —— 扫码登录 / 机器人列表 / 启停 / 日志 / 用户管理（v69；v1.162 补齐用户对齐 QQ） */
 object AdminJs7 {
   fun js(): String = """
 // ===== 微信机器人管理（v69 ilink 通道） =====
@@ -11,12 +11,13 @@ object AdminJs7 {
    '<button class="log-tab" onclick="wxTab(0)">📊 动态预览</button>'+
    '<button class="log-tab" onclick="wxTab(1)">🤖 机器人</button>'+
    '<button class="log-tab" onclick="wxTab(2)">📱 扫码登录</button>'+
-   '<button class="log-tab" onclick="wxTab(3)">📋 运行日志</button></div>'+
+   '<button class="log-tab" onclick="wxTab(3)">📋 运行日志</button>'+
+   '<button class="log-tab" onclick="wxTab(4)">👥 用户</button></div>'+
    '<div id="wxPane"><div style="color:var(--muted);padding:20px">加载中…</div></div></div>';
   wxTab(0);
  };
-var wxTabIdx = 0;
-function wxTab(i){ wxTabIdx = i; if(i===0) wxOverview(); else if(i===1) wxLoadBots(); else if(i===2) wxScan(); else if(i===3) wxLoadLogs(); }
+ var wxTabIdx = 0;
+ function wxTab(i){ wxTabIdx = i; if(i===0) wxOverview(); else if(i===1) wxLoadBots(); else if(i===2) wxScan(); else if(i===3) wxLoadLogs(); else if(i===4) wxLoadUsers(); }
 function wxTime(ts){ if(!ts) return '-'; var d=new Date(ts); return d.toLocaleString('zh-CN',{hour12:false}); }
 // ★ v72 微信动态预览（对齐 QQ 动态概览；v87 加 5 秒自动刷新 + 实时动态流 + 友好状态）
  var wxFeedTimer = null;
@@ -153,6 +154,89 @@ function wxToggle(id){
 function wxDel(id){
  if(!confirm('确认删除该微信机器人？')) return;
  api('/api/weixin/bots/'+id,{method:'DELETE'}).then(function(){ toast('已删除'); wxLoadBots(); });
+}
+// ---- ★ v1.162 微信用户管理（对齐 QQ 用户页：列表/备注/权限/记忆/解绑） ----
+function wxLoadUsers(){
+ var el=$('wxPane'); if(!el) return;
+ el.innerHTML = '<div class="action-bar"><button class="btn-ghost" onclick="wxLoadUsers()">刷新</button>'+
+  '<span style="font-size:12px;color:var(--muted)">微信用户（按 openid 隔离；可改备注/权限、看记忆、解绑）</span></div>'+
+  '<div style="overflow-x:auto"><div id="wxUserList"><div style="color:var(--muted);padding:18px">加载中…</div></div></div>';
+ api('/api/weixin/users').then(function(r){
+  var box=$('wxUserList'); if(!box) return;
+  var list=r.data||[];
+  if(!list.length){ box.innerHTML='<div style="color:var(--muted);padding:18px">暂无微信用户（有人在微信里跟机器人说过话后自动出现）</div>'; return; }
+  var rows=list.map(function(u){
+   var bound = u.boundUserId>0 ? '<span class="badge blue">已绑账号#'+u.boundUserId+'</span>' : '<span class="badge gray">未绑定</span>';
+   var perm = ['禁止','查询','操作','管理','全部'][u.permLevel||1];
+   return '<tr><td><b>'+esc(u.displayName||(u.openid||'').substring(0,12))+'</b><div style="font-size:11px;color:var(--muted)">'+esc(u.openid||'')+'</div></td>'+
+    '<td>'+bound+'</td>'+
+    '<td><span class="badge '+(u.permLevel>=3?'green':'gray')+'">'+perm+'</span></td>'+
+    '<td style="font-size:11px;color:var(--muted)">'+wxTime(u.createdAt)+'</td>'+
+    '<td style="white-space:nowrap">'+
+    '<button class="btn-ghost btn-sm" onclick="wxUserEdit(\''+esc(u.openid)+'\')">配置</button> '+
+    '<button class="btn-ghost btn-sm" onclick="wxUserMemory(\''+esc(u.openid)+'\')">🧠记忆</button> '+
+    '<button class="btn-ghost btn-sm danger" onclick="wxUserDel(\''+esc(u.openid)+'\')">解绑</button></td></tr>';
+  }).join('');
+  box.innerHTML = '<table class="tb"><thead><tr><th>用户</th><th>绑定</th><th>权限</th><th>首次活跃</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table>';
+ }).catch(function(e){ el.innerHTML='<div style="color:var(--red);padding:16px">加载失败：'+esc(e.message||e)+'</div>'; });
+}
+// 用户独立配置（备注 + 权限下拉）
+function wxUserEdit(openid){
+ api('/api/weixin/users').then(function(r){
+  var list=r.data||[];
+  var u=list.filter(function(x){return x.openid===openid;})[0]||{};
+  var html =
+   '<div class="form-row"><label>备注名称</label><input class="input" id="wxuName" value="'+esc(u.displayName||'')+'"></div>'+
+   '<div class="form-row"><label>权限等级</label><select class="input" id="wxuPerm">'+
+    '<option value="0"'+(u.permLevel===0?' selected':'')+'>⛔ 禁止</option>'+
+    '<option value="1"'+(u.permLevel===1?' selected':'')+'>🔍 查询</option>'+
+    '<option value="2"'+(u.permLevel===2?' selected':'')+'>🛠 操作</option>'+
+    '<option value="3"'+(u.permLevel===3?' selected':'')+'>🛠 管理（充值/配置）</option>'+
+    '<option value="4"'+(u.permLevel===4?' selected':'')+'>✅ 全部</option></select></div>';
+  openModal('微信用户配置 · '+(openid||'').substring(0,12), html, function(){
+   api('/api/weixin/users/update',{method:'POST',body:{
+    openid: openid,
+    displayName: $('wxuName').value.trim(),
+    permLevel: parseInt($('wxuPerm').value)||1
+   }}).then(function(r){
+    if(r.code===0){ toast('已保存', true); closeModal(); wxLoadUsers(); } else toast(r.msg||'失败', false);
+   });
+  });
+ });
+}
+// 查看用户记忆（对齐 QQ qqUserMemory）
+function wxUserMemory(openid){
+ api('/api/weixin/users/memory/detail?openid='+encodeURIComponent(openid)).then(function(r){
+  var list=(r&&r.data)||[];
+  var body = list.length
+   ? '<div style="max-height:400px;overflow-y:auto">'+list.map(function(m){
+     return '<div style="display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">'+
+      '<span style="flex:1">'+esc(m.content)+'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+wxTime(m.timestamp)+'</div></span>'+
+      '<button class="btn-ghost btn-sm danger" onclick="wxMemoryDel('+(m.id||0)+',\''+esc(openid)+'\')">删</button></div>';
+    }).join('')+'</div>'
+   : '<div style="color:var(--muted);padding:12px">该用户还没有记忆。</div>';
+  var foot = '<div style="display:flex;gap:8px;margin-top:10px">'+
+   '<button class="btn-ghost btn-sm danger" onclick="wxUserMemoryClear(\''+esc(openid)+'\')">清空记忆</button></div>';
+  openModal('微信用户记忆 · '+(openid||'').substring(0,12), body+foot, null, {hideFooter:true});
+ });
+}
+function wxMemoryDel(id,openid){
+ if(!confirm('确认删除这条记忆？')) return;
+ api('/api/weixin/users/memory/'+id,{method:'DELETE'}).then(function(r){
+  toast(r.msg||'', r.code===0); if(r.code===0) wxUserMemory(openid);
+ });
+}
+function wxUserMemoryClear(openid){
+ if(!confirm('确认清空该用户的全部记忆？'))return;
+ api('/api/weixin/users/memory/clear',{method:'POST',body:{openid:openid}}).then(function(r){
+  toast(r.msg||'已清空', r.code===0); if(r.code===0) wxUserMemory(openid);
+ });
+}
+function wxUserDel(openid){
+ if(!confirm('确认解绑该微信用户？（绑定记录删除，记忆保留）')) return;
+ api('/api/weixin/users/'+encodeURIComponent(openid),{method:'DELETE'}).then(function(r){
+  toast(r.msg||'已解绑', r.code===0); if(r.code===0) wxLoadUsers();
+ });
 }
 // ---- 扫码登录 ----
 var wxScanTimer = null;
