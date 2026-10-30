@@ -209,7 +209,7 @@ loaders.memory = function(){
  var box = $('view-memory');
  if(!box) return;
  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
- // ★ v1.162 记忆隔离升级：先取当前用户角色（管理员默认只看自己的记忆；可切「全部来源」或「按用户查」）
+ // ★ v1.163 记忆隔离升级：先取当前用户角色（管理员默认只看自己的记忆；可切「全部来源」或「按用户查」）
  api('/api/auth/me').then(function(meRes){
   var me = (meRes && meRes.code === 0 && meRes.data) || {};
   var isAdmin = me.role === 'admin';
@@ -251,7 +251,7 @@ loaders.memory = function(){
   api('/api/memory' + q).then(function(mr){
    var mc = $('memListCard'); if(!mc) return;
    var mems = (mr && mr.data) || [];
-   // ★ v1.162 按来源筛选（全部来源视图下可用）
+   // ★ v1.163 按来源筛选（全部来源视图下可用）
    var srcFilter = $('memSrcFilter') ? $('memSrcFilter').value : '';
    if(srcFilter){
     mems = mems.filter(function(m){
@@ -289,7 +289,7 @@ loaders.memory = function(){
    '<div class="form-row"><label>沟通风格</label><input class="input" id="mc2Style" value="'+esc(c.communicationStyle||'自然亲切、像朋友聊天')+'"></div>' +
    '<button class="btn" onclick="saveMemoryCfg2()">保存配置</button>';
   });
- });   // ★ v1.162 闭合 /api/auth/me 回调
+ });   // ★ v1.163 闭合 /api/auth/me 回调
 };
 window.saveMemoryCfg2 = function(){
  api('/api/memory/config', { method:'POST', body: {
@@ -299,7 +299,7 @@ window.saveMemoryCfg2 = function(){
   communicationStyle: $('mc2Style').value
  } }).then(function(r){ if(r.code===0){ toast(r.msg, true); } else toast(r.msg, false); });
 };
-// ★ v1.162 记忆多选批量操作
+// ★ v1.163 记忆多选批量操作
 function memSelAll(checked){
  var chks = document.querySelectorAll('.mem-chk');
  for(var i=0;i<chks.length;i++){ chks[i].checked = checked; }
@@ -697,7 +697,7 @@ window.delMemory = function(id){
   if(r.code === 0){ toast('已删除', true); loaders.settings(); } else toast(r.msg, false);
  });
 };
-// ★ v1.162 记忆视图切换（管理员：我的记忆 / 全部来源 / 按用户查）
+// ★ v1.163 记忆视图切换（管理员：我的记忆 / 全部来源 / 按用户查）
 window.memViewChange = function(){
  var v = $('memViewSel') ? $('memViewSel').value : 'mine';
  localStorage.setItem('qt_memView', v);
@@ -717,7 +717,7 @@ window.memQueryUser = function(){
 };
 window.clearMemories = function(){
  var v = localStorage.getItem('qt_memView') || 'mine';
- // ★ v1.162 记忆隔离：管理员「全部来源」视图=清空全部记忆；其他视图=只清自己的账号记忆
+ // ★ v1.163 记忆隔离：管理员「全部来源」视图=清空全部记忆；其他视图=只清自己的账号记忆
  if(v === 'all'){
   if(!confirm('确定清空【全部来源】记忆（含所有账号/QQ/微信/群）？此操作不可恢复！')) return;
   api('/api/memory/clear-all', { method:'POST' }).then(function(r){
@@ -824,7 +824,7 @@ window.importData = function(){
  };
  inp.click();
 };
-// ★ v1.162 两步验证：开启流程（扫码→输入动态码→绑定）
+// ★ v1.163 两步验证：开启流程（扫码→输入动态码→绑定）
 window.setupTotp = function(){
   var box = $('totpBox'); if(!box) return;
   box.innerHTML = '<div style="color:var(--muted);font-size:13px">正在生成密钥...</div>';

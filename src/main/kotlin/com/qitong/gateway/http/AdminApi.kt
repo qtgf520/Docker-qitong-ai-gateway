@@ -373,7 +373,7 @@ private fun providerToMap(p: Provider) = mapOf(
 
     /**
      * 同步服务商模型列表（调上游 /v1/models）
-     * ★ v1.162 修复「服务商无法获取模型」：直连优先+代理兜底双通道；区分 HTTP 状态码/网络异常/解析失败；
+     * ★ v1.163 修复「服务商无法获取模型」：直连优先+代理兜底双通道；区分 HTTP 状态码/网络异常/解析失败；
      *   兼容 OpenAI data[] 与 Ollama models[] 两种返回格式；返回具体错误原因
      */
     suspend fun syncProviderModels(database: Database, providerId: Long): SyncResult {
@@ -895,7 +895,7 @@ private fun providerToMap(p: Provider) = mapOf(
                     allMems.filter { m -> (m["modelId"] as? String ?: "").isBlank() || (m["modelId"] as? String ?: "") == effectiveModel }
                 } else allMems
                 if (filtered.isNotEmpty()) {
-                    // ★ v1.162 注入带来源标记（对齐大脑模块建议1）：【历史记忆·日期】让模型分清历史与当下
+                    // ★ v1.163 注入带来源标记（对齐大脑模块建议1）：【历史记忆·日期】让模型分清历史与当下
                     val msb = StringBuilder("\n\n## 🧠 用户历史记忆（共${filtered.size}条，按用户独立存储）\n")
                     msb.append("以下是该用户过去与你的对话记忆（带日期的历史记录，注意区分「之前说过」和「现在在说」），回复时自然运用：\n")
                     filtered.take(15).forEach { m ->
@@ -914,7 +914,7 @@ private fun providerToMap(p: Provider) = mapOf(
                         put("content", JsonPrimitive(msb.toString()))
                     })
                 }
-                // ★ v1.162 注入滚动摘要（对齐大脑模块建议3：结构化摘要替代原文堆叠，token 降一个数量级）
+                // ★ v1.163 注入滚动摘要（对齐大脑模块建议3：结构化摘要替代原文堆叠，token 降一个数量级）
                 runCatching {
                     val summaries = database.getMemorySummaries(userId, 3)
                     if (summaries.isNotEmpty()) {
@@ -929,7 +929,7 @@ private fun providerToMap(p: Provider) = mapOf(
                         })
                     }
                 }
-                // ★ v1.162 记忆淘汰：每轮检查，importance 优先保留（防止 25 轮填满后高分被砍）
+                // ★ v1.163 记忆淘汰：每轮检查，importance 优先保留（防止 25 轮填满后高分被砍）
                 runCatching { database.trimMemories(userId, 50) }
             }
         }
@@ -978,9 +978,9 @@ private fun providerToMap(p: Provider) = mapOf(
         val visibleModels = if (user?.role == "admin") allModels
             else if (userId > 0) allModels.filter { it.isPublic || it.ownerId == userId }
             else allModels.filter { it.isPublic }
-        // ★ v1.162 大脑绑定（qtai-sj 专用配置）最高优先：用户绑定了大脑模型 → 无论是否喊人格名都优先用大脑模型
+        // ★ v1.163 大脑绑定（qtai-sj 专用配置）最高优先：用户绑定了大脑模型 → 无论是否喊人格名都优先用大脑模型
         // 对齐原APP：qtai-sj 专用配置（qtai_brain）决定 qtai-sj 用哪个模型，其次强制池，再活跃，最后智能路由
-        // ★ v1.162 记录是否 qtai-sj：决定 buildAttemptModels 是否整体走强制池（具体模型不接管）
+        // ★ v1.163 记录是否 qtai-sj：决定 buildAttemptModels 是否整体走强制池（具体模型不接管）
         val isQtaiSj = effectiveModel == "qtai-sj"
         val brainKey = if (userId > 0) database.getUserConfig(userId, "qtai_brain", "") else ""
         val attemptModels = if (brainKey.isNotBlank()) {
@@ -1123,14 +1123,14 @@ private fun providerToMap(p: Provider) = mapOf(
                 )
                 // ★ 记忆自动保存：把用户对话存为短期记忆（供后续对话参考，默认启用）
                 if (memoryEnabled && userContent.isNotBlank()) {
-                    // ★ v1.162 importance 用弱规则计算（关键词命中 +1，基线 5，上限 9）
+                    // ★ v1.163 importance 用弱规则计算（关键词命中 +1，基线 5，上限 9）
                     val imp = database.calcImportance(userContent, 5)
                     database.addMemory(
                         userId,
                         "对话记录", userContent.trim().take(200),
                         "short", "neutral", imp, "auto", "chat", effectiveModel
                     )
-                    // ★ v1.162 滚动摘要：每 5 条新记忆自动压一条结构化摘要（token 降一个数量级，对齐大脑模块建议3）
+                    // ★ v1.163 滚动摘要：每 5 条新记忆自动压一条结构化摘要（token 降一个数量级，对齐大脑模块建议3）
                     runCatching {
                         val totalCount = database.getMemoriesCount(userId)
                         if (totalCount > 0 && totalCount % 5 == 0) {

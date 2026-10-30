@@ -245,7 +245,7 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.162 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
+            // ★ v1.163 模型自定义价格表（管理员可增删改；计费时优先读此表，未收录回退内置 PricingTable）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS model_prices (
                     model_id TEXT PRIMARY KEY,
@@ -254,7 +254,7 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.162 模型映射（外部请求名 -> 内部模型Key有序列表，按序故障转移）
+            // ★ v1.163 模型映射（外部请求名 -> 内部模型Key有序列表，按序故障转移）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS model_mappings (
                     alias TEXT PRIMARY KEY,
@@ -263,7 +263,7 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.162 表达式计费规则（条件命中 → 覆盖价或倍率；时段格式 HH:mm-HH:mm）
+            // ★ v1.163 表达式计费规则（条件命中 → 覆盖价或倍率；时段格式 HH:mm-HH:mm）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS pricing_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,7 +278,7 @@ class Database(private val dbPath: String) {
                 )"""
             )
             // ★ v1.146 内置五档套餐种子（仅首次初始化，INSERT OR IGNORE 不覆盖管理员修改）
-            // ★ v1.162 渠道分组（用户选组不选具体模型；组名如 fast/stable/cheap）
+            // ★ v1.163 渠道分组（用户选组不选具体模型；组名如 fast/stable/cheap）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS channel_groups (
                     name TEXT PRIMARY KEY,
@@ -365,7 +365,7 @@ class Database(private val dbPath: String) {
                     model_id TEXT NOT NULL DEFAULT ''
                 )"""
             )
-            // ★ v1.162 滚动摘要表（对齐大脑模块建议3：原文堆叠改结构化摘要，token 降一个数量级）
+            // ★ v1.163 滚动摘要表（对齐大脑模块建议3：原文堆叠改结构化摘要，token 降一个数量级）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS memory_summary (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -651,7 +651,7 @@ class Database(private val dbPath: String) {
                 )"""
             )
             try { st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_qq_logs_time ON qq_logs(created_at DESC)") } catch (_: Exception) {}
-            // ★ v1.162 系统动态持久化（首页 ⚡系统动态 历史记录数据源：模型切换/测速完成/故障转移/启动停止）
+            // ★ v1.163 系统动态持久化（首页 ⚡系统动态 历史记录数据源：模型切换/测速完成/故障转移/启动停止）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS gateway_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1258,7 +1258,7 @@ val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUser
         stmt("UPDATE users SET email=?, notify_enabled=? WHERE id=?", email, if (notifyEnabled) 1 else 0, userId)
     }
 
-    /** ★ v1.162 两步验证：设置/清除 TOTP 密钥 */
+    /** ★ v1.163 两步验证：设置/清除 TOTP 密钥 */
     fun setTotpSecret(userId: Long, secret: String) {
         stmt("UPDATE users SET totp_secret=? WHERE id=?", secret, userId)
     }
@@ -1289,7 +1289,7 @@ val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUser
     fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = "", inviterId: Long = 0): Long {
         // 生成邀请码
         val code = "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0')
-        // ★ v1.162 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
+        // ★ v1.163 注册默认免费套餐：plan='free' + quota_limit=免费套餐默认额度(10万) + quota_used=0
         //   避免新用户 quota_limit=0 显示「不限额度」而实际免费套餐是 10 万（对齐产品预期）
         val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         stmt(
@@ -1306,7 +1306,7 @@ fun updateUserLogin(id: Long) {
         stmt("UPDATE users SET password_hash=? WHERE id=?", newHash, id)
     }
 
-    // ★ v1.162 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
+    // ★ v1.163 补全免费用户额度：扫 plan='free' 且 quota_limit<=0 的用户，补为免费套餐额度（对齐免费版 10 万）
     fun fixFreeUserQuotas(): Int {
         val freeQuota = 100000L  // 对齐 plan_defs free 的 quotaLimit
         val rows = query("SELECT id FROM users WHERE plan='free' AND quota_limit<=0")
@@ -1556,17 +1556,17 @@ fun updateUserLogin(id: Long) {
 
     // ============ 大脑记忆（按用户隔离） ============
 
-    /** ★ v1.162 统计用户记忆条数（滚动摘要触发用，不触发 accessCount） */
+    /** ★ v1.163 统计用户记忆条数（滚动摘要触发用，不触发 accessCount） */
     fun getMemoriesCount(userId: Long): Int =
         (queryOne("SELECT COUNT(*) FROM brain_memory WHERE user_id=?", userId) as? Number)?.toInt() ?: 0
 
-    /** ★ v1.162 读取最近 N 条记忆内容（滚动摘要用，不触发 accessCount） */
+    /** ★ v1.163 读取最近 N 条记忆内容（滚动摘要用，不触发 accessCount） */
     fun getMemoriesForSummary(userId: Long, limit: Int = 5): List<String> =
         query("SELECT content FROM brain_memory WHERE user_id=? ORDER BY timestamp DESC LIMIT $limit", userId)
             .map { (it["content"] as? String).orEmpty() }
             .filter { it.isNotBlank() }
 
-    /** ★ v1.162 读取用户记忆（注入用）：带日期来源标记，让模型分清「历史」和「当下」
+    /** ★ v1.163 读取用户记忆（注入用）：带日期来源标记，让模型分清「历史」和「当下」
      *  对齐大脑模块建议 1/2：注入格式 【历史记忆·日期】内容；accessCount 命中即 +1 */
     fun getMemories(userId: Long, limit: Int = 100): List<Map<String, Any?>> =
         query("SELECT * FROM brain_memory WHERE user_id=? ORDER BY importance DESC, timestamp DESC LIMIT $limit", userId).map {
@@ -1588,7 +1588,7 @@ fun updateUserLogin(id: Long) {
             )
         }
 
-    /** ★ v1.162 记忆淘汰：importance 优先 + 时间兜底（不再纯 takeLast 砍高分）
+    /** ★ v1.163 记忆淘汰：importance 优先 + 时间兜底（不再纯 takeLast 砍高分）
      *  对齐大脑模块建议 6：重要性评分真正参与淘汰，importance>=7 的记忆不会被普通对话挤掉 */
     fun trimMemories(userId: Long, max: Int) {
         val total = queryOne("SELECT COUNT(*) FROM brain_memory WHERE user_id=?", userId)?.toInt() ?: 0
@@ -1610,7 +1610,7 @@ fun updateUserLogin(id: Long) {
         }
     }
 
-    /** ★ v1.162 滚动摘要表：每 N 轮把对话压成结构化摘要（token 降一个数量级，对齐大脑模块建议 3） */
+    /** ★ v1.163 滚动摘要表：每 N 轮把对话压成结构化摘要（token 降一个数量级，对齐大脑模块建议 3） */
     fun addMemorySummary(userId: Long, content: String, tags: String = ""): Long {
         val now = System.currentTimeMillis()
         stmt(
@@ -1627,7 +1627,7 @@ fun updateUserLogin(id: Long) {
         return lastInsertId()
     }
 
-    /** ★ v1.162 读取最近 N 条滚动摘要（注入用，比原文堆叠省 token） */
+    /** ★ v1.163 读取最近 N 条滚动摘要（注入用，比原文堆叠省 token） */
     fun getMemorySummaries(userId: Long, limit: Int = 3): List<Map<String, Any?>> =
         query("SELECT * FROM memory_summary WHERE user_id=? ORDER BY created_at DESC LIMIT $limit", userId).map {
             mapOf(
@@ -1638,14 +1638,14 @@ fun updateUserLogin(id: Long) {
             )
         }
 
-    /** ★ v1.162 记忆重要性弱规则：关键词命中 +1（基线 5，不超过 9，避免「记住很重要」就永久霸位） */
+    /** ★ v1.163 记忆重要性弱规则：关键词命中 +1（基线 5，不超过 9，避免「记住很重要」就永久霸位） */
     fun calcImportance(content: String, base: Int = 5): Int {
         val keywords = listOf("很重要", "记住", "务必", "关键", "密码", "账号", " deadline", "截止", "提醒", "别忘")
         val hit = keywords.count { content.contains(it, true) }
         return (base + hit).coerceAtMost(9)
     }
 
-    /** ★ v1.162 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签
+    /** ★ v1.163 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签
      *  ★ v1.161 记忆隔离升级：管理员默认只返回自己的账号记忆；传 userId 查指定账号、传 openid/botId 查指定渠道用户 */
     fun getAllMemories(
         limit: Int = 500,
@@ -1753,21 +1753,21 @@ fun updateUserLogin(id: Long) {
         stmt("DELETE FROM brain_memory WHERE user_id=?", userId)
     }
 
-    /** ★ v1.162 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
+    /** ★ v1.163 管理员删除任意来源记忆（含QQ/微信/群标签记忆） */
     fun deleteMemoryAny(id: Long): Boolean {
         val exists = queryOne("SELECT id FROM brain_memory WHERE id=?", id) != null
         if (exists) stmt("DELETE FROM brain_memory WHERE id=?", id)
         return exists
     }
 
-    /** ★ v1.162 管理员清空全部记忆（含账号/QQ/微信/群来源） */
+    /** ★ v1.163 管理员清空全部记忆（含账号/QQ/微信/群来源） */
     fun clearAllMemories(): Int {
         val n = queryOne("SELECT COUNT(*) FROM brain_memory")?.toInt() ?: 0
         stmt("DELETE FROM brain_memory")
         return n
     }
 
-    // ============ ★ v1.162 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
+    // ============ ★ v1.163 模型自定义价格表（管理员可维护；计费优先读此表，回退内置 PricingTable） ============
 
     /** 全部自定义价格（model_id → input/output/updatedAt） */
     fun getAllModelPrices(): List<Map<String, Any?>> =
@@ -1811,7 +1811,7 @@ fun updateUserLogin(id: Long) {
     }
 
     /** 清空全部自定义价格（管理员） */
-    // ============ ★ v1.162 模型映射（alias -> targets 有序列表） ============
+    // ============ ★ v1.163 模型映射（alias -> targets 有序列表） ============
     fun getModelMappings(): List<Map<String, Any?>> =
         query("SELECT * FROM model_mappings ORDER BY updated_at DESC").map { row ->
             mapOf(
@@ -1839,7 +1839,7 @@ fun updateUserLogin(id: Long) {
         return n
     }
 
-    // ============ ★ v1.162 表达式计费规则 ============
+    // ============ ★ v1.163 表达式计费规则 ============
     fun getPricingRules(): List<Map<String, Any?>> =
         query("SELECT * FROM pricing_rules ORDER BY updated_at DESC").map { row ->
             mapOf(
@@ -1871,7 +1871,7 @@ fun updateUserLogin(id: Long) {
         return n
     }
 
-    // ============ ★ v1.162 渠道分组 ============
+    // ============ ★ v1.163 渠道分组 ============
     fun getChannelGroups(): List<Map<String, Any?>> =
         query("SELECT * FROM channel_groups ORDER BY updated_at DESC").map { row ->
             mapOf(
@@ -1972,7 +1972,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
-            Triple("v1.162", "修复具体模型请求被强制池错误接管（连接卡顿/断连）", "v1.159 把强制故障池错误应用到所有请求，导致具体模型请求（如 deepseek-chat）被强制池接管、请求模型没置首、全部走池内模型还都失败→卡顿/断连。现对齐原APP精确语义：qtai-sj→强制切换（大脑绑定→用户池→全局池→活跃→智能路由兜底，按池顺序故障转移）；其他模型→测速排行（请求模型置首+强制池其余按序作候选，无池时按测速排行故障切换，不再接管请求）。保留v1.159主页系统动态持久化+强制池表格化展示。"),
+            Triple("v1.163", "修复具体模型请求被强制池错误接管（连接卡顿/断连）", "v1.159 把强制故障池错误应用到所有请求，导致具体模型请求（如 deepseek-chat）被强制池接管、请求模型没置首、全部走池内模型还都失败→卡顿/断连。现对齐原APP精确语义：qtai-sj→强制切换（大脑绑定→用户池→全局池→活跃→智能路由兜底，按池顺序故障转移）；其他模型→测速排行（请求模型置首+强制池其余按序作候选，无池时按测速排行故障切换，不再接管请求）。保留v1.159主页系统动态持久化+强制池表格化展示。"),
             Triple("v1.159", "强制故障池对齐原APP结构 + 主页动态持久化", "①qtai-sj专用配置（大脑绑定）真正生效：请求qtai-sj时优先走大脑绑定→用户强制池→全局池→活跃模型，最后才是智能路由/测速排行兜底，不再一上来就跳测速排行。②强制池卡片改表格化展示（对齐测速排行榜：序号/模型/服务商/状态/操作列），每个模型独立一行，▲▼调序/点灯强制切换/移出池按钮分开独立。③新增gateway_logs表持久化系统动态（模型切换/测速完成/故障转移/启动停止），首页「⚡系统动态」先渲染最近10条历史、刷新不丢，再实时增量推送。修复WebUi顶栏VER历史残留。"),
             Triple("v1.158", "强制故障池支持调顺序（序号=切换优先）", "首页强制故障池每个模型新增▲▼排序按钮，点▲上移提高切换优先、点▼下移降低；序号=切换优先，越靠前越先尝试，故障转移严格按池顺序。接口 POST /api/gateway/forced-pool 新增 action=move（dir=up/down），管理员全局池、普通用户自己的池。沙盒 gateway_forced_pool 新增 move 动作+dir 参数，QQ/微信/qtai-sj 可远程调顺序。修复 WebUi 顶栏版本号 VER 历史残留（v1.133→v1.158）。"),
             Triple("v1.157", "六大能力升级（2FA安全 + new-api四件套 + 冒烟测试）", "两步验证2FA（TOTP，个人中心开启，登录需动态码，防暴力破解）。模型映射（外部请求名→内部模型列表按序路由故障转移）。表达式计费（按模型/角色/时段差异化定价，覆盖价或倍率）。渠道分组（fast/cheap/stable，用户请求组名只在该组内自动选模型）。记忆分组管理（按来源筛选+批量删除）。自动化冒烟测试（scripts/smoke_test.sh发版后自动验证核心链路）。"),
@@ -3069,7 +3069,7 @@ val logs = listOf(
             )
         }
 
-    /** ★ v1.162 微信用户列表（对齐 getQqUsers，微信独立隔离：openid/botId 区分） */
+    /** ★ v1.163 微信用户列表（对齐 getQqUsers，微信独立隔离：openid/botId 区分） */
     fun getWeixinUsers(limit: Int = 200): List<Map<String, Any?>> =
         query("SELECT * FROM weixin_user_bindings ORDER BY created_at DESC LIMIT $limit").map { row ->
             mapOf(
@@ -3082,17 +3082,17 @@ val logs = listOf(
             )
         }
 
-    /** ★ v1.162 更新微信用户（备注/权限；对齐 QQ updateQqUser） */
+    /** ★ v1.163 更新微信用户（备注/权限；对齐 QQ updateQqUser） */
     fun updateWeixinUser(openid: String, displayName: String?, permLevel: Int?, permFlags: String?) {
         displayName?.let { stmt("UPDATE weixin_user_bindings SET display_name=? WHERE wx_openid=?", it, openid) }
         permLevel?.let { stmt("UPDATE weixin_user_bindings SET perm_level=? WHERE wx_openid=?", it.coerceIn(0, 4), openid) }
         permFlags?.let { stmt("UPDATE weixin_user_bindings SET perm_flags=? WHERE wx_openid=?", it, openid) }
     }
 
-    /** ★ v1.162 删除微信用户绑定记录（解绑） */
+    /** ★ v1.163 删除微信用户绑定记录（解绑） */
     fun deleteWeixinUser(openid: String) { stmt("DELETE FROM weixin_user_bindings WHERE wx_openid=?", openid) }
 
-    /** ★ v1.162 删除微信用户记忆（含多 bot 隔离的 wx:{botId}:{openid} 全清） */
+    /** ★ v1.163 删除微信用户记忆（含多 bot 隔离的 wx:{botId}:{openid} 全清） */
     fun clearWxUserAllMemories(openid: String) {
         stmt("DELETE FROM brain_memory WHERE tags=? OR tags=?", "wx:$openid", "wx:%:$openid")
         // 补一条兜底：LIKE 匹配 wx:{botId}:{openid}
@@ -3145,7 +3145,7 @@ val logs = listOf(
     /** QQ 运行日志：清空全部 */
     fun clearQqLogs() { stmt("DELETE FROM qq_logs") }
 
-    // ============ 系统动态日志（首页⚡系统动态持久化，v1.162） ============
+    // ============ 系统动态日志（首页⚡系统动态持久化，v1.163） ============
 
     /** 写入系统动态：模型切换/测速完成/故障转移/启动停止等重要事件 */
     fun addGatewayLog(type: String, content: String) {
@@ -3342,7 +3342,7 @@ val logs = listOf(
 
     // ============ ★ v1.115 微信长期大脑记忆（复用 brain_memory 表，tags=wx:{openid}，对齐 QQ） ============
 
-    /** ★ v1.162 读取某微信用户最近的记忆（多 bot 隔离：botId>0 只读该 bot 的记忆；botId=0 读全部微信记忆） */
+    /** ★ v1.163 读取某微信用户最近的记忆（多 bot 隔离：botId>0 只读该 bot 的记忆；botId=0 读全部微信记忆） */
     fun getWxBrainMemories(openid: String, limit: Int = 6, botId: Long = 0L): List<String> {
         val tags = if (botId > 0) "wx:$botId:$openid" else "wx:$openid"
         val rows = query(
@@ -3352,7 +3352,7 @@ val logs = listOf(
         return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
     }
 
-    /** ★ v1.162 写入一条微信用户记忆（多 bot 隔离：botId>0 时 tags=wx:{botId}:{openid}，各微信 bot 记忆互不串） */
+    /** ★ v1.163 写入一条微信用户记忆（多 bot 隔离：botId>0 时 tags=wx:{botId}:{openid}，各微信 bot 记忆互不串） */
     fun saveWxBrainMemory(openid: String, content: String, type: String = "short", botId: Long = 0L) {
         val tags = if (botId > 0) "wx:$botId:$openid" else "wx:$openid"
         stmt(
@@ -3361,13 +3361,13 @@ val logs = listOf(
         )
     }
 
-    /** ★ v1.162 清空某微信用户记忆（多 bot 隔离：botId>0 只清该 bot 的；botId=0 清全部微信记忆） */
+    /** ★ v1.163 清空某微信用户记忆（多 bot 隔离：botId>0 只清该 bot 的；botId=0 清全部微信记忆） */
     fun clearWxBrainMemories(openid: String, botId: Long = 0L) {
         if (botId > 0) stmt("DELETE FROM brain_memory WHERE tags=?", "wx:$botId:$openid")
         else stmt("DELETE FROM brain_memory WHERE tags=?", "wx:$openid")
     }
 
-    /** ★ v1.162 读取某微信用户记忆明细（供前端单条删除；多 bot 隔离）。 */
+    /** ★ v1.163 读取某微信用户记忆明细（供前端单条删除；多 bot 隔离）。 */
     fun getWxBrainMemoryItems(openid: String, limit: Int = 100, botId: Long = 0L): List<Map<String, Any?>> {
         val tags = if (botId > 0) "wx:$botId:$openid" else "wx:$openid"
         return query("SELECT id, content, type, timestamp FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit", tags).map { row ->
