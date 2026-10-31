@@ -257,6 +257,8 @@ git push origin master
 | 42 | **内网 git 仓库路径是 /home/gitdev/** | 误以为 gitdev 仓库在 /home/git/，ls-remote 报 not a repository（gitdev 是纯 git 账号不能执行 shell） | 正确路径 `ssh://gitdev@qitong.pve.jili5.cn:6062/home/gitdev/docker-qitong-111.git`；探测用 for 循环 ls-remote 对比 HEAD |
 | 43 | **DEV_GUIDE 存真实密码被开源包带出** | 踩坑 31 样例写了内网 git 密码明文，git archive 打开源包把密码带出去，红线违规 | DEV_GUIDE 任何样例只写 `<内网git密码>` 占位不写真值；发版前 grep 全包敏感词（内网git密码 / 服务器密码 / 证书口令 / github令牌 模式）清零 |
 | 44 | **Kotlin 块注释里写 `/*` 触发嵌套注释未闭合** | detectModality 注释写 `(/v1/images/*)` 里的 `/*` 开启内层注释 → 编译器报 Missing '}' + Unclosed comment，连带后续所有代码错位（大量 Unresolved reference 看似其他文件坏了，v1.161 排查 40+ 分钟） | Kotlin 块注释支持嵌套，注释内严禁出现 `/*` 组合（路径描述改写成 `images接口` 等）；改注释后编译报奇怪的 Missing '}' 先 grep 注释里的 `/*` |
+| 45 | **服务器内存越积越满（旧包不清）** | 每次部署留旧 jar 备份 + 旧 tgz + 未使用镜像，曾堆到 818M 且 swap 611M，用户炸「内存不能每次开发爆满」；Java 默认堆 = 物理内存 1/4 无上限 | Dockerfile 显式限堆 `-Xmx512m` + compose `mem_limit: 768m`；部署后自动清理（jar 只留最新1 + tgz 只留最新1 + docker image prune）——规则写进 DEV_GUIDE 部署章节必做（v1.164 实测容器内存 337M→164M，系统可用内存 +500M） |
+| 46 | **QQ 机器人记忆不如微信** | QQ 绑定用户仍走 qq:{openid} 简单记忆，微信已走账号记忆（getMemories 带日期标记+滚动摘要），两通道不同源 | QQ 绑定账号后优先走 getMemories(effUserId)+getMemorySummaries，未绑定才回退 qq:{openid}；让 QQ/微信/内置聊天记忆同源（v1.164） |
 
 ---
 
