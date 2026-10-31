@@ -162,7 +162,7 @@ class GatewayProxy(private val database: Database) {
         return sorted.firstOrNull()?.modelId ?: "qtai-sj"
     }
 
-    /** ★ v1.164 检测请求模态：按 path + body 内容识别
+    /** ★ v1.165 检测请求模态：按 path + body 内容识别
      *  ★ 修复：图片生成(images接口)、视频生成(videos接口)、语音合成(audio/speech)、
      *    嵌入(embeddings) 请求体没有 messages，旧版只扫 messages → 模态恒空 → 静态路由永不触发。
      *    现按 path 识别这些接口；chat/completions 无多模态内容默认 text */
@@ -197,7 +197,7 @@ class GatewayProxy(private val database: Database) {
         return "text"
     }
 
-    /** ★ v1.164 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移）
+    /** ★ v1.165 模态路由配置：管理员在网关设置里给 文本/图片/语音/视频/输入/输出 指定模型，命中直接转发（不故障转移）
      *  返回 "providerId::modelId" 或 modelId；空 = 未配置/自动 */
     fun modalityRouteModel(modality: String, modelId: String): String? {
         if (modality.isBlank()) return null
@@ -226,7 +226,7 @@ class GatewayProxy(private val database: Database) {
         modality: String = "",   // ★ v1.123 多模态：vision/audio/video，空=纯文本
         isQtaiSj: Boolean = false // ★ v1.160 原始请求是否为 qtai-sj（决定是否整体走强制池）
     ): List<AiModel> {
-        // ★ v1.164 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
+        // ★ v1.165 模态路由：管理员指定了该模态的模型 → 直接只用它（不走故障转移，保证转发的模型就是用户配的）
         val routed = modalityRouteModel(modality, modelId)
         if (routed != null && routed.isNotBlank()) {
             val rparts = routed.split("::")
@@ -311,7 +311,7 @@ class GatewayProxy(private val database: Database) {
             healthySorted + listOfNotNull(primary) + unhealthySorted
         }
         var sortedRest = ordered.distinctBy { it.providerId to it.modelId }
-        // ★ v1.164 强制故障转移池内循环（不跳出池）：用户/全局配了强制池时，故障转移候选 = 请求模型置首 + 池内其余按序
+        // ★ v1.165 强制故障转移池内循环（不跳出池）：用户/全局配了强制池时，故障转移候选 = 请求模型置首 + 池内其余按序
         //   池内模型全部失败后，才跳出池走测速排行兜底（对齐綦桐语义「强制故障转移里的不跳出去，只循环故障转移里」）
         if (forcedModels.isNotEmpty()) {
             val poolOthers = forcedModels.filter { it.modelId != (primary?.modelId) || it.providerId != (primary?.providerId) }
@@ -442,7 +442,7 @@ class GatewayProxy(private val database: Database) {
         } catch (_: Exception) { bodyStr }
     }
 
-    /** ★ v1.164 替换/注入请求体中的 model 字段
+    /** ★ v1.165 替换/注入请求体中的 model 字段
      *  图片生成/视频生成等接口请求体可能没有 model 字段（只有 prompt），此时注入路由模型 */
     fun replaceModelInBody(bodyStr: String, newModelId: String): String {
         return try {
@@ -510,7 +510,7 @@ class GatewayProxy(private val database: Database) {
 
         val bodyStr = String(rawBytes, Charsets.UTF_8)
         val body = try { json.parseToJsonElement(bodyStr).jsonObject } catch (_: Exception) { buildJsonObject { } }
-        // ★ v1.164 多模态检测：按 path + body 识别（图片/视频/语音/嵌入接口无 messages 也正确识别；纯文本默认 text）
+        // ★ v1.165 多模态检测：按 path + body 识别（图片/视频/语音/嵌入接口无 messages 也正确识别；纯文本默认 text）
         val modality = detectModality(body, path)
 
         // 解析模型ID

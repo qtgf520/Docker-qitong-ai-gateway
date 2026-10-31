@@ -1,6 +1,6 @@
 package com.qitong.gateway
 
-/** 后台 JS 第七部分：微信机器人 —— 扫码登录 / 机器人列表 / 启停 / 日志 / 用户管理（v69；v1.164 补齐用户对齐 QQ） */
+/** 后台 JS 第七部分：微信机器人 —— 扫码登录 / 机器人列表 / 启停 / 日志 / 用户管理（v69；v1.165 补齐用户对齐 QQ） */
 object AdminJs7 {
   fun js(): String = """
 // ===== 微信机器人管理（v69 ilink 通道） =====
@@ -155,7 +155,7 @@ function wxDel(id){
  if(!confirm('确认删除该微信机器人？')) return;
  api('/api/weixin/bots/'+id,{method:'DELETE'}).then(function(){ toast('已删除'); wxLoadBots(); });
 }
-// ---- ★ v1.164 微信用户管理（对齐 QQ 用户页：列表/备注/权限/记忆/解绑） ----
+// ---- ★ v1.165 微信用户管理（对齐 QQ 用户页：列表/备注/权限/记忆/解绑） ----
 function wxLoadUsers(){
  var el=$('wxPane'); if(!el) return;
  el.innerHTML = '<div class="action-bar"><button class="btn-ghost" onclick="wxLoadUsers()">刷新</button>'+

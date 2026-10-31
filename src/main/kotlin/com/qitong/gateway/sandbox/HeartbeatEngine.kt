@@ -1,7 +1,8 @@
 package com.qitong.gateway.sandbox
-
 import com.qitong.gateway.db.Database
 import kotlinx.coroutines.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -147,6 +148,96 @@ object HeartbeatEngine {
             val issues = mutableListOf<String>()
             val okLines = mutableListOf<String>()
 
+            // ★ v1.165 智能体主动活跃：配置 agent_active_enabled=true 时，向最近活跃的 QQ 群/微信联系人主动问候（透明后台自动跑）
+            runCatching {
+                if (db.getConfig("agent_active_enabled", "false") == "true") {
+                    val now = System.currentTimeMillis()
+                    // 每个目标上次问候时间（内存防刷屏：同一目标默认每 6 小时最多问候一次）
+                    val greetGap = (db.getConfig("agent_active_gap_hours", "6").toIntOrNull() ?: 6) * 3600_000L
+                    val lastGreetKey = "agent_active_last_greet"
+                    val lastGreetMap = db.getConfig(lastGreetKey, "{}")
+                    // 简单英文逗号 KV：openid=ts,group=ts
+                    val lastGreet = runCatching {
+                        org.json.JSONObject(lastGreetMap)
+                    }.getOrElse { org.json.JSONObject() }
+
+                    // ① 找最近活跃的 QQ 群（2 小时内有过消息 + AI 开启）
+                    val activeGroups = db.getActiveQqGroups(2 * 3600 * 1000L, 5)
+                    for (g in activeGroups) {
+                        val gid = (g["groupOpenid"] as? String ?: "").ifBlank { continue }
+                        val key = "g:$gid"
+                        val last = lastGreet.optLong(key, 0L)
+                        if (last > 0 && now - last < greetGap) continue
+                        // 先生成一句自然的问候（调本地大脑，纯聊天不调工具）
+                        val greet = runCatching {
+                            val body = org.json.JSONObject()
+                                .put("model", "qtai-sj")
+                                .put("messages", org.json.JSONArray()
+                                    .put(org.json.JSONObject().put("role", "system").put("content",
+                                        "你是綦桐AI网关的智能助手，性格温暖自然。现在是${java.text.SimpleDateFormat("HH:mm").format(java.util.Date())}，这个群最近很活跃。请发一句自然的、真诚的冒泡关心（20字以内），像真人朋友一样随口问一句，不要提AI、不要列功能、不要用表情堆砌。"))
+                                    .put(org.json.JSONObject().put("role", "user").put("content", "（主动活跃：向群打个自然的招呼）")))
+                                .put("stream", false).put("max_tokens", 60)
+                                .toString()
+                            val req = okhttp3.Request.Builder()
+                                .url("http://127.0.0.1:18889/v1/chat/completions")
+                                .addHeader("Content-Type", "application/json")
+                                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                                .build()
+                            val resp = okhttp3.OkHttpClient().newCall(req).execute()
+                            resp.use { r ->
+                                if (r.isSuccessful) {
+                                    org.json.JSONObject(r.body?.string().orEmpty())
+                                        .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                        ?.optString("content")?.trim().orEmpty().take(100)
+                                } else ""
+                            }
+                        }.getOrNull() ?: ""
+                        if (greet.isNotBlank()) {
+                            com.qitong.gateway.qq.QqBotManager.sendActiveGreetToGroup(gid, greet)
+                            lastGreet.put(key, now)
+                            okLines.add("💬 主动问候群 $gid：$greet")
+                        }
+                    }
+                    // ② 找最近活跃的微信联系人
+                    val activeWx = db.getActiveWxUsers(2 * 3600 * 1000L, 5)
+                    for (w in activeWx) {
+                        val openid = (w["openid"] as? String ?: "").ifBlank { continue }
+                        val key = "w:$openid"
+                        val last = lastGreet.optLong(key, 0L)
+                        if (last > 0 && now - last < greetGap) continue
+                        val greet = runCatching {
+                            val body = org.json.JSONObject()
+                                .put("model", "qtai-sj")
+                                .put("messages", org.json.JSONArray()
+                                    .put(org.json.JSONObject().put("role", "system").put("content",
+                                        "你是綦桐AI网关的智能助手，性格温暖自然。现在是${java.text.SimpleDateFormat("HH:mm").format(java.util.Date())}，这位用户最近和你聊过。请发一句自然的、真诚的关心（20字以内），像真人朋友一样随口问一句，不要提AI、不要列功能、不要用表情堆砌。"))
+                                    .put(org.json.JSONObject().put("role", "user").put("content", "（主动活跃：向这位用户打个自然的招呼）")))
+                                .put("stream", false).put("max_tokens", 60)
+                                .toString()
+                            val req = okhttp3.Request.Builder()
+                                .url("http://127.0.0.1:18889/v1/chat/completions")
+                                .addHeader("Content-Type", "application/json")
+                                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                                .build()
+                            val resp = okhttp3.OkHttpClient().newCall(req).execute()
+                            resp.use { r ->
+                                if (r.isSuccessful) {
+                                    org.json.JSONObject(r.body?.string().orEmpty())
+                                        .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                        ?.optString("content")?.trim().orEmpty().take(100)
+                                } else ""
+                            }
+                        }.getOrNull() ?: ""
+                        if (greet.isNotBlank()) {
+                            com.qitong.gateway.weixin.WeixinBotManager.sendActiveGreet(openid, greet)
+                            lastGreet.put(key, now)
+                            okLines.add("💬 主动问候微信用户 $openid：$greet")
+                        }
+                    }
+                    db.setConfig(lastGreetKey, lastGreet.toString())
+                }
+            }
+
             // 1. 网关运行状态
             val gwRunning = com.qitong.gateway.http.GatewayProxy.running
             if (!gwRunning) issues.add("⚠️ 网关已停止运行！")
@@ -171,7 +262,7 @@ object HeartbeatEngine {
                 }
             }
 
-            // ★ v1.164 模型健康告警：可用模型占比低（<30%）时主动汇报（OpenClaw 式主动感知健康）
+            // ★ v1.165 模型健康告警：可用模型占比低（<30%）时主动汇报（OpenClaw 式主动感知健康）
             runCatching {
                 val health = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
                 val healthy = health.count { (it["isHealthy"] as? Boolean) == true }

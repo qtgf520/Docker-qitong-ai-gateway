@@ -9,9 +9,9 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v1.164"
+    private const val VER = "v1.165"
 
-    /** ★ v1.164 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
+    /** ★ v1.165 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
     fun landingHtml(): String = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -199,7 +199,7 @@ async function doLogin(){
   var r=await postJson('/api/auth/login',body);
   if(r.code===0){
     if(r.data&&r.data.needTotp){
-      // ★ v1.164 2FA：密码正确，弹验证码输入
+      // ★ v1.165 2FA：密码正确，弹验证码输入
       $('lgTotpLbl').style.display='';$('lgTotp').style.display='';$('lgTotp').focus();
       show('请输入两步验证码（身份验证器 6 位动态码）');
       return;
