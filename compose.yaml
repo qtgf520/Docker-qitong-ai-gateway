@@ -3,6 +3,8 @@ services:
     build: .
     container_name: qitong-ai-gateway
     restart: always
+    # ★ v1.164 内存治理：容器内存上限 768M（JVM 512m 堆 + 开销），防止内存越积越满
+    mem_limit: 768m
     ports:
       - "18080:18080"   # Web 后台
       - "18889:18889"   # 网关 API

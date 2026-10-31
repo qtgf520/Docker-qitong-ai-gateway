@@ -141,7 +141,13 @@ cd /opt/qitong-gateway
 cp qitong-gateway.jar qitong-gateway.jar.bak_v旧版_$(date +%Y%m%d_%H%M%S)
 mv qitong-gateway.jar.new qitong-gateway.jar
 docker compose up -d --build    # ★ 必须 --build，否则不 COPY 新 jar！
+# ★ v1.164 部署后必做：清理旧备份（jar 只留最新1个 + tgz 只留最新1个 + 未使用镜像）——防止磁盘/内存越积越满
+ls -t qitong-gateway.jar.bak_* 2>/dev/null | tail -n +2 | xargs -r rm -f
+ls -t qitong-backup-*.tgz 2>/dev/null | tail -n +2 | xargs -r rm -f
+docker image prune -f
+docker system prune -f
 ```
+> ⚠️ **v1.164 血泪教训：服务器每次部署必须清旧包**。旧 jar 备份 5 个 + tgz 10 个 + 未使用镜像，曾堆到 818M 且内存 swap 占用 611M，用户炸「内存不能每次开发爆满」。部署后立即清理（只留最新），JVM 已限堆（-Xmx512m）+ 容器 mem_limit 768m，杜绝内存无限增长。
 
 ### 血泪教训
 - **`docker compose up -d --force-recreate` 不会重新 COPY jar**！必须 `--build`（或 `update --force` + `up -d --build`）

@@ -1,5 +1,6 @@
 # 綦桐AI网关 Docker 镜像 —— 直接使用已构建的 fatJar
 # 构建在本地完成（gradle fatJar），此镜像仅打包运行
+# ★ v1.164 内存治理：JVM 显式限堆 512m，防止内存越积越满（服务器 3.9G 总量，其他服务多）
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 
@@ -19,8 +20,9 @@ EXPOSE 18080 18889
 
 ENV WEB_PORT=18080 \
     GATEWAY_PORT=18889 \
-    DB_PATH=/data/qitong/gateway.db
+    DB_PATH=/data/qitong/gateway.db \
+    JAVA_OPTS="-Xms256m -Xmx512m -XX:+UseG1GC"
 
 VOLUME ["/data/qitong"]
 
-CMD ["java", "-jar", "/app/qitong-gateway.jar"]
+CMD ["sh", "-c", "java $JAVA_OPTS -jar /app/qitong-gateway.jar"]

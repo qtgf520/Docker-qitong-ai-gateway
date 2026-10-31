@@ -31,8 +31,8 @@ object UpstreamClient {
 
     private fun createClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
-            .connectTimeout(8, TimeUnit.SECONDS)   // ★ v1.163 连接超时 60→8s：provider 网络不通立即切下一个，杜绝"发出去卡60秒"
-            .readTimeout(60, TimeUnit.SECONDS)    // ★ v1.163 读超时 120→60s：流式长思考兜底；非流式走 clientShort 20s 快速失败
+            .connectTimeout(8, TimeUnit.SECONDS)   // ★ v1.164 连接超时 60→8s：provider 网络不通立即切下一个，杜绝"发出去卡60秒"
+            .readTimeout(60, TimeUnit.SECONDS)    // ★ v1.164 读超时 120→60s：流式长思考兜底；非流式走 clientShort 20s 快速失败
             .writeTimeout(60, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .callTimeout(0, TimeUnit.SECONDS)
@@ -100,8 +100,8 @@ object UpstreamClient {
 
     private fun createDirectClient(): OkHttpClient {
         return OkHttpClient.Builder()
-            .connectTimeout(8, TimeUnit.SECONDS)   // ★ v1.163 连接超时 60→8s
-            .readTimeout(60, TimeUnit.SECONDS)    // ★ v1.163 读超时 120→60s
+            .connectTimeout(8, TimeUnit.SECONDS)   // ★ v1.164 连接超时 60→8s
+            .readTimeout(60, TimeUnit.SECONDS)    // ★ v1.164 读超时 120→60s
             .writeTimeout(60, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .callTimeout(0, TimeUnit.SECONDS)
