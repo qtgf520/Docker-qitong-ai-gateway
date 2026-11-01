@@ -26,7 +26,7 @@ object WeixinBotManager {
     private val runtime = ConcurrentHashMap<Long, WeixinRuntimeState>()
     private val pendingBind = ConcurrentHashMap<String, Pair<Int, String>>()
     private val lastReplyTs = ConcurrentHashMap<String, Long>()
-    // ★ v1.165 最近回复文本（冷却只防相同内容刷屏）
+    // ★ v1.166 最近回复文本（冷却只防相同内容刷屏）
     private val lastReplyText = ConcurrentHashMap<String, String>()
     // ★ v74 每用户多轮上下文（微信 openid 隔离，对齐 QQ history）
     private val history = ConcurrentHashMap<String, MutableList<Pair<String, String>>>()
@@ -39,7 +39,7 @@ object WeixinBotManager {
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
-        // ★ v1.165 提速：单轮 60s（原来 90s 读 + 120s 总）——微信机器人回复慢根因是等超时太久；超时快速失败触发故障转移
+        // ★ v1.166 提速：单轮 60s（原来 90s 读 + 120s 总）——微信机器人回复慢根因是等超时太久；超时快速失败触发故障转移
         .callTimeout(60, TimeUnit.SECONDS)
         .build()
     private val jsonCt = "application/json; charset=utf-8".toMediaType()
@@ -47,18 +47,18 @@ object WeixinBotManager {
     private val activeCalls = ConcurrentHashMap<String, okhttp3.Call>()
     // ★ v1.116 每用户当前任务 Job：新消息（非停止）立即取消旧任务 → 无缝接上下文继续干（不间断追问）
     private val userJobs = ConcurrentHashMap<String, kotlinx.coroutines.Job>()
-    // ★ v1.165 并发任务池：同一用户的多个任务并行跑（多对话多提交多任务互不打断）
+    // ★ v1.166 并发任务池：同一用户的多个任务并行跑（多对话多提交多任务互不打断）
     //   key = botId:openid，value = 该用户正在运行的任务集合；只有显式发「停止」才取消全部
     private val taskPools = ConcurrentHashMap<String, MutableSet<kotlinx.coroutines.Job>>()
 
-    /** ★ v1.165 把任务加入用户并发池（允许多任务同时跑） */
+    /** ★ v1.166 把任务加入用户并发池（允许多任务同时跑） */
     private fun submitTask(userKey: String, job: kotlinx.coroutines.Job) {
         val pool = taskPools.getOrPut(userKey) { java.util.Collections.synchronizedSet(HashSet()) }
         pool.add(job)
         job.invokeOnCompletion { pool.remove(job) }
     }
 
-    /** ★ v1.165 取消某用户全部任务（仅用于「停止」指令） */
+    /** ★ v1.166 取消某用户全部任务（仅用于「停止」指令） */
     private fun cancelAllTasks(userKey: String) {
         taskPools[userKey]?.let { pool ->
             synchronized(pool) { pool.toList() }.forEach { runCatching { it.cancel() } }
@@ -96,7 +96,7 @@ object WeixinBotManager {
         }
     }
 
-    /** ★ v1.165 指定目标推送（心跳/计划任务到期只发管理员配置的微信 openid；未配置则发最近活跃联系人兜底，不再全广播） */
+    /** ★ v1.166 指定目标推送（心跳/计划任务到期只发管理员配置的微信 openid；未配置则发最近活跃联系人兜底，不再全广播） */
     fun sendToTargets(targets: List<String>, text: String) {
         try {
             val bots = db?.getWeixinBots()?.filter { it.enabled } ?: return
@@ -116,7 +116,7 @@ object WeixinBotManager {
         } catch (e: Exception) { System.err.println("[WeixinBot] sendToTargets 异常: ${e.message}") }
     }
 
-    /** ★ v1.165 主动活跃：向指定微信用户发一句自然问候（心跳引擎定时调用） */
+    /** ★ v1.166 主动活跃：向指定微信用户发一句自然问候（心跳引擎定时调用） */
     fun sendActiveGreet(openid: String, text: String) {
         if (openid.isBlank() || text.isBlank()) return
         try {
@@ -286,16 +286,16 @@ object WeixinBotManager {
             activeCalls[msg.from]?.cancel()
             activeCalls.remove(msg.from)
             userJobs.remove(msg.from)?.cancel()
-            // ★ v1.165 并发任务池：停止=取消该用户全部并发任务
+            // ★ v1.166 并发任务池：停止=取消该用户全部并发任务
             cancelAllTasks(if (bot.id > 0) "${bot.id}:${msg.from}" else msg.from)
             send("🛑 已停止任务（用户中断）。")
             d.addWeixinLog(bot.id, msg.from, "command", "停止指令", System.currentTimeMillis() - t0)
             return
         }
         stopSignals[msg.from] = false
-        // ★ v1.165 并发多任务：不再「新消息取消旧任务」，同一用户多条消息各自独立跑（多对话多任务互不打断）
+        // ★ v1.166 并发多任务：不再「新消息取消旧任务」，同一用户多条消息各自独立跑（多对话多任务互不打断）
         //   只有显式发「停止」才取消全部；「追问」场景由 askModel 的 stopSignals 语义自然衔接
-        // userJobs.remove(msg.from)?.cancel()  ← v1.165 移除，改并发池
+        // userJobs.remove(msg.from)?.cancel()  ← v1.166 移除，改并发池
 
         // 管理指令（白名单 + 权限校验）
         val bound = d.getWeixinBoundUser(msg.from)
@@ -521,12 +521,12 @@ object WeixinBotManager {
         }
 
         val last = lastReplyTs[msg.from] ?: 0L
-        // ★ v1.165 冷却只防「相同内容刷屏」：不同内容的消息全部放行（多对话/多任务并发需要）
+        // ★ v1.166 冷却只防「相同内容刷屏」：不同内容的消息全部放行（多对话/多任务并发需要）
         val lastText = lastReplyText[msg.from]
         if (System.currentTimeMillis() - last < 3000 && lastText == t) return
         lastReplyTs[msg.from] = System.currentTimeMillis()
         lastReplyText[msg.from] = t
-        // ★ v1.165 并发任务池：每条消息独立成一个协程任务提交到用户池，多任务并行互不打断
+        // ★ v1.166 并发任务池：每条消息独立成一个协程任务提交到用户池，多任务并行互不打断
         val userKey = if (bot.id > 0) "${bot.id}:${msg.from}" else msg.from
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
         val job = scope.launch {
@@ -542,9 +542,9 @@ object WeixinBotManager {
     /** loopback 调用网关大脑（qtai-sj 走完整沙盒 Agent 循环：思考推送→调工具→结果回填→多轮） */
     private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long, send: (String) -> Unit): String? {
         val d = db ?: return null
-        // ★ v1.165 每用户上下文隔离 key 增加 botId：同一个微信联系人被多个 bot 服务时，各 bot 上下文/记忆互不串
+        // ★ v1.166 每用户上下文隔离 key 增加 botId：同一个微信联系人被多个 bot 服务时，各 bot 上下文/记忆互不串
         val key = if (bot.id > 0) "${bot.id}:${msg.from}" else msg.from
-        // ★ v1.165 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
+        // ★ v1.166 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
         val sandboxOn = true
         // ★ v71 人设优先：用户设置的 systemPrompt 始终注入（沙盒时追加到提示词后，不被覆盖）
         val userPrompt = bot.systemPrompt.trim()
@@ -554,7 +554,7 @@ object WeixinBotManager {
         } else {
             userPrompt.ifBlank { "你是綦桐小助理，运行在綦桐AI网关微信渠道。" }
         }
-        // ★ v1.165 绑定用户人格注入：按绑定账号的 Persona（名字/性格/语气/背景）陪聊，让机器人像「有性格的綦小桐」
+        // ★ v1.166 绑定用户人格注入：按绑定账号的 Persona（名字/性格/语气/背景）陪聊，让机器人像「有性格的綦小桐」
         if (userId > 0) {
             runCatching {
                 val p = d.getPersona(userId)
@@ -572,7 +572,7 @@ object WeixinBotManager {
             }
         }
         // ★ v76 微信长期记忆：绑定账号后按 userId 注入大脑记忆；★v1.115 未绑定用户也按 openid 注入（对齐 QQ），不再「没记忆」
-        // ★ v1.165 未绑定用户按 openid+botId 走微信独立记忆（多 bot 分开）
+        // ★ v1.166 未绑定用户按 openid+botId 走微信独立记忆（多 bot 分开）
         if (userId > 0) {
             runCatching {
                 val mems = d.getMemories(userId, limit = 8)
@@ -594,10 +594,16 @@ object WeixinBotManager {
         }
         val hist = history.getOrPut(key) { mutableListOf() }
         return try {
-            // 第一次请求：带上下文
             val msgs = JSONArray().put(JSONObject().put("role", "system").put("content", baseSys))
-            hist.forEach { (r, c) -> msgs.put(JSONObject().put("role", r).put("content", c)) }
-            msgs.put(JSONObject().put("role", "user").put("content", userText))
+            // ★ v1.167 入口幂等写入（对齐 QQ 侧）：清尾部残留脏 user → 锁内快照历史 → 写入本次 user
+            //   上一轮异常/中断可能遗留尾部 user（防止 user→user 串台）；锁内快照防并发 ConcurrentModificationException
+            synchronized(hist) {
+                while (hist.isNotEmpty() && hist.last().first == "user") hist.removeAt(hist.size - 1)
+                hist.forEach { (r, c) -> msgs.put(JSONObject().put("role", r).put("content", c)) }
+                hist.add("user" to userText)
+                msgs.put(JSONObject().put("role", "user").put("content", userText))
+                while (hist.size > 20) hist.removeAt(0)
+            }
             val body = JSONObject()
                 .put("model", bot.aiModel)
                 .put("messages", msgs)
@@ -629,8 +635,6 @@ object WeixinBotManager {
                     d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
                 var loop = 0
                 var noCallGuide = 0   // ★ v77 引导计数器：模型只输出描述不输出标签时引导它
-                // ★ v1.133 记录用户原始消息到 hist（循环内）——确保「接着弄」时模型能看到最初需求
-                var userTextLogged = false
                 while (loop < 20) {
                     // ★ v75 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考（对齐 QQ v64）
                     if (stopSignals[msg.from] == true) {
@@ -645,7 +649,7 @@ object WeixinBotManager {
                         send("⏳ 任务还在处理中（第 $loop 轮），我继续干着，请稍候…")
                         lastProgressAt = System.currentTimeMillis()
                     }
-                    if (!userTextLogged) { hist.add("user" to userText); userTextLogged = true }
+                    // ★ v1.167 user 已在入口幂等写入，循环内不再补写（避免重复写 user）
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
                     if (calls.isEmpty()) {
                         // ★ v77 假调用修复：模型只输出了"正在调用 xxx"描述但没输出严格标签 → 引导它输出真标签再执行
@@ -697,7 +701,7 @@ object WeixinBotManager {
                             "工具执行异常（" + fn + "）：" + e.message
                         }
                         results.append("【$fn 执行结果】\n$r\n")
-                        // ★ v1.165 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文由 send 内部分段
+                        // ★ v1.166 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文由 send 内部分段
                         val rShow = r.trim()
                         send("✅ $fn 完成：\n$rShow")
                         executedCalls = true
@@ -720,7 +724,7 @@ object WeixinBotManager {
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append("【$fn 执行结果】\n$r\n")
-                                    // ★ v1.165 修复长文截断：并行工具结果完整推送（不再 take(120)）
+                                    // ★ v1.166 修复长文截断：并行工具结果完整推送（不再 take(120)）
                                     val rShow = r.trim()
                                     send("✅ $fn 完成：\n$rShow")
                                     executedCalls = true
@@ -767,11 +771,10 @@ object WeixinBotManager {
                         content = "✅ 已完成以上任务，结果已实时推送。如需继续操作，直接告诉我～"
                         break
                     }
-                    // ★ v1.133 记录本轮执行到 hist：把「调用+结果」写进上下文，「接着弄」时模型能看到之前干了啥
-                    hist.add("assistant" to cleanText)
-                    hist.add("user" to "【工具执行结果】\n$results")
+                    // ★ v1.167 工具「调用+结果」只在本请求临时上下文（nextBody）内传递，不再写入多轮 hist
+                    //   （修复串台：否则下一条闲聊会把上一轮工具过程带进上下文，机器人「问他这个他说那个」）
                     content = nextContent
-                    // ★ v1.165 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
+                    // ★ v1.166 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
                         send("💭 好的，我继续查…")
@@ -826,9 +829,13 @@ object WeixinBotManager {
                     }
                 }
             } else {
-                hist.add("user" to userText)
-                hist.add("assistant" to content)
-                while (hist.size > 20) hist.removeAt(0)
+                // ★ v1.167 user 已在入口幂等写入，此处只补 assistant（尾部 user 归属保护，防重复 user→user）
+                synchronized(hist) {
+                    if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
+                        hist.add("assistant" to content)
+                        while (hist.size > 20) hist.removeAt(0)
+                    }
+                }
             }
             // ★ v78 收敛：工具结果已实时推送（executedCalls=true）→ 不再返回模型复述结果的总结
             //   （对齐 QQ v60：过程推送已展示，最终只留简短收尾/AI 意见，不重复已推送结果）
@@ -854,11 +861,19 @@ object WeixinBotManager {
                             .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
                             ?.optString("content")?.trim().orEmpty()
                     }
-                    if (closeContent.isNullOrBlank() || closeContent.length <= 2) {
+                    val finalText = if (closeContent.isNullOrBlank() || closeContent.length <= 2) {
                         "✅ 已完成，结果已实时推送。如需继续操作，直接告诉我～"
                     } else {
                         cleanFunctionTags(closeContent).ifBlank { "✅ 已完成，结果已实时推送。如需继续操作，直接告诉我～" }
                     }
+                    // ★ v1.167 最终答复写回 hist（尾部 user 归属保护：并发新消息顶掉本条 user 时不写，防张冠李戴）
+                    synchronized(hist) {
+                        if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
+                            hist.add("assistant" to finalText)
+                            while (hist.size > 20) hist.removeAt(0)
+                        }
+                    }
+                    finalText
                 } catch (e: Exception) {
                     "✅ 已完成，结果已实时推送。如需继续操作，直接告诉我～"
                 }
@@ -875,7 +890,15 @@ object WeixinBotManager {
                         }
                     }
                 }
-                cleanFunctionTags(content)
+                val finalText = cleanFunctionTags(content)
+                // ★ v1.167 普通路径最终答复写回 hist（尾部 user 归属保护）
+                synchronized(hist) {
+                    if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
+                        hist.add("assistant" to finalText)
+                        while (hist.size > 20) hist.removeAt(0)
+                    }
+                }
+                finalText
             }
         } catch (e: Exception) {
             System.err.println("[WeixinBot] 模型调用异常: ${e.message}")
@@ -883,7 +906,7 @@ object WeixinBotManager {
         }
     }
 
-    /** ★ v1.165 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
+    /** ★ v1.166 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
     private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
         text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
         text.contains("让我", true) || text.contains("我去", true) || text.contains("我来", true) ||

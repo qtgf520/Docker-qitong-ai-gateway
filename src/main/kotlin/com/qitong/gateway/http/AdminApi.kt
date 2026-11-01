@@ -373,7 +373,7 @@ private fun providerToMap(p: Provider) = mapOf(
 
     /**
      * 同步服务商模型列表（调上游 /v1/models）
-     * ★ v1.165 修复「服务商无法获取模型」：直连优先+代理兜底双通道；区分 HTTP 状态码/网络异常/解析失败；
+     * ★ v1.166 修复「服务商无法获取模型」：直连优先+代理兜底双通道；区分 HTTP 状态码/网络异常/解析失败；
      *   兼容 OpenAI data[] 与 Ollama models[] 两种返回格式；返回具体错误原因
      */
     suspend fun syncProviderModels(database: Database, providerId: Long): SyncResult {
@@ -895,7 +895,7 @@ private fun providerToMap(p: Provider) = mapOf(
                     allMems.filter { m -> (m["modelId"] as? String ?: "").isBlank() || (m["modelId"] as? String ?: "") == effectiveModel }
                 } else allMems
                 if (filtered.isNotEmpty()) {
-                    // ★ v1.165 注入带来源标记（对齐大脑模块建议1）：【历史记忆·日期】让模型分清历史与当下
+                    // ★ v1.166 注入带来源标记（对齐大脑模块建议1）：【历史记忆·日期】让模型分清历史与当下
                     val msb = StringBuilder("\n\n## 🧠 用户历史记忆（共${filtered.size}条，按用户独立存储）\n")
                     msb.append("以下是该用户过去与你的对话记忆（带日期的历史记录，注意区分「之前说过」和「现在在说」），回复时自然运用：\n")
                     filtered.take(15).forEach { m ->
@@ -914,7 +914,7 @@ private fun providerToMap(p: Provider) = mapOf(
                         put("content", JsonPrimitive(msb.toString()))
                     })
                 }
-                // ★ v1.165 注入滚动摘要（对齐大脑模块建议3：结构化摘要替代原文堆叠，token 降一个数量级）
+                // ★ v1.166 注入滚动摘要（对齐大脑模块建议3：结构化摘要替代原文堆叠，token 降一个数量级）
                 runCatching {
                     val summaries = database.getMemorySummaries(userId, 3)
                     if (summaries.isNotEmpty()) {
@@ -929,7 +929,7 @@ private fun providerToMap(p: Provider) = mapOf(
                         })
                     }
                 }
-                // ★ v1.165 记忆淘汰：每轮检查，importance 优先保留（防止 25 轮填满后高分被砍）
+                // ★ v1.166 记忆淘汰：每轮检查，importance 优先保留（防止 25 轮填满后高分被砍）
                 runCatching { database.trimMemories(userId, 50) }
             }
         }
@@ -978,9 +978,9 @@ private fun providerToMap(p: Provider) = mapOf(
         val visibleModels = if (user?.role == "admin") allModels
             else if (userId > 0) allModels.filter { it.isPublic || it.ownerId == userId }
             else allModels.filter { it.isPublic }
-        // ★ v1.165 大脑绑定（qtai-sj 专用配置）最高优先：用户绑定了大脑模型 → 无论是否喊人格名都优先用大脑模型
+        // ★ v1.166 大脑绑定（qtai-sj 专用配置）最高优先：用户绑定了大脑模型 → 无论是否喊人格名都优先用大脑模型
         // 对齐原APP：qtai-sj 专用配置（qtai_brain）决定 qtai-sj 用哪个模型，其次强制池，再活跃，最后智能路由
-        // ★ v1.165 记录是否 qtai-sj：决定 buildAttemptModels 是否整体走强制池（具体模型不接管）
+        // ★ v1.166 记录是否 qtai-sj：决定 buildAttemptModels 是否整体走强制池（具体模型不接管）
         val isQtaiSj = effectiveModel == "qtai-sj"
         val brainKey = if (userId > 0) database.getUserConfig(userId, "qtai_brain", "") else ""
         val attemptModels = if (brainKey.isNotBlank()) {
@@ -1060,8 +1060,8 @@ private fun providerToMap(p: Provider) = mapOf(
             }
         }
 
-        // ★ v48 内置聊天沙盒：qtai-sj 模式解析函数调用并执行（不配 QQ 机器人也能用全部功能）
-        if (effectiveModel.equals("qtai-sj", true) && lastResult != null) {
+        // ★ v48 内置聊天沙盒（★ v1.166 所有模型都启用：不配 QQ 机器人也能用全部工具，对齐微信 sandboxOn=true）
+        if (lastResult != null) {
             val isAdmin = (user?.role == "admin" || user?.role == "agent")
             // ★ v96 自定义技能自动触发（对齐 QQ/微信）：skills 表技能命中触发词直接执行
             val customSkills = try { database.getSkills(userId) } catch (e: Exception) { emptyList() }
@@ -1091,8 +1091,12 @@ private fun providerToMap(p: Provider) = mapOf(
                 skillResults.add(mapOf("code" to (hitSkill["name"] as? String ?: "skill"), "name" to (hitSkill["name"] as? String ?: ""), "result" to (result ?: "")))
                 lastResult = "🧠 技能「${hitSkill["name"]}」已执行：\n" + (result ?: "✅ 技能执行完成")
             }
-            val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(lastResult!!)
-            if (calls.isNotEmpty()) {
+            // ★ v1.166 Agent 连贯循环：解析工具调用→执行→结果回填→再调模型继续（最多 8 轮，沙盒不会半路死掉）
+            var agentLoop = 0
+            while (agentLoop < 8) {
+                agentLoop++
+                val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(lastResult!!)
+                if (calls.isEmpty()) break
                 val sb = StringBuilder()
                 for ((fn, args) in calls) {
                     val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, database)
@@ -1100,8 +1104,39 @@ private fun providerToMap(p: Provider) = mapOf(
                     skillResults.add(mapOf("code" to fn, "name" to fn, "result" to r))
                     database.addOpLog(userId, user?.username ?: "user$userId", "沙盒调用", "[$fn] $args -> ${r.take(80)}", "")
                 }
-                // 把执行结果追加到回复里
-                lastResult = (lastResult ?: "") + "\n\n" + sb.toString().trim()
+                val toolResult = sb.toString().trim()
+                lastResult = (lastResult ?: "") + "\n\n" + toolResult
+                // 再调一次模型：基于工具结果继续（若还有工具调用则下轮循环执行，否则出最终答复）
+                val continueResp = runCatching {
+                    val continueBody = buildJsonObject {
+                        put("model", JsonPrimitive(effectiveModel))
+                        put("messages", JsonArray(messages + buildJsonObject {
+                            put("role", JsonPrimitive("assistant"))
+                            put("content", JsonPrimitive(lastResult.orEmpty()))
+                        } + buildJsonObject {
+                            put("role", JsonPrimitive("user"))
+                            put("content", JsonPrimitive("【工具执行结果（内部参考，用户已实时看到）】\n$toolResult\n\n请基于以上真实结果继续决策：\n- 如果任务已完成 → 给你完整的最终答复（大白话，该长则长，不要复述工具原始输出，用你的话总结/解读/补充）\n- 如果还需更多操作 → 继续输出 [[沙盒:函数名(参数=值)]] 调用标签\n- 除继续调用外不要输出任何函数调用语法，只输出对用户说的话"))
+                        }))
+                        put("stream", JsonPrimitive(false))
+                        put("max_tokens", JsonPrimitive(4096))
+                    }
+                    val bodyStr = kotlinx.serialization.json.Json.encodeToString(continueBody)
+                    val req = okhttp3.Request.Builder()
+                        .url("http://127.0.0.1:18889/v1/chat/completions")
+                        .addHeader("Content-Type", "application/json")
+                        .post(bodyStr.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                        .build()
+                    val resp = okhttp3.OkHttpClient().newCall(req).execute()
+                    resp.use { r ->
+                        if (r.isSuccessful) {
+                            org.json.JSONObject(r.body?.string().orEmpty())
+                                .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                                ?.optString("content")?.trim().orEmpty()
+                        } else ""
+                    }
+                }.getOrNull() ?: ""
+                if (continueResp.isBlank()) break
+                lastResult = continueResp
             }
         }
 
@@ -1123,14 +1158,14 @@ private fun providerToMap(p: Provider) = mapOf(
                 )
                 // ★ 记忆自动保存：把用户对话存为短期记忆（供后续对话参考，默认启用）
                 if (memoryEnabled && userContent.isNotBlank()) {
-                    // ★ v1.165 importance 用弱规则计算（关键词命中 +1，基线 5，上限 9）
+                    // ★ v1.166 importance 用弱规则计算（关键词命中 +1，基线 5，上限 9）
                     val imp = database.calcImportance(userContent, 5)
                     database.addMemory(
                         userId,
                         "对话记录", userContent.trim().take(200),
                         "short", "neutral", imp, "auto", "chat", effectiveModel
                     )
-                    // ★ v1.165 滚动摘要：每 5 条新记忆自动压一条结构化摘要（token 降一个数量级，对齐大脑模块建议3）
+                    // ★ v1.166 滚动摘要：每 5 条新记忆自动压一条结构化摘要（token 降一个数量级，对齐大脑模块建议3）
                     runCatching {
                         val totalCount = database.getMemoriesCount(userId)
                         if (totalCount > 0 && totalCount % 5 == 0) {

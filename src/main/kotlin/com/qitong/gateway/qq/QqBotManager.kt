@@ -31,7 +31,7 @@ object QqBotManager {
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
-        // ★ v1.165 提速：单轮 60s（原来 90s 读 + 120s 总）——QQ 机器人回复慢根因是等超时太久；
+        // ★ v1.166 提速：单轮 60s（原来 90s 读 + 120s 总）——QQ 机器人回复慢根因是等超时太久；
         //   模型长思考靠 activeCall.cancel() 即时打断，60s 足够覆盖绝大多数模型响应，超时快速失败触发故障转移
         .callTimeout(60, TimeUnit.SECONDS)
         .build()
@@ -48,7 +48,7 @@ object QqBotManager {
     private const val HISTORY_MAX = 10
     // 每用户独立互斥：同一用户串行，不同用户并行，互不干扰
     private val userMutex = ConcurrentHashMap<String, Mutex>()
-    // ★ v1.165 并发任务池：同用户多消息各自独立协程跑（多对话/多任务互不打断），只有「停止」取消全部
+    // ★ v1.166 并发任务池：同用户多消息各自独立协程跑（多对话/多任务互不打断），只有「停止」取消全部
     private val taskPools = ConcurrentHashMap<String, MutableSet<kotlinx.coroutines.Job>>()
     // 每用户冷却时间戳
     private val lastReplyTs = ConcurrentHashMap<String, Long>()
@@ -185,7 +185,7 @@ object QqBotManager {
     fun statusOf(id: Long): QqRuntimeState = runtime.getOrPut(id) { QqRuntimeState() }
     fun allStatus(): Map<Long, QqRuntimeState> = runtime.toMap()
 
-    /** ★ v1.165 主动活跃：向指定 QQ 群发一句自然问候（心跳引擎定时调用） */
+    /** ★ v1.166 主动活跃：向指定 QQ 群发一句自然问候（心跳引擎定时调用） */
     fun sendActiveGreetToGroup(groupOpenid: String, text: String) {
         if (groupOpenid.isBlank() || text.isBlank()) return
         try {
@@ -248,12 +248,12 @@ object QqBotManager {
                 }.onFailure { e -> System.err.println("[QQBot] 掉线重登检查异常: ${e.message}") }
             }
         }
-        // ★ v47 自主心跳（对齐 Kai Heartbeat）：每 N 分钟自检，发现问题推送到指定目标（★ v1.165 不再全群广播，只发管理员配置的群/微信联系人）
+        // ★ v47 自主心跳（对齐 Kai Heartbeat）：每 N 分钟自检，发现问题推送到指定目标（★ v1.166 不再全群广播，只发管理员配置的群/微信联系人）
         runCatching {
             com.qitong.gateway.sandbox.HeartbeatEngine.onIssue = { msg ->
                 runCatching {
                     // 心跳推送目标（网关设置可配：heartbeat_target_qq=群openid 逗号分隔；heartbeat_target_wx=微信openid 逗号分隔）
-                    // ★ v1.165 只发指定目标，不再全群/全联系人广播
+                    // ★ v1.166 只发指定目标，不再全群/全联系人广播
                     val qqTargets = database.getConfig("heartbeat_target_qq", "").split(",")
                         .map { it.trim() }.filter { it.isNotBlank() }
                     val wxTargets = database.getConfig("heartbeat_target_wx", "").split(",")
@@ -270,7 +270,7 @@ object QqBotManager {
                             targets.forEach { gid -> runCatching { api.sendGroupMessage(b, at, gid, msg, null) } }
                         }
                     }
-                    // ★ v1.165 微信推送：只发配置目标 openid（不再 broadcastAll 全联系人）
+                    // ★ v1.166 微信推送：只发配置目标 openid（不再 broadcastAll 全联系人）
                     com.qitong.gateway.weixin.WeixinBotManager.sendToTargets(wxTargets, msg)
                 }
             }
@@ -456,7 +456,7 @@ object QqBotManager {
         }
     }
 
-    /** ★ v1.165 并发任务提交：同一用户多条消息各自独立跑，不做 Mutex 串行（多对话/多任务互不打断） */
+    /** ★ v1.166 并发任务提交：同一用户多条消息各自独立跑，不做 Mutex 串行（多对话/多任务互不打断） */
     private fun withUserLock(key: String, block: suspend () -> Unit) {
         val scope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
         val job = scope.launch {
@@ -481,7 +481,7 @@ object QqBotManager {
             activeCalls[userOpenid]?.cancel()
             activeCalls.remove(userOpenid)
             userJobs.remove(userOpenid)?.cancel()
-            // ★ v1.165 并发任务池：停止=取消该用户全部并发任务
+            // ★ v1.166 并发任务池：停止=取消该用户全部并发任务
             cancelAllTasks(key)
             send("🛑 已停止当前任务，所有执行已断开。有新指令随时说～")
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "stop", "用户停止任务", System.currentTimeMillis() - t0)
@@ -489,9 +489,9 @@ object QqBotManager {
         }
         // 正常消息进来 → 清掉之前的停止信号（新任务开始）
         stopSignals[userOpenid] = false
-        // ★ v1.165 并发多任务：不再「新消息取消旧任务」，同一用户多条消息各自独立跑（多对话多任务互不打断）
+        // ★ v1.166 并发多任务：不再「新消息取消旧任务」，同一用户多条消息各自独立跑（多对话多任务互不打断）
         //   只有显式发「停止」才取消全部；「追问」场景由 askModel 的 stopSignals 语义自然衔接
-        // userJobs.remove(userOpenid)?.cancel()  ← v1.165 移除，改并发池
+        // userJobs.remove(userOpenid)?.cancel()  ← v1.166 移除，改并发池
         // ★ v51 分步绑定处理：用户在绑定流程中（pendingBind 有值）发的任意消息 = 绑定输入
         val bindState = pendingBind[userOpenid]
         if (bindState != null && !t.startsWith("绑定账号", true) && !t.equals("取消", true)) {
@@ -1161,7 +1161,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return System.currentTimeMillis() - last < seconds * 1000L
     }
 
-    /** ★ v1.165 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
+    /** ★ v1.166 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
     private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
         text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
         text.contains("让我", true) || text.contains("我去", true) || text.contains("我来", true) ||
@@ -1495,7 +1495,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val groupCfg = if (groupOpenid.isNotBlank()) db.getQqGroupConfig(groupOpenid) else null
         val groupPrompt = groupCfg?.get("groupPrompt") as? String
         val userPersona = db.getQqUser(userOpenid)?.get("persona") as? String?
-        // ★ v1.165 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
+        // ★ v1.166 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
         val sandboxOn = true
         // ★ v50 绑定账号身份：QQ 用户绑定网关账号后，沙盒调用自动用该账号 userId（权限/余额/用量对齐）
         val boundUser = db.getQqBoundUser(userOpenid)
@@ -1503,7 +1503,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val effIsAdmin = (boundUser?.role == "admin" || boundUser?.role == "agent") ||
             ((db.getQqUserByGroup(userOpenid, groupOpenid)?.get("permLevel") as? Number)?.toInt() ?: 1) >= 3
         val isAdmin = effIsAdmin
-        // ★ v1.165 追加式组装（对齐微信）：沙盒完整版 + 群提示词 + 用户人格 + 机器人设定 全部保留，不再 when 短路丢人格
+        // ★ v1.166 追加式组装（对齐微信）：沙盒完整版 + 群提示词 + 用户人格 + 机器人设定 全部保留，不再 when 短路丢人格
         var baseSys = com.qitong.gateway.sandbox.SandboxEngine.SYSTEM_PROMPT
         if (sandboxOn) {
             // 群专属提示词（群聊时按群设定）
@@ -1524,7 +1524,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             if (!userPersona.isNullOrBlank()) baseSys += "\n\n【你的人格设定】\n" + userPersona
             if (bot.systemPrompt.isNotBlank()) baseSys += "\n\n【机器人主人设定】\n" + bot.systemPrompt
         }
-        // ★ v1.165 绑定用户人格注入：按绑定账号的 Persona 陪聊（名字/性格/语气/背景），少调工具
+        // ★ v1.166 绑定用户人格注入：按绑定账号的 Persona 陪聊（名字/性格/语气/背景），少调工具
         if (effUserId > 0) {
             runCatching {
                 val p = db.getPersona(effUserId)
@@ -1541,7 +1541,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 }
             }
         }
-// ★ v1.165 长期大脑记忆：绑定账号后优先用账号记忆（带日期标记+滚动摘要，与微信/内置聊天同源），未绑定回退 qq:{openid}
+// ★ v1.166 长期大脑记忆：绑定账号后优先用账号记忆（带日期标记+滚动摘要，与微信/内置聊天同源），未绑定回退 qq:{openid}
         var memSection = ""
         if (effUserId > 0) {
             runCatching {
@@ -1588,8 +1588,18 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         }
         val sysFull = baseSys + memSection
         if (sysFull.isNotBlank()) msgs.put(JSONObject().put("role", "system").put("content", sysFull))
-        hist.forEach { (role, content) -> msgs.put(JSONObject().put("role", role).put("content", content)) }
-        msgs.put(JSONObject().put("role", "user").put("content", userText))
+        // ★ v1.167 修复串台：历史严格按 user→assistant 交替，工具过程数据绝不入_hist。
+        //   1) 先清掉尾部残留 user（前一轮模型失败/异常返回 null 时留下的脏数据，防 user→user）
+        //   2) 快照历史进本次请求（锁内读，防并发 ConcurrentModificationException）
+        //   3) 本次 user 同时进请求与历史；同一会话并发新消息到来时会顶掉未完成的上一条尾部 user，
+        //      上一条回复写回时若尾部已不是自己这条 user → 放弃写入，避免 assistant 交错错乱
+        synchronized(hist) {
+            while (hist.isNotEmpty() && hist.last().first == "user") hist.removeAt(hist.size - 1)
+            hist.forEach { (role, c) -> msgs.put(JSONObject().put("role", role).put("content", c)) }
+            hist.add("user" to userText)
+            msgs.put(JSONObject().put("role", "user").put("content", userText))
+            while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+        }
 
         val body = JSONObject()
             .put("model", bot.aiModel)
@@ -1707,7 +1717,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             "❌ 工具执行异常（$fn）：${e.message}"
                         }
                         results.append("【$fn 执行结果】\n$r")
-                        // ★ v1.165 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文本分段由 smartSend 自动拆
+                        // ★ v1.166 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文本分段由 smartSend 自动拆
                         //   OpenClaw 式：结果就是结果，必须完整给用户看到
                         val rShow = r.trim()
                         smartSend("✅ $fn 完成：\n$rShow", false)
@@ -1727,7 +1737,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append(if (results.isEmpty()) "" else "\n").append("【$fn 执行结果】\n$r")
-                                    // ★ v1.165 修复长文截断：并行工具结果也完整推送（不再 take(120)）
+                                    // ★ v1.166 修复长文截断：并行工具结果也完整推送（不再 take(120)）
                                     val rShow = r.trim()
                                     smartSend("✅ $fn 完成：\n$rShow", false)
                                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] 并行执行", 0)
@@ -1742,9 +1752,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
                     val cleanText = cleanFunctionTags(content)
-                    // ★ v1.133 结果已实时推送 → 模型只做决策不复述（龙虾式：过程已展示，最终别重复）
+                    // ★ v1.167 修复串台：cleanText 是工具调用过程文本，不再写入多轮历史（原每次循环写入，
+                    //   与 L1786 重复、且把过程数据混进对话历史导致下一轮上下文错乱）
                     val newPrompt = cleanText + "\n\n【工具执行结果（内部参考，已实时推送给用户，用户已经看到了）】\n" + results + "\n\n请基于以上真实执行结果**继续决策**，不要复述任何已展示的结果/数据：\n- 如果任务已完成且无需再调用工具 → 用你自己的话给出**完整、自然的最终答复**（可多句、可分段，把结论/分析/建议讲完整，该长则长；不要机械照抄已推送的原始数据，但可以总结、解读、补充你的看法）\n- 如果需要更多操作 → 继续调用函数（输出 [[沙盒:函数名(参数=值)]]）\n- 不要输出任何函数调用语法（除继续调用外），只输出对用户说的话"
-                    hist.add("assistant" to cleanText)
                     // ★ v60 收敛不重复：结果已实时推送→不再把 results 拼回最终回复！
                     //   继续让模型基于结果生成简短收尾/AI意见（不重复已展示的结果/数字）
                     // 再调一次模型，看它是否继续调用函数
@@ -1782,11 +1792,11 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         content = "✅ 已完成以上任务，结果已实时推送。如需继续操作，直接告诉我～"
                         break
                     }
-                    // ★ v1.133 记录本轮执行到 hist：把「调用+结果」写进上下文，「接着弄」时模型能看到之前干了啥
-                    hist.add("assistant" to cleanText)
-                    hist.add("user" to "【工具执行结果】\n$results")
+                    // ★ v1.167 修复串台：工具结果/调用标签绝不写入多轮历史 hist（原以 user 角色写入，
+                    //   导致下一条新消息进来时历史尾部是「user:【工具执行结果】」，模型误判为新任务延续，
+                    //   出现「问他这个他说那个」）。工具过程数据只在本次请求的临时上下文内传递。
                     content = nextContent
-                    // ★ v1.165 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步/再查」但没输出调用标签 →
+                    // ★ v1.166 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步/再查」但没输出调用标签 →
                     //   引导一次让它输出真标签继续执行，而不是直接 break 停半路
                     val calls2 = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
                     if (calls2.isEmpty() && noCallGuide < 2 && continueIntent(content)) {
@@ -1834,8 +1844,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 if (loopGuard > 0 && content.isNotBlank()) {
                     // ★ v55 返回前必清洗 XML 标签（防畸形格式泄漏给用户）
                     val cleaned = cleanFunctionTags(content)
-                    // ★ v1.133 确保用户原始消息已入 hist（循环内可能漏记抛异常时兜底）
-                    if (hist.none { it.second == userText }) hist.add("user" to userText)
+                    // ★ v1.167 用户原文已在 askModel 入口幂等写入 hist，此处不再重复写（防 user→user 串台）
                     // ★ v1.133 龙虾式收敛：执行过工具（loopGuard>0）→ 最终强制模型生成简短收尾，绝不复述已推送的结果
                     try {
                         val closeBody = JSONObject()
@@ -1866,32 +1875,55 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         }
                         if (!closeContent.isNullOrBlank() && closeContent.length > 2) {
                             val closeCleaned = cleanFunctionTags(closeContent)
-                            hist.add("assistant" to cleaned)
-                            hist.add("assistant" to closeCleaned)
-                            while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                            // ★ v1.167 修复串台：只写最终回复进 hist（原连续写 cleaned+closeCleaned 两个
+                            //   assistant，下一轮模型看到 assistant→assistant，把工具收尾当成上一条回答）
+                            synchronized(hist) {
+                                // 并发保护：若该会话已有新消息顶掉了本次 user，则放弃写回，避免张冠李戴
+                                if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
+                                    hist.add("assistant" to closeCleaned)
+                                    while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                                }
+                            }
                             return closeCleaned
                         }
                     } catch (_: Exception) {
                         // 收敛失败降级：返回清洗后的原始内容（不再追加 results）
                     }
-                    hist.add("assistant" to cleaned)
-                    while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                    // ★ v1.167 只写最终回复（原此处也写 cleaned 属唯一收尾写入，保持 synchronized 防并发脏写）
+                    synchronized(hist) {
+                        if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
+                            hist.add("assistant" to cleaned)
+                            while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                        }
+                    }
                     return cleaned
                 }
                 // ★ v55 非沙盒循环路径也清洗（如解析不到调用时的直接返回）
                 if (sandboxOn && containsFunctionTags(content)) {
                     val cleaned = cleanFunctionTags(content)
-                    hist.add("user" to userText)
-                    hist.add("assistant" to cleaned)
-                    while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                    // ★ v1.167 用户原文已在入口写入，这里只写 assistant（原重复写 user 造成 user→user）
+                    synchronized(hist) {
+                        if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
+                            hist.add("assistant" to cleaned)
+                            while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                        }
+                    }
                     return cleaned
                 }
-                hist.add("user" to userText)
-                hist.add("assistant" to content)
-                while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
-                // 长期记忆：把用户这次说的话存一条（截断，防止刷爆）
+                // ★ v1.167 用户原文已在入口写入，这里只写 assistant
+                synchronized(hist) {
+                    if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
+                        hist.add("assistant" to content)
+                        while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                    }
+                }
+                // ★ v1.166 长期记忆：绑定账号走账号记忆（对齐读取的 getMemories），未绑定才走 qq:{openid}
                 if (userText.length >= 4) {
-                    runCatching { db.saveQqBrainMemory(userOpenid, userText.take(200)) }
+                    if (effUserId > 0) {
+                        runCatching { db.addMemory(effUserId, "QQ对话", userText.take(200), "short", "neutral", db.calcImportance(userText, 5), "qq_chat", "", "") }
+                    } else {
+                        runCatching { db.saveQqBrainMemory(userOpenid, userText.take(200)) }
+                    }
                     // ★ v1.115 群级公共记忆：群内话题也沉淀一份（仅群消息；截断防刷爆）
                     if (groupOpenid.isNotBlank()) {
                         runCatching { db.saveGroupBrainMemory(groupOpenid, userText.take(200)) }

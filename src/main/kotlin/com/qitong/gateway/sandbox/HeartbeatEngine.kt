@@ -148,7 +148,7 @@ object HeartbeatEngine {
             val issues = mutableListOf<String>()
             val okLines = mutableListOf<String>()
 
-            // ★ v1.165 智能体主动活跃：配置 agent_active_enabled=true 时，向最近活跃的 QQ 群/微信联系人主动问候（透明后台自动跑）
+            // ★ v1.166 智能体主动活跃：配置 agent_active_enabled=true 时，向最近活跃的 QQ 群/微信联系人主动问候（透明后台自动跑）
             runCatching {
                 if (db.getConfig("agent_active_enabled", "false") == "true") {
                     val now = System.currentTimeMillis()
@@ -262,7 +262,7 @@ object HeartbeatEngine {
                 }
             }
 
-            // ★ v1.165 模型健康告警：可用模型占比低（<30%）时主动汇报（OpenClaw 式主动感知健康）
+            // ★ v1.166 模型健康告警：可用模型占比低（<30%）时主动汇报（OpenClaw 式主动感知健康）
             runCatching {
                 val health = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
                 val healthy = health.count { (it["isHealthy"] as? Boolean) == true }

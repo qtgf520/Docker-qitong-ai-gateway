@@ -41,7 +41,7 @@ class QqGatewayClient(
     @Volatile private var reconnectTimer: java.util.Timer? = null
     private val stopped = AtomicBoolean(false)
     @Volatile private var backoffMs = 2000L
-    @Volatile private var consecutiveFailures = 0   // ★ v1.165 连续失败计数（防退避死循环）
+    @Volatile private var consecutiveFailures = 0   // ★ v1.166 连续失败计数（防退避死循环）
 
     companion object {
         // 生产 / 沙箱 WebSocket 网关
@@ -49,13 +49,13 @@ class QqGatewayClient(
         private const val URL_SANDBOX = "wss://sandbox.api.sgroup.qq.com/websocket"
         // GROUP_AND_C2C_EVENT = 1 << 25
         private const val INTENT_GROUP_C2C = 33554432L
-        // ★ v1.165 重连策略：指数退避 2s→60s，连续失败超过 10 次后固定 60s 周期重试（不无限叠加）
+        // ★ v1.166 重连策略：指数退避 2s→60s，连续失败超过 10 次后固定 60s 周期重试（不无限叠加）
         private const val MAX_BACKOFF_MS = 60_000L
         private const val MAX_CONSECUTIVE_FAILURES = 10
     }
 
     @Volatile private var accessToken: String = ""
-    // ★ v1.165 心跳 ACK 超时检测：QQ 官方可能静默断连（WS 还在但心跳不回），连续 N 次无 ACK 主动重连
+    // ★ v1.166 心跳 ACK 超时检测：QQ 官方可能静默断连（WS 还在但心跳不回），连续 N 次无 ACK 主动重连
     @Volatile private var heartbeatSentWithoutAck = 0
     @Volatile private var lastHeartbeatAckAt = System.currentTimeMillis()
     private val HEARTBEAT_ACK_TIMEOUT_MS = 45_000L     // 超过 45s 无 ACK 判定心跳超时
@@ -138,7 +138,7 @@ class QqGatewayClient(
                     "READY" -> {
                         sessionId = obj.optJSONObject("d")?.optString("session_id")
                         backoffMs = 2000L
-                        consecutiveFailures = 0   // ★ v1.165 连上即复位，下次掉线从 2s 重新退避
+                        consecutiveFailures = 0   // ★ v1.166 连上即复位，下次掉线从 2s 重新退避
                         onStatusChange(QqBotStatus.ONLINE, "上线 session=$sessionId")
                         System.out.println("[QQBot] ${bot.appid} READY，机器人上线")
                     }
@@ -195,7 +195,7 @@ class QqGatewayClient(
             val seq = lastSeq
             val body = JSONObject().put("op", 1).put("d", if (seq == null) JSONObject.NULL else seq)
             runCatching { ws?.send(body.toString()) }
-            // ★ v1.165 心跳 ACK 超时检测：QQ 静默断连时 WS 不报错，靠 ACK 缺失主动发现并重连
+            // ★ v1.166 心跳 ACK 超时检测：QQ 静默断连时 WS 不报错，靠 ACK 缺失主动发现并重连
             heartbeatSentWithoutAck++
             val sinceAck = System.currentTimeMillis() - lastHeartbeatAckAt
             if (heartbeatSentWithoutAck >= HEARTBEAT_MAX_MISSED && sinceAck > HEARTBEAT_ACK_TIMEOUT_MS) {
@@ -213,7 +213,7 @@ class QqGatewayClient(
         runCatching { heartbeatTimer?.cancel() }
         runCatching { reconnectTimer?.cancel() }
         if (stopped.get()) return
-        // ★ v1.165 退避衰减：连续失败 10 次后固定 60s 周期（不再无限翻倍到离谱值），避免「掉线后越等越久」
+        // ★ v1.166 退避衰减：连续失败 10 次后固定 60s 周期（不再无限翻倍到离谱值），避免「掉线后越等越久」
         consecutiveFailures++
         val delay = if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) MAX_BACKOFF_MS else backoffMs
         onStatusChange(QqBotStatus.OFFLINE, "${delay / 1000}s 后重连（第 $consecutiveFailures 次）")

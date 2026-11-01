@@ -50,7 +50,7 @@ data class AiModel(
     val supportsAudio: Boolean = false,    // ★ v1.123 多模态：语音/音频
     val supportsVideo: Boolean = false,    // ★ v1.123 多模态：视频
     val weight: Int = 50,                 // ★ v1.156 模型权重（new-api 渠道优先级思路）：故障转移同延迟时权重高优先，50 默认
-    val channelGroup: String = ""         // ★ v1.165 渠道分组（fast/stable/cheap；qtai-sj 按组选模型）
+    val channelGroup: String = ""         // ★ v1.166 渠道分组（fast/stable/cheap；qtai-sj 按组选模型）
 )
 
 /** 会话（对齐 conversations 表） */
@@ -148,7 +148,7 @@ data class User(
     val notifyEnabled: Boolean = false, // 是否开启邮件提醒
     val plan: String = "free",           // v1.136 套餐档位：free/quota/subscription/agent/business
     val planExpireAt: Long = 0,          // v1.136 套餐到期时间戳（0=永久/免费）
-    val totpSecret: String = ""          // v1.165 两步验证密钥（空=未开启2FA）
+    val totpSecret: String = ""          // v1.166 两步验证密钥（空=未开启2FA）
 )
 
 /** 人格配置（对齐原APP人设系统） */
@@ -194,7 +194,7 @@ data class GatewayConfig(
 data class GatewayStatus(
     val status: String = "ok",
     val service: String = "qitong-ai-gateway-docker",
-    val version: String = "1.165",
+    val version: String = "1.167",
     val running: Boolean = true,
     val port: Int,
     val failover: Boolean,
