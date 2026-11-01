@@ -1588,6 +1588,34 @@ fun updateUserLogin(id: Long) {
             )
         }
 
+    // ★ v1.168 场景隔离：绑定账号的 QQ 记忆按场景 tag 读写（私聊 tags=qq_c2c / 群聊 tags=qq_group:{groupOpenid}）
+    fun getMemoriesByTag(userId: Long, tag: String, limit: Int = 8): List<Map<String, Any?>> =
+        query("SELECT * FROM brain_memory WHERE user_id=? AND tags=? ORDER BY importance DESC, timestamp DESC LIMIT $limit", userId, tag).map {
+            val mid = (it["id"] as Number).toLong()
+            runCatching { stmt("UPDATE brain_memory SET access_count=access_count+1 WHERE id=?", mid) }
+            mapOf(
+                "id" to mid,
+                "title" to (it["title"] as? String ?: ""),
+                "content" to (it["content"] as? String ?: ""),
+                "type" to (it["type"] as? String ?: "short"),
+                "emotion" to (it["emotion"] as? String ?: "neutral"),
+                "importance" to ((it["importance"] as? Number)?.toInt() ?: 5),
+                "timestamp" to ((it["timestamp"] as? Number)?.toLong() ?: 0),
+                "accessCount" to ((it["access_count"] as? Number)?.toInt() ?: 0) + 1,
+                "source" to (it["source"] as? String ?: "chat"),
+                "tags" to (it["tags"] as? String ?: ""),
+                "modelId" to (it["model_id"] as? String ?: "")
+            )
+        }
+    fun getMemorySummariesByTag(userId: Long, tag: String, limit: Int = 3): List<Map<String, Any?>> =
+        query("SELECT * FROM memory_summary WHERE user_id=? AND tags=? ORDER BY created_at DESC LIMIT $limit", userId, tag).map {
+            mapOf(
+                "id" to ((it["id"] as Number).toLong()),
+                "content" to (it["content"] as? String ?: ""),
+                "tags" to (it["tags"] as? String ?: ""),
+                "createdAt" to ((it["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
     /** ★ v1.166 记忆淘汰：importance 优先 + 时间兜底（不再纯 takeLast 砍高分）
      *  对齐大脑模块建议 6：重要性评分真正参与淘汰，importance>=7 的记忆不会被普通对话挤掉 */
     fun trimMemories(userId: Long, max: Int) {
@@ -1972,6 +2000,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.168", "QQ 私聊/群记忆场景隔离 + 会话防串台 + 聊天风格自然化", "①修复QQ私聊与群聊长期记忆串台：私聊和群聊现在各自独立读写记忆，不管是否管理员都不再串。绑定账号用户私聊用 qq_c2c、群聊用 qq_group:{群号}；未绑定用户私聊用 qq:c2c:{用户}、群聊用 qq:{群}:{成员}。读取时新场景记忆为空自动回退老数据，存量记忆不丢失。②会话历史 key 加 botId 前缀（{bot.id}:g:群:成员 / {bot.id}:c:用户），多机器人同手机不串台。③修复幽灵回调：被遗弃的旧 WebSocket 延迟回调不再触发误重连。④QQ 渠道新增聊天风格段：说话更像真人朋友，但沙盒铁律不受影响（仅 QQ 渠道，微信侧不变）。"),
             Triple("v1.167", "修复机器人上下文串台（问他这个他说那个）", "根因：Agent 循环把工具调用文本+工具执行结果写入多轮历史，且用户原文滞后补写、收尾重复/缺失 assistant 写回、并发无同步保护 → 下一条新消息进来模型看到错乱上下文尾部，误判旧任务延续。修复（QQ/微信两侧同一套规则）：①入口幂等写入（清尾部脏user→锁内快照→写本次user，上限20）②删工具过程写历史（只在本请求临时上下文传递）③删循环内补写user④收敛/普通/非沙盒三条收尾路径统一只写assistant 最终回复+归属保护（尾部已不是自己user原文则放弃）⑤全部 hist 读写 synchronized 防并发异常。QQ群聊/私聊独立上下文、微信多bot按 bot.id:from 隔离保持不变。"),
             Triple("v1.166", "修复具体模型请求被强制池错误接管（连接卡顿/断连）", "v1.159 把强制故障池错误应用到所有请求，导致具体模型请求（如 deepseek-chat）被强制池接管、请求模型没置首、全部走池内模型还都失败→卡顿/断连。现对齐原APP精确语义：qtai-sj→强制切换（大脑绑定→用户池→全局池→活跃→智能路由兜底，按池顺序故障转移）；其他模型→测速排行（请求模型置首+强制池其余按序作候选，无池时按测速排行故障切换，不再接管请求）。保留v1.159主页系统动态持久化+强制池表格化展示。"),
             Triple("v1.159", "强制故障池对齐原APP结构 + 主页动态持久化", "①qtai-sj专用配置（大脑绑定）真正生效：请求qtai-sj时优先走大脑绑定→用户强制池→全局池→活跃模型，最后才是智能路由/测速排行兜底，不再一上来就跳测速排行。②强制池卡片改表格化展示（对齐测速排行榜：序号/模型/服务商/状态/操作列），每个模型独立一行，▲▼调序/点灯强制切换/移出池按钮分开独立。③新增gateway_logs表持久化系统动态（模型切换/测速完成/故障转移/启动停止），首页「⚡系统动态」先渲染最近10条历史、刷新不丢，再实时增量推送。修复WebUi顶栏VER历史残留。"),
@@ -2041,7 +2070,10 @@ val logs = listOf(
             Triple("v1.71", "大消息分段 + 人设生效", "超长消息分多条推送，人设始终注入"),
             Triple("v1.70", "微信编辑修复", "编辑保存不覆盖 token")
         )
-        logs.forEach { (v, t, d) -> addUpdateLog(v, t, d) }
+        // ★ v1.168 修复更新日志排序：addUpdateLog 默认用当前时间戳，每次启动遍历会把历史版本 released_at 刷新成无序值
+        //   （旧版本反而排最前）。改为按列表索引（新→旧）显式递减时间戳，ORDER BY released_at DESC 恒为最新在前。
+        val now = System.currentTimeMillis()
+        logs.forEachIndexed { idx, (v, t, d) -> addUpdateLog(v, t, d, now - idx * 60000L) }
     }
 
     fun markScheduledTaskDone(id: Long) {
@@ -3309,11 +3341,11 @@ val logs = listOf(
 
     // ============ QQ 长期大脑记忆（复用 brain_memory 表，tags=qq:{openid}） ============
 
-    /** 读取某 QQ 用户最近的记忆（用于注入 system 上下文）。 */
-    fun getQqBrainMemories(openid: String, limit: Int = 6): List<String> {
+    /** 读取某 QQ 用户最近的记忆（用于注入 system 上下文）。★v1.168 tag 参数支持场景隔离，默认 qq:{openid} 兼容旧调用 */
+    fun getQqBrainMemories(openid: String, limit: Int = 6, tag: String = "qq:$openid"): List<String> {
         val rows = query(
             "SELECT content FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit",
-            "qq:$openid"
+            tag
         )
         return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
     }
@@ -3327,11 +3359,11 @@ val logs = listOf(
         return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
     }
 
-    /** 写入一条 QQ 用户记忆。 */
-    fun saveQqBrainMemory(openid: String, content: String, type: String = "short") {
+    /** 写入一条 QQ 用户记忆。★v1.168 tag 参数支持场景隔离（群聊/私聊分开存，默认 qq:{openid} 兼容旧调用） */
+    fun saveQqBrainMemory(openid: String, content: String, type: String = "short", tag: String = "qq:$openid") {
         stmt(
             "INSERT INTO brain_memory (user_id,title,content,type,emotion,importance,timestamp,access_count,source,tags,model_id) VALUES (0,?,?,?,?,?,?,0,'qq',?, '')",
-            openid, content.take(500), type, "neutral", 5, System.currentTimeMillis(), "qq:$openid"
+            openid, content.take(500), type, "neutral", 5, System.currentTimeMillis(), tag
         )
     }
 /** 清空某 QQ 用户记忆。 */

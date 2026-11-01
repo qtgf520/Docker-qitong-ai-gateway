@@ -99,10 +99,17 @@ class QqGatewayClient(
         val req = Request.Builder().url(url).build()
         ws = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                // ★ v1.168 幽灵连接过滤：回调回来时若已被新连接替换/已停止 → 关掉响应体防泄漏，直接返回
+                if (stopped.get() || webSocket !== ws) {
+                    runCatching { response.body?.close() }
+                    runCatching { webSocket.cancel() }
+                    return
+                }
                 System.out.println("[QQBot] ${bot.appid} WebSocket 已连接，等待 HELLO")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (stopped.get() || webSocket !== ws) return
                 try {
                     handleFrame(text)
                 } catch (e: Exception) {
@@ -111,11 +118,19 @@ class QqGatewayClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                // ★ v1.168 旧连接的延迟关闭回调不再触发重连（否则与新连接的重连叠加 → 反复抖动）
+                if (stopped.get() || webSocket !== ws) return
                 System.out.println("[QQBot] ${bot.appid} 连接关闭 code=$code reason=$reason")
                 scheduleReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                // ★ v1.168 修复「连接失败: null 刷屏 + 连接泄漏」根因：
+                //   旧 WS 被替换后其延迟失败回调仍回来，触发 scheduleReconnect 与新连接叠加，
+                //   形成「失败→重连→READY→旧连接再报失败→再重连」死循环。
+                //   对策：非当前连接的回调一律丢弃，并关闭响应体防泄漏。
+                runCatching { response?.body?.close() }
+                if (stopped.get() || webSocket !== ws) return
                 System.err.println("[QQBot] ${bot.appid} 连接失败: ${t.message}")
                 onStatusChange(QqBotStatus.ERROR, t.message ?: "连接失败")
                 scheduleReconnect()

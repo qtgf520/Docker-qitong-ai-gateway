@@ -421,7 +421,8 @@ object QqBotManager {
         val text = stripAt(msg.content).trim()
         if (text.isEmpty()) return
 
-        val key = "g:${msg.groupOpenid}:${msg.memberOpenid}"
+        // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
+        val key = "${bot.id}:g:${msg.groupOpenid}:${msg.memberOpenid}"
         withUserLock(key) {
             dispatch(bot, key, msg.groupOpenid, msg.memberOpenid, text, msg.msgId,
                 send = { content -> api.sendGroupMessage(bot, at, msg.groupOpenid, content, msg.msgId) })
@@ -436,7 +437,8 @@ object QqBotManager {
             System.err.println("[QQBot] ${bot.appid} 私聊消息处理：获取AccessToken失败")
             return
         }
-        val key = "c:${msg.userOpenid}"
+        // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
+        val key = "${bot.id}:c:${msg.userOpenid}"
         withUserLock(key) {
             dispatch(bot, key, "", msg.userOpenid, msg.content.trim(), msg.msgId,
                 send = { content -> api.sendC2cMessage(bot, at, msg.userOpenid, content, msg.msgId) })
@@ -1541,13 +1543,21 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 }
             }
         }
-// ★ v1.166 长期大脑记忆：绑定账号后优先用账号记忆（带日期标记+滚动摘要，与微信/内置聊天同源），未绑定回退 qq:{openid}
+// ★ v1.168 记忆场景隔离：绑定账号按场景 tag 读（私聊 qq_c2c / 群聊 qq_group:{群}），私聊群里不相串
         var memSection = ""
         if (effUserId > 0) {
             runCatching {
-                val mems = db.getMemories(effUserId, limit = 8)
+                val memTag = if (groupOpenid.isNotBlank()) "qq_group:$groupOpenid" else "qq_c2c"
+                val mems = db.getMemoriesByTag(effUserId, memTag, limit = 8)
+                if (mems.isEmpty()) {
+                    // 兼容老数据：该场景还没有隔离记忆时，回退读账号全部记忆（不丢历史积累）
+                    db.getMemories(effUserId, limit = 8).take(4)
+                } else {
+                    mems
+                }
+            }.getOrNull()?.let { mems ->
                 if (mems.isNotEmpty()) {
-                    memSection += "\n\n【你对这位用户的长期记忆】\n" + mems.reversed().joinToString("\n") { m ->
+                    memSection += "\n\n【你对这位用户的长期记忆（${if (groupOpenid.isNotBlank()) "本群" else "私聊"}）】\n" + mems.reversed().joinToString("\n") { m ->
                         val ts = m["timestamp"] as? Long ?: 0L
                         val dateStr = if (ts > 0) {
                             try {
@@ -1558,7 +1568,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         "- 【历史记忆·" + dateStr + "】" + (m["content"] as? String ?: "")
                     }
                 }
-                val summaries = db.getMemorySummaries(effUserId, 3)
+            }
+            runCatching {
+                val summaries = db.getMemorySummariesByTag(effUserId, if (groupOpenid.isNotBlank()) "qq_group:$groupOpenid" else "qq_c2c", 3)
                 if (summaries.isNotEmpty()) {
                     val ssb = StringBuilder("\n\n## 📝 历史对话摘要（近期话题总结）\n")
                     summaries.forEach { s -> (s["content"] as? String)?.takeIf { it.isNotBlank() }?.let { ssb.append("  • $it\n") } }
@@ -1567,9 +1579,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             }
         } else {
             runCatching {
-                val mems = db.getQqBrainMemories(userOpenid, limit = 6)
+                // ★ v1.168 未绑定用户按场景隔离读：群聊 qq:{群}:{成员} / 私聊 qq:c2c:{用户}；空时回退老 tag qq:{openid} 兼容
+                val unboundTag = if (groupOpenid.isNotBlank()) "qq:$groupOpenid:$userOpenid" else "qq:c2c:$userOpenid"
+                var mems = db.getQqBrainMemories(userOpenid, limit = 6, tag = unboundTag)
+                if (mems.isEmpty()) mems = db.getQqBrainMemories(userOpenid, limit = 4)
                 if (mems.isNotEmpty()) {
-                    memSection += "\n\n【你对这位用户的长期记忆】\n" + mems.reversed().joinToString("\n") { "- " + it }
+                    memSection += "\n\n【你对这位用户的长期记忆（${if (groupOpenid.isNotBlank()) "本群" else "私聊"}）】\n" + mems.reversed().joinToString("\n") { "- " + it }
                 }
                 val promoted = db.getQqBrainPromoted(userOpenid, minHits = 5, limit = 8)
                 if (promoted.isNotEmpty()) {
@@ -1586,7 +1601,14 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 }
             }
         }
-        val sysFull = baseSys + memSection
+        // ★ v1.168 QQ 侧聊天风格自然化（只加在 QQ，不影响已达标的微信）：像朋友一样说话，不机械不端着
+        val chatStyle = "\n\n## 🗣️ 聊天风格（QQ 渠道，请像真人朋友一样说话）\n" +
+            "1. 【先判断聊天还是任务】打招呼/寒暄/闲聊/心情/玩笑 → 纯聊天，用轻松自然的语气回一句就够，绝不调工具、绝不列功能清单；明确要查/做/安排 → 才动手。\n" +
+            "2. 【说人话】用口语和短句，别用书面腔、AI腔（不说「作为AI/请问有什么可以帮您/好的呢」）。可以带点语气词：嗯嗯、哈哈、好嘞、没问题、来了来了、稍等我看看。\n" +
+            "3. 【有来有回】对方说啥你接啥，顺着话头聊；不知道就大方说不知道，能问一句就自然问一句，像朋友聊天，别每句都一本正经回答。\n" +
+            "4. 【长度跟着场景走】闲聊回一两句短话，任务才给完整结果。别把简单问候回成长篇大论，也别把正经任务回成嗯嗯哈哈。\n" +
+            "5. 【记住身份】以上风格只影响说话方式，不影响上面的铁律——涉及真实查询/操作/数据，依然必须真调用工具、不编造、不假调用。"
+        val sysFull = baseSys + chatStyle + memSection
         if (sysFull.isNotBlank()) msgs.put(JSONObject().put("role", "system").put("content", sysFull))
         // ★ v1.167 修复串台：历史严格按 user→assistant 交替，工具过程数据绝不入_hist。
         //   1) 先清掉尾部残留 user（前一轮模型失败/异常返回 null 时留下的脏数据，防 user→user）
@@ -1917,12 +1939,15 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                     }
                 }
-                // ★ v1.166 长期记忆：绑定账号走账号记忆（对齐读取的 getMemories），未绑定才走 qq:{openid}
+                // ★ v1.168 记忆场景隔离：绑定账号按场景 tag 写（私聊 qq_c2c / 群聊 qq_group:{群}），未绑定按场景隔离 qq:{场景}:{openid}
                 if (userText.length >= 4) {
                     if (effUserId > 0) {
-                        runCatching { db.addMemory(effUserId, "QQ对话", userText.take(200), "short", "neutral", db.calcImportance(userText, 5), "qq_chat", "", "") }
+                        val memTag = if (groupOpenid.isNotBlank()) "qq_group:$groupOpenid" else "qq_c2c"
+                        runCatching { db.addMemory(effUserId, "QQ对话", userText.take(200), "short", "neutral", db.calcImportance(userText, 5), "qq_chat", memTag, "") }
                     } else {
-                        runCatching { db.saveQqBrainMemory(userOpenid, userText.take(200)) }
+                        // ★ v1.168 未绑定用户也按场景隔离：群聊 tag=qq:{groupOpenid}:{memberOpenid}，私聊 tag=qq:c2c:{userOpenid}
+                        val unboundTag = if (groupOpenid.isNotBlank()) "qq:$groupOpenid:$userOpenid" else "qq:c2c:$userOpenid"
+                        runCatching { db.saveQqBrainMemory(userOpenid, userText.take(200), tag = unboundTag) }
                     }
                     // ★ v1.115 群级公共记忆：群内话题也沉淀一份（仅群消息；截断防刷爆）
                     if (groupOpenid.isNotBlank()) {
