@@ -534,13 +534,18 @@ class GatewayProxy(private val database: Database) {
         }
 
         // ★ v1.160 模型映射：外部请求名命中映射 → 按映射 targets 有序列表路由（按序故障转移）
+        // ★ v1.170 显示名需求：用户私有映射也能命中（全局 owner_id=0 + 该用户自己的）；别名人看不到他人的
         var mappingTargets: List<String>? = null
         if (targetModelOverride.isNullOrBlank()) {
             runCatching {
                 val mp = database.getModelMapping(modelId)
                 if (mp != null && (mp["enabled"] as? Boolean) == true) {
-                    val tgts = (mp["targets"] as? String ?: "").split(",").map { it.trim() }.filter { it.isNotBlank() }
-                    if (tgts.isNotEmpty()) mappingTargets = tgts
+                    val mpOwner = mp["ownerId"] as? Long ?: 0L
+                    // ★ v1.170 命中归属校验：全局映射(0)人人可用；私有映射仅属主可用
+                    if (mpOwner == 0L || mpOwner == ownerId) {
+                        val tgts = (mp["targets"] as? String ?: "").split(",").map { it.trim() }.filter { it.isNotBlank() }
+                        if (tgts.isNotEmpty()) mappingTargets = tgts
+                    }
                 }
             }
         }

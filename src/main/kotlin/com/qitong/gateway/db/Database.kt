@@ -255,14 +255,18 @@ class Database(private val dbPath: String) {
                 )"""
             )
             // ★ v1.166 模型映射（外部请求名 -> 内部模型Key有序列表，按序故障转移）
+            // ★ v1.170 增加 owner_id：0=管理员全局映射（所有用户可见）；>0=用户自己的映射（仅该用户可见可用）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS model_mappings (
                     alias TEXT PRIMARY KEY,
                     targets TEXT NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    owner_id INTEGER NOT NULL DEFAULT 0,
                     updated_at INTEGER NOT NULL
                 )"""
             )
+            // ★ v1.170 兼容老表：无 owner_id 列则补（存量映射视为全局 owner_id=0，管理员专用）
+            try { st.executeUpdate("ALTER TABLE model_mappings ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) {}
             // ★ v1.166 表达式计费规则（条件命中 → 覆盖价或倍率；时段格式 HH:mm-HH:mm）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS pricing_rules (
@@ -1840,30 +1844,58 @@ fun updateUserLogin(id: Long) {
 
     /** 清空全部自定义价格（管理员） */
     // ============ ★ v1.166 模型映射（alias -> targets 有序列表） ============
-    fun getModelMappings(): List<Map<String, Any?>> =
-        query("SELECT * FROM model_mappings ORDER BY updated_at DESC").map { row ->
+    // ★ v1.170 owner_id 隔离：ownerId=0 查全局（管理员）；>0 查全局+自己的
+    fun getModelMappings(ownerId: Long = 0L): List<Map<String, Any?>> {
+        val rows = if (ownerId > 0)
+            query("SELECT * FROM model_mappings WHERE owner_id=0 OR owner_id=? ORDER BY updated_at DESC", ownerId)
+        else
+            query("SELECT * FROM model_mappings ORDER BY updated_at DESC")
+        return rows.map { row ->
             mapOf(
                 "alias" to (row["alias"] as? String ?: ""),
                 "targets" to (row["targets"] as? String ?: ""),
-                "enabled" to (((row["enabled"] as? Number)?.toInt() ?: 1) == 1),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+                "ownerId" to ((row["owner_id"] as? Number)?.toLong() ?: 0L),
                 "updatedAt" to ((row["updated_at"] as? Number)?.toLong() ?: 0)
             )
         }
-    fun getModelMapping(alias: String): Map<String, Any?>? = getModelMappings().firstOrNull { it["alias"] == alias }
-    fun saveModelMapping(alias: String, targets: String, enabled: Boolean) {
-        stmt(
-            "INSERT INTO model_mappings (alias,targets,enabled,updated_at) VALUES (?,?,?,?) ON CONFLICT(alias) DO UPDATE SET targets=?, enabled=?, updated_at=?",
-            alias, targets, if (enabled) 1 else 0, System.currentTimeMillis(), targets, if (enabled) 1 else 0, System.currentTimeMillis()
+    }
+    fun getModelMapping(alias: String): Map<String, Any?>? {
+        val rows = query("SELECT * FROM model_mappings WHERE alias=?", alias)
+        val row = rows.firstOrNull() ?: return null
+        return mapOf(
+            "alias" to (row["alias"] as? String ?: ""),
+            "targets" to (row["targets"] as? String ?: ""),
+            "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+            "ownerId" to ((row["owner_id"] as? Number)?.toLong() ?: 0L),
+            "updatedAt" to ((row["updated_at"] as? Number)?.toLong() ?: 0)
         )
     }
-    fun deleteModelMapping(alias: String): Boolean {
-        val exists = queryOne("SELECT alias FROM model_mappings WHERE alias=?", alias) != null
-        if (exists) stmt("DELETE FROM model_mappings WHERE alias=?", alias)
-        return exists
+    fun saveModelMapping(alias: String, targets: String, enabled: Boolean, ownerId: Long = 0L) {
+        // ★ v1.170 冲突处理：同一 alias 若已被他人（owner 不同）占用 → 拒绝覆盖；自己的或全局的允许更新
+        val existRow = query("SELECT owner_id FROM model_mappings WHERE alias=?", alias).firstOrNull()
+        val exist = existRow?.let { (it["owner_id"] as? Number)?.toLong() ?: 0L }
+        if (exist != null && exist != ownerId) { return }  // 撞名：静默失败（调用侧可提示）
+        stmt(
+            "INSERT INTO model_mappings (alias,targets,enabled,owner_id,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(alias) DO UPDATE SET targets=?, enabled=?, owner_id=?, updated_at=?",
+            alias, targets, if (enabled) 1 else 0, ownerId, System.currentTimeMillis(), targets, if (enabled) 1 else 0, ownerId, System.currentTimeMillis()
+        )
     }
-    fun clearModelMappings(): Int {
-        val n = queryOne("SELECT COUNT(*) FROM model_mappings")?.toInt() ?: 0
-        stmt("DELETE FROM model_mappings")
+    fun deleteModelMapping(alias: String, ownerId: Long = 0L): Boolean {
+        val existRow = query("SELECT owner_id FROM model_mappings WHERE alias=?", alias).firstOrNull()
+        if (existRow == null) return false
+        val existOwner = (existRow["owner_id"] as? Number)?.toLong() ?: 0L
+        // ★ v1.170 归属保护：仅属主或管理员(ownerId=0 标记)可删；他人别名不可删
+        if (existOwner != ownerId && ownerId != 0L) return false
+        stmt("DELETE FROM model_mappings WHERE alias=?", alias)
+        return true
+    }
+    fun clearModelMappings(ownerId: Long = 0L): Int {
+        val n = if (ownerId > 0)
+            queryOne("SELECT COUNT(*) FROM model_mappings WHERE owner_id=?", ownerId)?.toInt() ?: 0
+        else
+            queryOne("SELECT COUNT(*) FROM model_mappings")?.toInt() ?: 0
+        if (ownerId > 0) stmt("DELETE FROM model_mappings WHERE owner_id=?", ownerId) else stmt("DELETE FROM model_mappings")
         return n
     }
 
@@ -2000,6 +2032,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.170", "模型试用401修复 + 模型自定义显示名(对外别名) + OpenAI余额查询", "①修复模型页「试用」按钮 401：tryModel 的 fetch 请求没带 Authorization 头（/api/chat/stream 强制 requireAuth），补 Bearer token 即可。②模型自定义显示名（对外别名）：复用 model_mappings 表并新增 owner_id 字段做用户隔离——管理员映射全局共享，普通用户可自建自己的别名（如「DeepSeek 免费」→ 真实 deepseek-chat）；/v1/models 对外列表在真实模型后追加别名条目（id=别名、display_name=自定义名），外部 APP 拉模型列表看到的就是自定义名，用别名请求时网关自动反查映射到真实模型转发（同一轮注册的全局/用户映射都能命中）；后台模型页新增「显示名」管理入口（管理员=全部映射，用户=自己的）。③OpenAI 兼容余额查询：新增 GET /v1/dashboard/billing/credit_grants（按 API Key 属主隔离，普通用户只看自己的余额/累计充值/配额用量；本地请求免 key 时归属 0 不泄露），对接方可像 OpenAI 一样查余额。④模型测速与速度排行沿用现有用户隔离逻辑不变（/api/status healthCache 只显示当前用户可见模型）。"),
             Triple("v1.169", "修复工具重复执行（Agent 循环跨轮去重 + 统一标签清洗）", "①根因：模型同一轮输出「[[沙盒:fn()]] 标签 + 正在调用 fn() 自然语言描述」或下一轮复述上一轮调用描述时，格式9（自然语言识别）无条件下启用 → parseCalls 把描述二次解析为真调用 → 同一工具被执行两遍（如「开一个终端开了俩」）。修复双保险：②解析侧跨轮去重：SandboxEngine 新增带 executed 集合的 parseCalls 重载 + callSignature（函数名+参数排序拼接），QQ/微信/AdminApi 三渠道 Agent 循环统一在循环外建 executedSigs，每次工具执行成功后登记签名，下一轮 parseCalls 自动过滤已执行过的调用——同一 fn+参数不会被二次执行，失败异常不登记、允许模型改参数重试；③回传侧统一清洗：新增 SandboxEngine.cleanCallTags 统一清洗器（覆盖原 QQ/微信各自 cleanFunctionTags 全部规则 + 新增「正在调用 fn()/调用 fn()/我需要调用 fn()」自然语言调用描述抹除），三渠道 cleanFunctionTags 全部改为委托它——从源头不给模型照抄的机会。④格式9 收紧：自然语言描述识别仅在严格格式一个都没命中时才启用，且函数名必须真实存在于知识库 KNOWN_FNS。"),
             Triple("v1.168", "QQ 私聊/群记忆场景隔离 + 会话防串台 + 聊天风格自然化", "①修复QQ私聊与群聊长期记忆串台：私聊和群聊现在各自独立读写记忆，不管是否管理员都不再串。绑定账号用户私聊用 qq_c2c、群聊用 qq_group:{群号}；未绑定用户私聊用 qq:c2c:{用户}、群聊用 qq:{群}:{成员}。读取时新场景记忆为空自动回退老数据，存量记忆不丢失。②会话历史 key 加 botId 前缀（{bot.id}:g:群:成员 / {bot.id}:c:用户），多机器人同手机不串台。③修复幽灵回调：被遗弃的旧 WebSocket 延迟回调不再触发误重连。④QQ 渠道新增聊天风格段：说话更像真人朋友，但沙盒铁律不受影响（仅 QQ 渠道，微信侧不变）。"),
             Triple("v1.167", "修复机器人上下文串台（问他这个他说那个）", "根因：Agent 循环把工具调用文本+工具执行结果写入多轮历史，且用户原文滞后补写、收尾重复/缺失 assistant 写回、并发无同步保护 → 下一条新消息进来模型看到错乱上下文尾部，误判旧任务延续。修复（QQ/微信两侧同一套规则）：①入口幂等写入（清尾部脏user→锁内快照→写本次user，上限20）②删工具过程写历史（只在本请求临时上下文传递）③删循环内补写user④收敛/普通/非沙盒三条收尾路径统一只写assistant 最终回复+归属保护（尾部已不是自己user原文则放弃）⑤全部 hist 读写 synchronized 防并发异常。QQ群聊/私聊独立上下文、微信多bot按 bot.id:from 隔离保持不变。"),

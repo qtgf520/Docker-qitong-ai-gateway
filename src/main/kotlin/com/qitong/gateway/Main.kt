@@ -107,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.169
+ * 綦桐AI网关 · Docker 服务器版 v1.170
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -119,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.169   ║
+        ║   綦桐AI网关 · Docker Server v1.170   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -214,7 +214,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.169"))
+                put("version", JsonPrimitive("1.170"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -271,10 +271,90 @@ fun Application.moduleGateway(database: Database) {
                 put("model_id", JsonPrimitive("qtai-sj"))
                 put("display_name", JsonPrimitive("🔄 自动化切换"))
             }
+            // ★ v1.170 模型自定义显示名（对外别名）：在真实模型后追加别名条目，外部 APP 拉列表看到的就是自定义名
+            //   id=别名（外部请求时直接用这个名）、display_name=自定义显示名；用别名请求时网关自动反查映射到真实模型
+            //   归属隔离：全局映射(owner_id=0)人人可见；普通用户还能看到自己的私有映射；管理员能看到全部
+            val mappingsForList = runCatching {
+                if (ownerId > 0 && ownerUser?.role != "admin") database.getModelMappings(ownerId)
+                else database.getModelMappings()
+            }.getOrDefault(emptyList())
+            val aliasEntries = mappingsForList.filter { (it["enabled"] as? Boolean) == true }.map { mp ->
+                val alias = mp["alias"] as? String ?: ""
+                val tgts = (mp["targets"] as? String ?: "").split(",").map { it.trim() }.filter { it.isNotBlank() }
+                val firstTarget = tgts.firstOrNull() ?: ""
+                // 目标真实模型信息（健康状态跟随真实模型）
+                val tModel = sortedModels.firstOrNull { sm ->
+                    firstTarget == sm.modelId || firstTarget == "${sm.providerId}::${sm.modelId}"
+                }
+                val tHealth = if (tModel != null) com.qitong.gateway.http.GatewayScheduler.healthOf(tModel.providerId, tModel.modelId)?.isHealthy else null
+                buildJsonObject {
+                    put("id", JsonPrimitive(alias))
+                    put("object", JsonPrimitive("model"))
+                    put("owned_by", JsonPrimitive("qitong-alias"))
+                    put("model_id", JsonPrimitive(firstTarget))
+                    put("display_name", JsonPrimitive(alias))
+                    put("alias_of", JsonPrimitive(firstTarget))
+                    put("healthy", JsonPrimitive(tHealth ?: true))
+                }
+            }
             call.respondText(
                 buildJsonObject {
                     put("object", JsonPrimitive("list"))
-                    put("data", JsonArray(finalList))
+                    put("data", JsonArray(finalList + aliasEntries))
+                }.toString(),
+                ContentType.Application.Json.withCharset(Charsets.UTF_8)
+            )
+        }
+
+        // ★ v1.170 OpenAI 兼容余额查询：GET /v1/dashboard/billing/credit_grants
+        //   按 API Key 属主隔离：普通用户只看自己的余额/累计充值/配额用量；管理员看全局可加 /v1/dashboard/billing/usage
+        get("/v1/dashboard/billing/credit_grants") {
+            cors(call)
+            if (!proxy.validateApiKey(call, call.remoteIp())) {
+                call.respondText(openAIErrorRaw(401, "Invalid or missing API key", "invalid_api_key"), ContentType.Application.Json, HttpStatusCode.Unauthorized)
+                return@get
+            }
+            val ownerId = runCatching { call.attributes[com.qitong.gateway.http.GatewayProxy.ApiKeyOwnerKey] as Long }.getOrDefault(0L)
+            val ownerUser = if (ownerId > 0) database.getUserById(ownerId) else null
+            // 归属：有 Key 属主 → 查该用户；无属主（本地/免key）→ 只返回空壳不泄露
+            val targetUser = ownerUser
+            // 金额统一取 2 位小数（余额精准，避免浮点长尾）
+            fun r2(v: Double): Double = Math.round(v * 100.0) / 100.0
+            if (targetUser == null) {
+                val empty = buildJsonObject {
+                    put("object", JsonPrimitive("credit_grants"))
+                    put("total_granted", JsonPrimitive(0.0))
+                    put("total_used", JsonPrimitive(0.0))
+                    put("total_available", JsonPrimitive(0.0))
+                    put("grants", JsonArray(emptyList()))
+                }
+                call.respondText(empty.toString(), ContentType.Application.Json.withCharset(Charsets.UTF_8))
+                return@get
+            }
+            val balance = database.getUserBalance(targetUser.id)
+            val totalRecharge = targetUser.totalRecharge
+            val quotaUsed = targetUser.quotaUsed.coerceAtLeast(0L)
+            val quotaLimit = targetUser.quotaLimit
+            val grants = listOf(
+                buildJsonObject {
+                    put("object", JsonPrimitive("grant"))
+                    put("id", JsonPrimitive("balance"))
+                    put("grant_amount", JsonPrimitive(r2(balance)))
+                    put("used_amount", JsonPrimitive(r2((totalRecharge - balance).coerceAtLeast(0.0))))
+                    put("effective_at", JsonPrimitive(targetUser.createdAt))
+                    put("expires_at", JsonPrimitive(0))
+                }
+            )
+            call.respondText(
+                buildJsonObject {
+                    put("object", JsonPrimitive("credit_grants"))
+                    put("total_granted", JsonPrimitive(r2(totalRecharge)))
+                    put("total_used", JsonPrimitive(r2((totalRecharge - balance).coerceAtLeast(0.0))))
+                    put("total_available", JsonPrimitive(r2(balance)))
+                    put("quota_used_tokens", JsonPrimitive(quotaUsed))
+                    put("quota_limit_tokens", JsonPrimitive(quotaLimit))
+                    put("username", JsonPrimitive(targetUser.username))
+                    put("grants", JsonArray(grants))
                 }.toString(),
                 ContentType.Application.Json.withCharset(Charsets.UTF_8)
             )
@@ -799,33 +879,38 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, mapOf("deleted" to n), "已清空 $n 条自定义价格")
         }
         // ★ v1.166 模型映射（外部请求名 -> 内部模型有序列表，按序故障转移）
+        // ★ v1.170 显示名需求：普通用户也能管理自己的别名映射（管理员=全局全部；用户=全局+自己的）
         get("/api/model-mappings") {
             val u = call.requireAuth(database) ?: return@get
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
-            AdminApi.ok(call, database.getModelMappings(), "ok")
+            // ★ v1.170 管理员看全部；普通用户只看全局+自己的（不含他人私有别名）
+            val ownerId = if (u.role == "admin") 0L else u.id
+            AdminApi.ok(call, database.getModelMappings(ownerId), "ok")
         }
         post("/api/model-mappings") {
             val u = call.requireAuth(database) ?: return@post
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
             val body = call.receive<JsonObject>()
             val alias = body["alias"]?.jsonPrimitive?.content?.trim() ?: run { AdminApi.fail(call, "映射名不能为空", 400); return@post }
             val targets = body["targets"]?.jsonPrimitive?.content?.trim() ?: run { AdminApi.fail(call, "目标模型不能为空", 400); return@post }
             val enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
-            database.saveModelMapping(alias, targets, enabled)
+            // ★ v1.170 归属：管理员(或显式全局)→ownerId=0 全局共享；普通用户→自己的 owner_id
+            val ownerId = if (u.role == "admin" && (body["isGlobal"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() != false)) 0L else u.id
+            // 撞名检查：别名已被他人占用 → 拒绝（不给提示信息以免泄露他人别名存在）
+            database.saveModelMapping(alias, targets, enabled, ownerId)
             database.addOpLog(u.id, u.username, "模型映射", "保存 $alias -> $targets", call.request.local.remoteHost)
             AdminApi.ok(call, null, "映射 $alias 已保存")
         }
         delete("/api/model-mappings/{alias}") {
             val u = call.requireAuth(database) ?: return@delete
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@delete }
             val alias = call.parameters["alias"] ?: return@delete
-            if (database.deleteModelMapping(alias)) { database.addOpLog(u.id, u.username, "模型映射", "删除 $alias", call.request.local.remoteHost); AdminApi.ok(call, null, "已删除映射 $alias") }
-            else AdminApi.fail(call, "映射不存在", 404)
+            // ★ v1.170 归属保护：管理员可删任意；普通用户只能删自己的
+            val ownerId = if (u.role == "admin") 0L else u.id
+            if (database.deleteModelMapping(alias, ownerId)) { database.addOpLog(u.id, u.username, "模型映射", "删除 $alias", call.request.local.remoteHost); AdminApi.ok(call, null, "已删除映射 $alias") }
+            else AdminApi.fail(call, "映射不存在或无权限", 404)
         }
         post("/api/model-mappings/clear") {
             val u = call.requireAuth(database) ?: return@post
-            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
-            val n = database.clearModelMappings()
+            // ★ v1.170 管理员清全部；普通用户只清自己的
+            val n = if (u.role == "admin") database.clearModelMappings() else database.clearModelMappings(u.id)
             AdminApi.ok(call, mapOf("deleted" to n), "已清空 $n 条映射")
         }
         // ★ v1.166 表达式计费规则（条件：模型/角色/时段 → 覆盖价或倍率）
@@ -2401,7 +2486,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.169"))
+                put("version", JsonPrimitive("1.170"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3245,7 +3330,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.169"))
+                    put("version", JsonPrimitive("1.170"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

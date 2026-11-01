@@ -116,10 +116,12 @@ function globalSearch(){
 loaders.dashboard = function(){
  var box = $('view-dashboard');
  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
- api('/api/status').then(function(r){
-  var st = r.data;
-  if(!st) return;
-  // 用户余额（顶部）
+api('/api/status').then(function(r){
+   var st = r.data;
+   if(!st) return;
+   // ★ v1.170 全局角色标记（显示名管理等处按角色区分提示文案）
+   window._qtIsAdmin = !!st.isAdmin;
+   // 用户余额（顶部）
   api('/api/me/balance').then(function(br){
    var bal = br.data || {};
    var balEl = $('view-dashboard') ? document.querySelector('#view-dashboard .bal-card') : null;

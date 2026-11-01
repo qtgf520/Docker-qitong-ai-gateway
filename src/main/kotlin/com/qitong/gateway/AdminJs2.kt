@@ -31,10 +31,11 @@ loaders.models = function(){
       '<button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
    }).join('');
    box.innerHTML = [
-    '<div class="action-bar">',
-     '<button class="btn" onclick="editModel(0)">手动添加模型</button>',
-     '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">自动全部测速</button>',
-     '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
+'<div class="action-bar">',
+      '<button class="btn" onclick="editModel(0)">手动添加模型</button>',
+      '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">自动全部测速</button>',
+      '<button class="btn" style="color:var(--cyan)" onclick="loadModelAliases()">🏷️ 显示名管理</button>',
+      '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
      // ★ v1.166 多选批量操作（下拉式）
      '<span style="border-left:1px solid var(--border);padding-left:10px;display:inline-flex;gap:6px;align-items:center">' +
       '<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)"><input type="checkbox" id="mdChkAll" onclick="mdSelAll(this.checked)">全选</label>' +
@@ -86,8 +87,9 @@ window.tryModel = function(id, modelId, displayName){
    var msg = inp.value.trim(); if(!msg){ toast('请输入内容', false); return; }
    var out = $('tryResult'); if(out) out.innerHTML = '⏳ 正在请求模型…';
    var body = JSON.stringify({ model: mid, messages: [{role:'user', content: msg}], stream: true });
-   // 用 fetch 流式读取 /api/chat/stream（已登录鉴权 + SSE 透传）
-   fetch('/api/chat/stream', { method:'POST', headers:{'Content-Type':'application/json'}, body: body })
+    // 用 fetch 流式读取 /api/chat/stream（已登录鉴权 + SSE 透传）
+    // ★ v1.170 修复 401：该接口强制 requireAuth，必须带 Bearer token（与聊天页一致），否则 401
+    fetch('/api/chat/stream', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token}, body: body })
     .then(function(res){
      if(!res.ok){ out.innerHTML = '❌ HTTP '+res.status; return; }
      var reader = res.body.getReader();
@@ -115,6 +117,55 @@ window.tryModel = function(id, modelId, displayName){
      }
      return pump();
     }).catch(function(e){ out.innerHTML = '❌ 请求失败：'+esc(e.message||e); });
+  });
+};
+// ★ v1.170 模型自定义显示名（对外别名）管理：/api/model-mappings（管理员=全局全部；普通用户=全局+自己的）
+var modelAliasLoaded = false;
+window.loadModelAliases = function(){
+  api('/api/model-mappings').then(function(r){
+    if(r.code!==0){ toast(r.msg||'加载失败', false); return; }
+    var list = (r.data||[]).filter(function(x){ return x.enabled; });
+    var rows = list.length ? list.map(function(mp){
+      return '<tr><td><input style="width:130px" class="input" value="'+esc(mp.alias)+'" data-k="'+esc(mp.alias)+'" id="maAlias-'+esc(mp.alias)+'"></td>'+
+       '<td><input style="width:220px" class="input" value="'+esc(mp.targets)+'" id="maTargets-'+esc(mp.alias)+'" placeholder="真实模型名 或 P1::modelId, P2::modelId"></td>'+
+       '<td style="font-size:11px;color:var(--muted)">'+(mp.ownerId>0?'<span class="badge blue">我的</span>':'<span class="badge purple">全局</span>')+'</td>'+
+       '<td><button class="btn-ghost btn-sm" onclick="saveModelAlias(\''+esc(mp.alias)+'\')">保存</button> <button class="btn-ghost btn-sm" style="color:var(--red)" onclick="delModelAlias(\''+esc(mp.alias)+'\')">删除</button></td></tr>';
+    }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--muted)">暂无显示名，下方添加</td></tr>';
+    var html =
+     '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">对外别名：外部 APP 拉 /v1/models 看到的模型名就是「显示名」；用显示名请求会自动转发到右侧真实模型。'+(window._qtIsAdmin?'':'（管理员映射全局共享，普通用户仅自己可见可用）')+'</div>'+
+     '<div class="table-wrap" style="max-height:280px;overflow-y:auto"><table><thead><tr><th>显示名（别名）</th><th>转发到真实模型</th><th>归属</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+     '<div class="form-row" style="margin-top:10px"><label>新增显示名（外部看到的模型名）</label><input class="input" id="maNewAlias" placeholder="例如：DeepSeek 免费"></div>'+
+     '<div class="form-row"><label>转发到（真实模型ID 或 P编号::模型ID，多个用逗号按序故障转移）</label><input class="input" id="maNewTargets" placeholder="例如：deepseek-chat 或 1::deepseek-chat"></div>';
+    openModal('🏷️ 模型显示名管理', html, function(){
+      var a = ($('maNewAlias').value||'').trim(); var t = ($('maNewTargets').value||'').trim();
+      if(!a || !t){ toast('显示名和真实模型不能为空', false); return; }
+      api('/api/model-mappings', { method:'POST', body:{ alias:a, targets:t, enabled:true } }).then(function(r){
+        if(r.code===0){ toast('已保存显示名 '+a, true); closeModal(); loadModelAliases(); }
+        else toast(r.msg||'保存失败（可能已被他人占用）', false);
+      });
+    });
+  }).catch(function(){ toast('加载失败', false); });
+};
+window.saveModelAlias = function(oldAlias){
+  var a = ($('maAlias-'+oldAlias).value||'').trim(); var t = ($('maTargets-'+oldAlias).value||'').trim();
+  if(!a || !t){ toast('显示名和真实模型不能为空', false); return; }
+  // 改名=删旧建新
+  var doSave = function(alias, targets){
+    api('/api/model-mappings', { method:'POST', body:{ alias:alias, targets:targets, enabled:true } }).then(function(r){
+      if(r.code===0){ toast('已保存', true); closeModal(); loadModelAliases(); }
+      else toast(r.msg||'保存失败（可能已被他人占用）', false);
+    });
+  };
+  if(a !== oldAlias){
+    api('/api/model-mappings/'+encodeURIComponent(oldAlias), { method:'DELETE' }).then(function(r2){
+      if(r2.code===0) doSave(a, t); else toast('删除旧名失败', false);
+    });
+  } else doSave(a, t);
+};
+window.delModelAlias = function(alias){
+  api('/api/model-mappings/'+encodeURIComponent(alias), { method:'DELETE' }).then(function(r){
+    if(r.code===0){ toast('已删除', true); closeModal(); loadModelAliases(); }
+    else toast(r.msg||'删除失败', false);
   });
 };
 // 单模型测速：点某行「测速」按钮直接测
