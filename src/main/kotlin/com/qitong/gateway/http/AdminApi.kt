@@ -1093,19 +1093,26 @@ private fun providerToMap(p: Provider) = mapOf(
             }
             // ★ v1.166 Agent 连贯循环：解析工具调用→执行→结果回填→再调模型继续（最多 8 轮，沙盒不会半路死掉）
             var agentLoop = 0
+            // ★ v1.169 修复「工具重复执行」：已执行调用签名集合——模型照抄上一轮调用标签/复述描述时
+            //   parseCalls 按签名过滤已执行过的调用，同一工具不会被二次执行
+            val executedSigs = mutableSetOf<String>()
             while (agentLoop < 8) {
                 agentLoop++
-                val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(lastResult!!)
+                val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(lastResult!!, executedSigs)
                 if (calls.isEmpty()) break
                 val sb = StringBuilder()
                 for ((fn, args) in calls) {
                     val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, database)
+                    // ★ v1.169 登记已执行签名，防模型下一轮照抄标签/复述描述导致同一工具执行两遍
+                    executedSigs.add(com.qitong.gateway.sandbox.SandboxEngine.callSignature(fn, args))
                     sb.append("【$fn 执行结果】\n$r\n")
                     skillResults.add(mapOf("code" to fn, "name" to fn, "result" to r))
                     database.addOpLog(userId, user?.username ?: "user$userId", "沙盒调用", "[$fn] $args -> ${r.take(80)}", "")
                 }
                 val toolResult = sb.toString().trim()
-                lastResult = (lastResult ?: "") + "\n\n" + toolResult
+                // ★ v1.169 回填前清洗已执行过的调用标签：防止调用标签在 lastResult 里累积，
+                //   模型下一轮照抄旧标签 → 即便有 executedSigs 兜底，也尽量从源头不给模型照抄的机会
+                lastResult = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(lastResult ?: "") + "\n\n" + toolResult
                 // 再调一次模型：基于工具结果继续（若还有工具调用则下轮循环执行，否则出最终答复）
                 val continueResp = runCatching {
                     val continueBody = buildJsonObject {

@@ -407,25 +407,86 @@ $KNOWLEDGE_JSON
         // ★ v77 格式9：自然语言调用描述（模型假调用变种）——「正在调用 fn(args)」「调用沙盒执行 fn」「我需要调用 fn」等
         //   让模型输出的"思考描述"也能被识别为真执行，避免只见思考不见干活
         val skip = setOf("params", "parameters", "arguments", "function", "function_name", "name", "value", "output", "result", "results", "resp", "response")
-        val nlCalls = listOf(
-            Regex("""正在调用\s*[：:]\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*?)\)"""),     // 正在调用：sys_health()
-            Regex("""调用沙盒(?:执行|引擎|调度)?\s*[：: ]?\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*?)\)"""), // 调用沙盒执行 sys_health()
-            Regex("""(?:调用|执行|使用|准备调用)\s+(?:了)?\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)"""),  // 调用 sys_health()
-            Regex("""我需要调用\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*?)\)""")            // 我需要调用 sys_health()
-        )
-        for (nl in nlCalls) {
-            nl.findAll(text).forEach { m ->
-                val fn = m.groupValues[1]
-                if (fn.isNotBlank() && result.none { it.first == fn } && fn !in skip) {
-                    val args = parseArgs(m.groupValues[2])
-                    // 校验函数名是否真存在（在知识库函数集合内），避免误抓普通文本里的词
-                    if (KNOWN_FNS.contains(fn)) result.add(fn to args)
+        // ★ v1.169 修复「工具重复执行」：自然语言描述识别改为严格兜底——仅当前 8 种严格格式一个调用都没命中时才启用。
+        //   原来只要文本里出现「正在调用 fn()/调用 fn()」等描述就解析为真调用，模型在同一轮输出「[[沙盒:fn()]] 标签 + 描述」
+        //   或在下一轮复述上一轮调用时，描述会被二次解析 → 同一工具被执行两遍（用户反馈「开一个终端开了俩」根因之一）
+        if (result.isEmpty()) {
+            val nlCalls = listOf(
+                Regex("""正在调用\s*[：:]\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*?)\)"""),     // 正在调用：sys_health()
+                Regex("""调用沙盒(?:执行|引擎|调度)?\s*[：: ]?\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*?)\)"""), // 调用沙盒执行 sys_health()
+                Regex("""(?:调用|执行|使用|准备调用)\s+(?:了)?\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)"""),  // 调用 sys_health()
+                Regex("""我需要调用\s*([a-zA-Z_][a-zA-Z0-9_]*)\((.*?)\)""")            // 我需要调用 sys_health()
+            )
+            for (nl in nlCalls) {
+                nl.findAll(text).forEach { m ->
+                    val fn = m.groupValues[1]
+                    if (fn.isNotBlank() && result.none { it.first == fn } && fn !in skip) {
+                        val args = parseArgs(m.groupValues[2])
+                        // 校验函数名是否真存在（在知识库函数集合内），避免误抓普通文本里的词
+                        if (KNOWN_FNS.contains(fn)) result.add(fn to args)
+                    }
                 }
             }
         }
         // ★ v77 过滤无意义函数名（模型误输出的字段名，不是真实沙盒函数）
         return result.distinctBy { it.first to it.second }
             .filter { it.first !in skip }
+    }
+
+    /**
+     * ★ v1.169 修复「工具重复执行」：带已执行调用记录的解析重载。
+     * 同一函数名 + 同一参数（参数映射转规范化字符串比较）已经在本次会话执行过 → 不再重复解析命中，
+     * 防止 Agent 循环里模型照抄上一轮调用标签 / 复述调用描述导致同一工具被执行两遍。
+     * 参数相同判定：参数 Map 转成 "k=v" 排序后拼接比较，容忍参数顺序差异。
+     */
+    fun parseCalls(rawText: String, executed: Set<String>): List<Pair<String, Map<String, String>>> {
+        val all = parseCalls(rawText)
+        if (executed.isEmpty()) return all
+        return all.filter { call ->
+            val sig = callSignature(call.first, call.second)
+            sig !in executed
+        }
+    }
+
+    /** ★ v1.169 调用签名：函数名 + 参数规范化字符串，用于跨轮去重比对 */
+    fun callSignature(fn: String, args: Map<String, String>): String {
+        val argSig = args.entries
+            .sortedBy { it.key }
+            .joinToString(",") { "${it.key}=${it.value}" }
+        return "$fn($argSig)"
+    }
+
+    /**
+     * ★ v1.169 修复「工具重复执行」：统一调用标签清洗（三渠道共用，杜绝各自为政的清洗差异）。
+     * 清洗 [[沙盒:...]]、<dots_function_call>/<function_call>/<invoke> 标签对与单标签、<parameter>/<param> 子标签、
+     * 以及自然语言调用描述（「正在调用 fn()」「调用 fn()」「我需要调用 fn()」——这类文本正是 v1.169 前格式9 误命中重灾区，
+     * 必须从回传模型的上下文里抹掉，否则模型下一轮照抄 → parseCalls 再次命中 → 工具被执行第二遍）。
+     * 保留其余正文文本。
+     */
+    fun cleanCallTags(text: String): String {
+        if (text.isBlank()) return text
+        var out = text
+            .replace('＜', '<').replace('＞', '>').replace('｜', '|')
+        out = out.replace(Regex("<\\s*\\|\\s*(dots_function_call|function_call|invoke|calls)\\s*\\|?\\s*>"), "<$1>")
+        out = out.replace(Regex("<\\s*/\\s*(dots_function_call|function_call|invoke|calls)\\s*\\|?\\s*>"), "</$1>")
+        // 移除 [[沙盒:...]] 调用
+        out = out.replace(Regex("\\[\\[沙盒:[^\\]]*\\]\\]"), "")
+        // 移除完整的 XML 函数调用标签对（含嵌套 parameter/param / JSON）
+        out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>[\\s\\S]*?</(?:dots_function_call|function_call|invoke)>"), "")
+        // 移除 JSON 风格调用（<dots_function_call>:{"name":...} 或 {"name":...}）
+        out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>\\s*:?\\s*\\{[\\s\\S]*?\\}\\s*(?:</(?:dots_function_call|function_call|invoke)>)?"), "")
+        out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>\\s*:?\\s*\\{[\\s\\S]*?\\}"), "")
+        // 移除可能残留的单标签（<dots_function_call name="xxx"> 或 </dots_function_call>）
+        out = out.replace(Regex("</?(?:dots_function_call|function_call|invoke)\\s*[^>]*>"), "")
+        // 移除 parameter/param 子标签
+        out = out.replace(Regex("<(?:parameter|param)\\s+name=\"[^\"]*\"[^>]*>[\\s\\S]*?</(?:parameter|param)>"), "")
+        out = out.replace(Regex("</?(?:parameter|param)\\s*[^>]*>"), "")
+        // ★ v1.169 关键新增：移除自然语言调用描述（不在原 cleanFunctionTags 处理范围 → 重复执行根因）
+        out = out.replace(Regex("""正在调用\s*[：:]\s*([a-zA-Z_][a-zA-Z0-9_]*)\([^)]*\)"""), "")
+        out = out.replace(Regex("""调用沙盒(?:执行|引擎|调度)?\s*[：: ]?\s*([a-zA-Z_][a-zA-Z0-9_]*)\([^)]*\)"""), "")
+        out = out.replace(Regex("""(?:调用|执行|使用|准备调用)\s+(?:了)?\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)"""), "")
+        out = out.replace(Regex("""我需要调用\s*([a-zA-Z_][a-zA-Z0-9_]*)\([^)]*\)"""), "")
+        return out.trim()
     }
 
     /** 解析 参数名=值, 参数名=值 格式 */

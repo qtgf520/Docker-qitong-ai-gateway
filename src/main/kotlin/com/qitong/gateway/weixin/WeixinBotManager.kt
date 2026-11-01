@@ -635,6 +635,9 @@ object WeixinBotManager {
                     d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
                 var loop = 0
                 var noCallGuide = 0   // ★ v77 引导计数器：模型只输出描述不输出标签时引导它
+                // ★ v1.169 修复「工具重复执行」：已执行调用签名集合——模型照抄上一轮调用标签/复述描述时，
+                //   parseCalls 按签名过滤已执行过的调用，同一工具不会被二次执行
+                val executedSigs = mutableSetOf<String>()
                 while (loop < 20) {
                     // ★ v75 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考（对齐 QQ v64）
                     if (stopSignals[msg.from] == true) {
@@ -650,7 +653,7 @@ object WeixinBotManager {
                         lastProgressAt = System.currentTimeMillis()
                     }
                     // ★ v1.167 user 已在入口幂等写入，循环内不再补写（避免重复写 user）
-                    val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
+                    val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
                     if (calls.isEmpty()) {
                         // ★ v77 假调用修复：模型只输出了"正在调用 xxx"描述但没输出严格标签 → 引导它输出真标签再执行
                         if (noCallGuide < 2 && (content.contains("正在调用") || content.contains("调用沙盒") ||
@@ -696,7 +699,10 @@ object WeixinBotManager {
                         val argShow = if (argTxt.length > 80) argTxt.take(80) + "…" else argTxt
                         if (argShow.isNotBlank()) send("🔧 正在执行：$fn($argShow)")
                         val r = try {
-                            com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
+                            val rr = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
+                            // ★ v1.169 登记已执行签名，防模型照抄标签/复述描述导致同一工具执行两遍
+                            executedSigs.add(com.qitong.gateway.sandbox.SandboxEngine.callSignature(fn, args))
+                            rr
                         } catch (e: Exception) {
                             "工具执行异常（" + fn + "）：" + e.message
                         }
@@ -712,12 +718,14 @@ object WeixinBotManager {
                         try {
                             val futures = calls.map { (fn, args) ->
                                 executor.submit<Pair<String, String>> {
-                                    val r = try {
+                                    val rr = try {
                             com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
                         } catch (e: Exception) {
-                            "工具执行异常（" + fn + "）：" + e.message
+                            null
                         }
-                                    fn to r
+                                    // ★ v1.169 并行执行登记签名（仅成功才登记——失败的调用的签名不入集合，允许模型改参数重试）
+                                    if (rr != null) executedSigs.add(com.qitong.gateway.sandbox.SandboxEngine.callSignature(fn, args))
+                                    fn to (rr ?: "工具执行异常（" + fn + "）：未知错误")
                                 }
                             }
                             futures.forEach { fut ->
@@ -775,7 +783,7 @@ object WeixinBotManager {
                     //   （修复串台：否则下一条闲聊会把上一轮工具过程带进上下文，机器人「问他这个他说那个」）
                     content = nextContent
                     // ★ v1.166 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
-                    if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty() && noCallGuide < 2 && continueIntent(content)) {
+                    if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
                         send("💭 好的，我继续查…")
                         val guideBody2 = JSONObject()
@@ -813,7 +821,8 @@ object WeixinBotManager {
                         // 引导也没拿到下一步 → 确实做完了，正常收尾
                         break
                     }
-                    if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content).isEmpty()) break
+                    // ★ v1.169 收尾二次解析也带去重（与主调用、calls2 一致）
+                    if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty()) break
                 }
                 while (hist.size > 20) hist.removeAt(0)
                 // ★ v92 微信记忆闭环增强：qtai-sj（sandboxOn）模式也沉淀记忆（对齐 QQ 长期记忆；受 memory_enabled 开关控制）
@@ -915,18 +924,9 @@ object WeixinBotManager {
         text.contains("稍等", true) || text.contains("等我", true)
 
     /** 清洗回复里的函数调用标签（防 XML/JSON 泄漏给用户，对齐 QQ 侧逻辑） */
-    private fun cleanFunctionTags(text: String): String {
-        var s = text
-        // [[沙盒:fn(args)]]
-        s = s.replace(Regex("\\[\\[沙盒:[^\\]]+\\]\\]"), "")
-        // <dots_function_call ...>...</dots_function_call> / <function_call> / <invoke> 完整对
-        s = s.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>[\\s\\S]*?</(?:dots_function_call|function_call|invoke)>"), "")
-        // 单标签 <dots_function_call name="x"/> / <function_call>（无配对）
-        s = s.replace(Regex("<(?:dots_function_call|function_call|invoke)\\s+name=\"[^\"]*\"\\s*/?>"), "")
-        // 残留的 JSON 函数调用 {name:..., arguments:{...}}
-        s = s.replace(Regex("\\{\\\\?\"name\\\\?\"\\\\?\\s*[:：][^}]*\\}"), "")
-        return s.trim()
-    }
+    // ★ v1.169 委托统一清洗器：SandboxEngine.cleanCallTags 覆盖原全部规则并新增「自然语言调用描述」清洗
+    //   （「正在调用 fn()」「调用 fn()」等——v1.169 前格式9 误命中重灾区），三渠道行为完全一致
+    private fun cleanFunctionTags(text: String): String = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(text)
 
     /** ★ v71 大消息分段：超 1800 字符按行切段（微信消息上限约 2000，留余量） */
     private fun splitMessage(text: String): List<String> {

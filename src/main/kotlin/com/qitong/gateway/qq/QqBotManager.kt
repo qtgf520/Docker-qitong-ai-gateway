@@ -1462,26 +1462,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
 
     /** 调本机网关大模型，带每用户独立上下文与人设覆盖。 */
     /** 清洗回复里的函数调用标签（[[沙盒:...]]、<dots_function_call>、<function_call>、<invoke>、<parameter>），保留文本部分 */
-    private fun cleanFunctionTags(text: String): String {
-        var out = text
-        // ★ v55 预处理：全角/竖线畸形统一半角（<｜invoke|> → <invoke>）
-        out = out.replace('＜', '<').replace('＞', '>').replace('｜', '|')
-        out = out.replace(Regex("<\\s*\\|\\s*(dots_function_call|function_call|invoke|calls)\\s*\\|?\\s*>"), "<$1>")
-        out = out.replace(Regex("<\\s*/\\s*(dots_function_call|function_call|invoke|calls)\\s*\\|?\\s*>"), "</$1>")
-        // 移除 [[沙盒:...]] 调用（v80 改为移除，不再替换成"（已调用）"占位——防假调用假象）
-        out = out.replace(Regex("\\[\\[沙盒:[^\\]]*\\]\\]"), "")
-        // 移除完整的 XML 函数调用标签对（含嵌套 parameter/param / JSON）
-        out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>[\\s\\S]*?</(?:dots_function_call|function_call|invoke)>"), "")
-        // 移除 JSON 风格调用（<dots_function_call>:{"name":...} 或 {"name":...}）
-        out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>\\s*:?\\s*\\{[\\s\\S]*?\\}\\s*(?:</(?:dots_function_call|function_call|invoke)>)?"), "")
-        out = out.replace(Regex("<(?:dots_function_call|function_call|invoke)[^>]*>\\s*:?\\s*\\{[\\s\\S]*?\\}"), "")
-        // 移除可能残留的单标签（<dots_function_call name="xxx"> 或 </dots_function_call>）
-        out = out.replace(Regex("</?(?:dots_function_call|function_call|invoke)\\s*[^>]*>"), "")
-        // ★ v49 移除 parameter/param 子标签（<parameter name="query">值</parameter>）
-        out = out.replace(Regex("<(?:parameter|param)\\s+name=\"[^\"]*\"[^>]*>[\\s\\S]*?</(?:parameter|param)>"), "")
-        out = out.replace(Regex("</?(?:parameter|param)\\s*[^>]*>"), "")
-        return out.trim()
-    }
+    // ★ v1.169 委托统一清洗器：SandboxEngine.cleanCallTags 在原逻辑基础上增加「自然语言调用描述」清洗
+    //   （「正在调用 fn()」「调用 fn()」等——v1.169 前格式9 误命中重灾区），三渠道行为完全一致
+    private fun cleanFunctionTags(text: String): String = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(text)
 
     /** 检测文本是否包含函数调用标签（v55：用于解析不到时判断是否需要清洗） */
     private fun containsFunctionTags(text: String): Boolean {
@@ -1663,6 +1646,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 var lastProgressAt = System.currentTimeMillis()
                 // ★ v1.133 假调用引导计数器（循环外，跨轮累积，最多引导 2 次）
                 var noCallGuide = 0
+                // ★ v1.169 修复「工具重复执行」：本次会话已执行调用签名集合——同一 fn+参数第二轮不再重复执行
+                val executedSigs = mutableSetOf<String>()
                 while (sandboxOn && content.isNotBlank() && loopGuard < 20) {
                     loopGuard++
                     // ★ v64 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考
@@ -1671,8 +1656,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         content = "🛑 已停止任务（用户中断）。"
                         break
                     }
-                    val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
-                    // ★ v1.133 修复假调用中断：模型只输出「正在调用xxx」描述但没输出严格标签 → 引导它输出真标签再执行（对齐微信 v77 noCallGuide）
+                    // ★ v1.169 修复「工具重复执行」：传 executedSigs 做跨轮去重——模型照抄上一轮调用标签/复述描述时，
+                    //   同一 fn+参数已执行过 → 解析结果为空 → 循环正常收尾，不再执行第二遍
+                    val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
                     if (calls.isEmpty()) {
                         if (noCallGuide < 2 && (content.contains("正在调用") || content.contains("调用沙盒") ||
                                 content.contains("准备调用") || content.contains("我需要调用") || content.contains("我来调用"))) {
@@ -1733,7 +1719,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         if (argShow.isNotBlank()) smartSend("🔧 正在执行：$fn($argShow)", false)
                         // ★ v1.133 单工具异常保护：execute 抛异常不再中断整个任务，记录错误继续下一步
                         val r = try {
-                            com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
+                            val rr = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
+                            // ★ v1.169 登记已执行签名，防模型照抄标签/复述描述导致同一工具执行两遍
+                            executedSigs.add(com.qitong.gateway.sandbox.SandboxEngine.callSignature(fn, args))
+                            rr
                         } catch (e: Exception) {
                             System.err.println("[QQBot] 沙盒执行异常 $fn: ${e.message}")
                             "❌ 工具执行异常（$fn）：${e.message}"
@@ -1751,8 +1740,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         try {
                             val futures = calls.map { (fn, args) ->
                                 executor.submit<Pair<String, String>> {
-                                    val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
-                                    fn to r
+                                    val rr = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
+                                    // ★ v1.169 并行执行也登记签名，防模型下一轮照抄调用
+                                    executedSigs.add(com.qitong.gateway.sandbox.SandboxEngine.callSignature(fn, args))
+                                    fn to rr
                                 }
                             }
                             futures.forEach { fut ->
@@ -1820,7 +1811,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     content = nextContent
                     // ★ v1.166 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步/再查」但没输出调用标签 →
                     //   引导一次让它输出真标签继续执行，而不是直接 break 停半路
-                    val calls2 = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content)
+                    val calls2 = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
                     if (calls2.isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
                         smartSend("💭 好的，我继续查…", false)
