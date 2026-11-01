@@ -224,6 +224,10 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v1.171（2026-11-02）· 模型customAlias直接作对外别名 + 显示名按钮颜色修复
+- 🏷️ **模型配置的自定义别名（customAlias）直接对外生效**：单独模型编辑里填的别名现在跟「显示名管理」一样直接出现在 `/v1/models`（`id`=别名、`display_name`=别名、`alias_of`=真实模型）；用别名请求时网关自动映射回真实模型转发（`findModelByAlias` 实时查库，改配置立即生效）
+- 🎨 **修复「🏷️ 显示名管理」按钮文字看不见**：青色文字在靛蓝背景上对比度不足，改纯白
+- 📱 **Shizuku 保活**：Operit 与綦桐AI网关（`com.qtwl.gateway`）后台运行白名单 + 前台服务许可 + 设备空闲白名单 + standby active
 ### v1.170（2026-11-02）· 模型试用401修复 + 模型自定义显示名 + OpenAI余额查询
 - 🔧 **修复模型页「试用」401**：`tryModel` 的 fetch 请求没带 `Authorization` 头（`/api/chat/stream` 强制登录鉴权），补 `Bearer token` 后试用恢复正常。
 - 🏷️ **模型自定义显示名（对外别名）**：复用 `model_mappings` 表并新增 `owner_id` 做用户隔离——管理员映射全局共享；普通用户可自建自己的别名（如「DeepSeek 免费」→ 真实 `deepseek-chat`）。`/v1/models` 对外列表在真实模型后追加别名条目（`id`=别名、`display_name`=自定义名），外部 APP 拉模型列表看到的就是自定义名；用别名请求时网关自动反查映射到真实模型转发。后台模型页新增「显示名」管理入口（管理员=全部映射，用户=自己的）。

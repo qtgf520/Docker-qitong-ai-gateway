@@ -34,7 +34,7 @@ loaders.models = function(){
 '<div class="action-bar">',
       '<button class="btn" onclick="editModel(0)">手动添加模型</button>',
       '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">自动全部测速</button>',
-      '<button class="btn" style="color:var(--cyan)" onclick="loadModelAliases()">🏷️ 显示名管理</button>',
+      '<button class="btn" style="color:#fff" onclick="loadModelAliases()">🏷️ 显示名管理</button>',
       '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
      // ★ v1.166 多选批量操作（下拉式）
      '<span style="border-left:1px solid var(--border);padding-left:10px;display:inline-flex;gap:6px;align-items:center">' +

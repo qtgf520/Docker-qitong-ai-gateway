@@ -906,6 +906,12 @@ class Database(private val dbPath: String) {
     fun getModelByKey(providerId: Long, modelId: String): AiModel? =
         query("SELECT * FROM models WHERE provider_id=? AND model_id=?", providerId, modelId).firstOrNull()?.let { rowToModel(it) }
 
+    /** ★ v1.171 按别名反查真实模型：customAlias 精确命中（别名=模型的自定义显示名，对外使用时直接映射回真实模型） */
+    fun findModelByAlias(alias: String): AiModel? {
+        if (alias.isBlank()) return null
+        return query("SELECT * FROM models WHERE custom_alias=? AND custom_alias<>'' LIMIT 1", alias).firstOrNull()?.let { rowToModel(it) }
+    }
+
     /** 系统资源 + 某用户私有资源 */
     fun getVisibleModels(ownerId: Long): List<AiModel> =
         query("SELECT * FROM models WHERE owner_id=0 OR owner_id=? ORDER BY id", ownerId).map { rowToModel(it) }
@@ -2032,6 +2038,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.171", "模型配置customAlias直接作对外别名 + 显示名按钮颜色修复", "①模型配置里单独模型的自定义别名（customAlias）直接对外生效：/v1/models 对这些模型追加密名条目（id=别名、display_name=别名、alias_of=真实模型），外部 APP 拉列表即看到别名；请求侧 GatewayProxy 实时反查 findModelByAlias（命中 customAlias → 映射回真实模型转发，带归属校验），配置里改别名立即生效，无需额外配置。②修复模型页「🏷️ 显示名管理」按钮文字看不见：青色文字在靛蓝背景上对比度不足，改纯白。③Shizuku 保活 Operit 与綦桐AI网关（RUN_IN_BACKGROUND/START_FOREGROUND/deviceidle 白名单/standby active）。"),
             Triple("v1.170", "模型试用401修复 + 模型自定义显示名(对外别名) + OpenAI余额查询", "①修复模型页「试用」按钮 401：tryModel 的 fetch 请求没带 Authorization 头（/api/chat/stream 强制 requireAuth），补 Bearer token 即可。②模型自定义显示名（对外别名）：复用 model_mappings 表并新增 owner_id 字段做用户隔离——管理员映射全局共享，普通用户可自建自己的别名（如「DeepSeek 免费」→ 真实 deepseek-chat）；/v1/models 对外列表在真实模型后追加别名条目（id=别名、display_name=自定义名），外部 APP 拉模型列表看到的就是自定义名，用别名请求时网关自动反查映射到真实模型转发（同一轮注册的全局/用户映射都能命中）；后台模型页新增「显示名」管理入口（管理员=全部映射，用户=自己的）。③OpenAI 兼容余额查询：新增 GET /v1/dashboard/billing/credit_grants（按 API Key 属主隔离，普通用户只看自己的余额/累计充值/配额用量；本地请求免 key 时归属 0 不泄露），对接方可像 OpenAI 一样查余额。④模型测速与速度排行沿用现有用户隔离逻辑不变（/api/status healthCache 只显示当前用户可见模型）。"),
             Triple("v1.169", "修复工具重复执行（Agent 循环跨轮去重 + 统一标签清洗）", "①根因：模型同一轮输出「[[沙盒:fn()]] 标签 + 正在调用 fn() 自然语言描述」或下一轮复述上一轮调用描述时，格式9（自然语言识别）无条件下启用 → parseCalls 把描述二次解析为真调用 → 同一工具被执行两遍（如「开一个终端开了俩」）。修复双保险：②解析侧跨轮去重：SandboxEngine 新增带 executed 集合的 parseCalls 重载 + callSignature（函数名+参数排序拼接），QQ/微信/AdminApi 三渠道 Agent 循环统一在循环外建 executedSigs，每次工具执行成功后登记签名，下一轮 parseCalls 自动过滤已执行过的调用——同一 fn+参数不会被二次执行，失败异常不登记、允许模型改参数重试；③回传侧统一清洗：新增 SandboxEngine.cleanCallTags 统一清洗器（覆盖原 QQ/微信各自 cleanFunctionTags 全部规则 + 新增「正在调用 fn()/调用 fn()/我需要调用 fn()」自然语言调用描述抹除），三渠道 cleanFunctionTags 全部改为委托它——从源头不给模型照抄的机会。④格式9 收紧：自然语言描述识别仅在严格格式一个都没命中时才启用，且函数名必须真实存在于知识库 KNOWN_FNS。"),
             Triple("v1.168", "QQ 私聊/群记忆场景隔离 + 会话防串台 + 聊天风格自然化", "①修复QQ私聊与群聊长期记忆串台：私聊和群聊现在各自独立读写记忆，不管是否管理员都不再串。绑定账号用户私聊用 qq_c2c、群聊用 qq_group:{群号}；未绑定用户私聊用 qq:c2c:{用户}、群聊用 qq:{群}:{成员}。读取时新场景记忆为空自动回退老数据，存量记忆不丢失。②会话历史 key 加 botId 前缀（{bot.id}:g:群:成员 / {bot.id}:c:用户），多机器人同手机不串台。③修复幽灵回调：被遗弃的旧 WebSocket 延迟回调不再触发误重连。④QQ 渠道新增聊天风格段：说话更像真人朋友，但沙盒铁律不受影响（仅 QQ 渠道，微信侧不变）。"),

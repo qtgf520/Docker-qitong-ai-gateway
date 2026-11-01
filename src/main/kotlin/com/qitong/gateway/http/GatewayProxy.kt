@@ -517,6 +517,19 @@ class GatewayProxy(private val database: Database) {
         var modelId = body["model"]?.jsonPrimitive?.content ?: body["prompt"]?.let { "text-completion" } ?: ""
         val stream = body["stream"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
 
+        // ★ v1.171 模型配置的 customAlias 直接当对外别名：请求名命中某个模型的 customAlias → 映射回真实模型
+        //   实时查库：配置里改别名立即生效（与 model_mappings 别名同逻辑，归属校验：私有模型仅属主可用）
+        if (modelId.isNotBlank() && !modelId.contains("::")) {
+            runCatching {
+                val aliasModel = database.findModelByAlias(modelId)
+                if (aliasModel != null && aliasModel.isEnabled) {
+                    val visible = ownerId <= 0 || database.getUserById(ownerId)?.role == "admin" ||
+                        aliasModel.isPublic || aliasModel.ownerId == ownerId || aliasModel.authorizedUsers.contains(ownerId)
+                    if (visible) modelId = aliasModel.modelId
+                }
+            }
+        }
+
         // 模型列表：管理员=全部；普通用户=公用+自己的+被授权给自己的（★v1.105 定制模型授权）
         val allEnabled = database.getEnabledModels()
         val models = if (ownerId > 0) {
