@@ -517,7 +517,7 @@ class GatewayProxy(private val database: Database) {
         var modelId = body["model"]?.jsonPrimitive?.content ?: body["prompt"]?.let { "text-completion" } ?: ""
         val stream = body["stream"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
 
-        // ★ v1.171 模型配置的 customAlias 直接当对外别名：请求名命中某个模型的 customAlias → 映射回真实模型
+        // ★ v1.172 模型配置的 customAlias 直接当对外别名：请求名命中某个模型的 customAlias → 映射回真实模型
         //   实时查库：配置里改别名立即生效（与 model_mappings 别名同逻辑，归属校验：私有模型仅属主可用）
         if (modelId.isNotBlank() && !modelId.contains("::")) {
             runCatching {
@@ -580,6 +580,15 @@ class GatewayProxy(private val database: Database) {
         // 映射命中：直接路由到映射列表（resolveModelId 对映射不适用）
         val resolvedModelId = targetModelOverride ?: if (mappingTargets != null) mappingTargets!!.first().substringAfter("::", mappingTargets!!.first()) else resolveModelId(modelId, models, ownerId, userMsg)
         modelId = resolvedModelId
+
+        // ★ v1.172 预测式预热：请求发出前记录当前模型上下文（大脑思考阶段），后台三级预测并预建"下一个故障转移目标"连接
+        //   对齐原APP v3.18.24：qtai-sj 思考时提前介入，故障转移时切换毫秒级完成（纯后台异步，不阻塞主请求）
+        runCatching {
+            val curModel = models.firstOrNull { it.modelId == modelId }
+            com.qitong.gateway.http.PredictivePrewarm.notifyThinkingStarted(
+                database, modelId, curModel?.providerId ?: 0L, modality, ownerId
+            )
+        }
 
         // 构建尝试列表（用户级池优先；映射命中则用映射目标列表；分组命中则只在该组内选）
         val attemptModels = if (mappingTargets != null) {
@@ -713,6 +722,8 @@ class GatewayProxy(private val database: Database) {
                     // 记录实际命中的模型，首页灯跟随它
                     lastServedKey = "${targetModel.providerId}::${targetModel.modelId}"
                     lastServedAt = System.currentTimeMillis()
+                    // ★ v1.172 预测式预热：实际命中模型切换完成，登记（统计预热命中 + 清空预热态，为下一轮思考预热腾位）
+                    runCatching { com.qitong.gateway.http.PredictivePrewarm.notifySwitchCompleted(lastServedKey) }
                     // ★ v1.160 系统动态持久化：记录模型切换（去重：与上一条相同不重复记）
                     val newKey = lastServedKey
                     val lastLog = database.getGatewayLogs(1).firstOrNull()
