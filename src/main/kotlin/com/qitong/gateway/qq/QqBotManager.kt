@@ -1641,6 +1641,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 // ★ v1.110 静默模式（用户要求）：思考→自己找工具→不把步骤发出来→只回最后结果
                 // ★ v1.116 多思考不停息：轮数 8→20，只要模型还在输出函数调用就不停；干不完继续干，除非用户说停
                 var loopGuard = 0
+                // ★ v1.174 Agent 运行可视化：QQ 渠道登记运行（后台实时沙盒面板按用户隔离查看）
+                val agentRunId = com.qitong.gateway.http.AgentRunTracker.start("qq", userOpenid, db.getQqBoundUser(userOpenid)?.username ?: "", userText)
+                com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "收到消息，开始处理…")
                 // 只推一次「处理中」，中间步骤全部静默（最后结果由外层推）
                 var stepHintSent = false
                 var lastProgressAt = System.currentTimeMillis()
@@ -1650,6 +1653,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 val executedSigs = mutableSetOf<String>()
                 while (sandboxOn && content.isNotBlank() && loopGuard < 20) {
                     loopGuard++
+                    com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loopGuard, action = "第 $loopGuard 轮思考…")
                     // ★ v64 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考
                     if (stopSignals[userOpenid] == true) {
                         stopSignals.remove(userOpenid)
@@ -1719,7 +1723,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         if (argShow.isNotBlank()) smartSend("🔧 正在执行：$fn($argShow)", false)
                         // ★ v1.133 单工具异常保护：execute 抛异常不再中断整个任务，记录错误继续下一步
                         val r = try {
-                            val rr = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
+                            com.qitong.gateway.http.AgentRunTracker.toolCall(agentRunId, fn, args.toString())
+                        val rr = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
+                        com.qitong.gateway.http.AgentRunTracker.toolResult(agentRunId, fn, rr)
                             // ★ v1.169 登记已执行签名，防模型照抄标签/复述描述导致同一工具执行两遍
                             executedSigs.add(com.qitong.gateway.sandbox.SandboxEngine.callSignature(fn, args))
                             rr

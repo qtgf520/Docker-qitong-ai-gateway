@@ -552,10 +552,12 @@ function qqLoadLogs(){
 var termCur = null;
 loaders.terminal = function(){
  var box = $('view-terminal');
- box.innerHTML = '<div class="action-bar">'+
-  '<button class="btn" onclick="termCreate()">+ 创建终端</button>'+
-  '<button class="btn" onclick="termAiHelp()">🤖 AI 智能操作</button>'+
-  '<button class="btn-ghost" onclick="termFiles()">📁 文件管理</button>'+
+box.innerHTML = '<div class="action-bar">'+
+   '<button class="btn" onclick="termCreate()">+ 创建终端</button>'+
+   '<button class="btn" onclick="termAiHelp()">🤖 AI 智能操作</button>'+
+   '<button class="btn" style="color:#fff" onclick="agentRunsOpen()">📊 实时沙盒</button>'+
+   '<button class="btn" style="color:#fff" onclick="linuxPanelOpen()">🐧 Linux 系统</button>'+
+   '<button class="btn-ghost" onclick="termFiles()">📁 文件管理</button>'+
   '<button class="btn-ghost" onclick="termSsh()">🔌 SSH 远程</button>'+
   '<button class="btn-ghost" onclick="loaders.terminal()">刷新</button>'+
   '<button class="btn-ghost danger" onclick="termCloseAll()">关闭全部</button>'+
@@ -563,6 +565,116 @@ loaders.terminal = function(){
   '<div id="termList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  termLoad();
 };
+// ===== ★ v1.174 实时沙盒：QQ/微信/内置聊天 正在跑的 Agent 步骤可视化 =====
+var agentRunsTimer = null;
+function agentRunsOpen(){
+ openModal('📊 实时沙盒 · Agent 运行状态',
+  '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">QQ / 微信 / 内置聊天 正在运行的 Agent 任务实时步骤（轮次/工具/结果）；管理员看全部，普通用户看自己的；每 3 秒自动刷新</div>'+
+  '<div id="agentRunsOut" style="font-family:ui-monospace,monospace;font-size:11px;background:var(--inset);border-radius:6px;padding:10px;max-height:420px;overflow-y:auto">加载中…</div>'+
+  '<div class="form-row" style="margin-top:8px"><button class="btn-ghost btn-sm" onclick="agentRunsRefresh()">🔄 立即刷新</button></div>', function(){});
+ agentRunsRefresh();
+ if(agentRunsTimer) clearInterval(agentRunsTimer);
+ agentRunsTimer = setInterval(function(){ if(document.getElementById('agentRunsOut')) agentRunsRefresh(); else { clearInterval(agentRunsTimer); agentRunsTimer=null; } }, 3000);
+}
+function agentRunsRefresh(){
+ api('/api/agent/runs').then(function(r){
+  var el=$('agentRunsOut'); if(!el) return;
+  var list=(r&&r.data)||[];
+  if(!list.length){ el.innerHTML='<div style="color:var(--muted);padding:12px">暂无运行中的 Agent 任务</div>'; return; }
+  el.innerHTML=list.map(function(a){
+   var ch = a.channel==='qq'?'QQ':(a.channel==='weixin'?'微信':'内置聊天');
+   var st = a.status==='running'?'<span class="badge green">运行中</span>':(a.status==='error'?'<span class="badge red">异常</span>':'<span class="badge gray">已完成</span>');
+   return '<div style="border-bottom:1px solid var(--border);padding:6px 0">'+
+    '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+st+' <span class="badge blue">'+ch+'</span> <b>'+esc(a.userName||a.userKey)+'</b> <span style="color:var(--muted)">第'+a.round+'轮 · '+a.elapsedSec+'秒</span></div>'+
+    '<div style="margin:3px 0">'+esc(a.messagePreview||'')+'</div>'+
+    '<div style="color:var(--cyan)">▸ '+esc(a.currentAction||'')+'</div>'+
+    (a.toolCall?'<div style="color:var(--muted)">🔧 '+esc(a.toolCall)+' → '+esc(a.toolResult||'…')+'</div>':'')+
+   '</div>';
+  }).join('');
+ });
+}
+// ===== ★ v1.174 Linux 系统：可下载安装的 Linux（proot rootfs）+ 永久终端 =====
+var linuxTimer = null;
+function linuxPanelOpen(){
+ openModal('🐧 Linux 系统 · 可安装适配系统',
+  '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">为 qtai-sj / 终端安装适配的 Linux 系统（proot 运行，真实 Linux 环境）：点击「下载安装」自动下载并安装，安装后即可在终端使用；qtai-sj 专属永久终端不可删除。</div>'+
+  '<div id="lxOut" style="background:var(--inset);border-radius:6px;padding:10px;max-height:200px;overflow-y:auto">加载中…</div>'+
+  '<div style="border-top:1px solid var(--border);margin:10px 0;padding-top:10px;font-size:12px;color:var(--muted)">Linux 终端会话：</div>'+
+  '<div id="lxSess" style="background:var(--inset);border-radius:6px;padding:10px;max-height:220px;overflow-y:auto">加载中…</div>'+
+  '<div class="form-row" style="margin-top:8px;display:flex;gap:6px"><button class="btn btn-sm" onclick="linuxNewTerm()">+ 新建 Linux 终端</button></div>', function(){});
+ linuxLoad();
+ if(linuxTimer) clearInterval(linuxTimer);
+ linuxTimer = setInterval(function(){ if(document.getElementById('lxOut')) linuxLoad(); else { clearInterval(linuxTimer); linuxTimer=null; } }, 3000);
+}
+function linuxLoad(){
+ api('/api/linux/distros').then(function(r){
+  var el=$('lxOut'); if(!el) return;
+  var list=(r&&r.data)||[];
+  if(!list.length){ el.innerHTML='<div style="color:var(--muted)">暂无可安装系统</div>'; return; }
+  el.innerHTML=list.map(function(d){
+   var stTxt = d.installed?'<span class="badge green">已安装</span>':(d.status==='downloading'?'<span class="badge cyan">下载中 '+d.progress+'%</span>':(d.status==='installing'?'<span class="badge cyan">安装中…</span>':(d.status==='failed'?'<span class="badge red">失败</span>':'<span class="badge gray">未安装</span>')));
+   var btn = d.installed
+    ? (window._qtIsAdmin?'<button class="btn-ghost btn-sm danger" onclick="linuxRemove(\''+d.id+'\')">卸载</button>':'')
+    : (window._qtIsAdmin?'<button class="btn btn-sm" onclick="linuxInstall(\''+d.id+'\')">⬇ 下载安装</button>':'');
+   return '<div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">'+
+    '<div style="flex:1"><b>'+esc(d.name)+'</b> <span style="font-size:10px;color:var(--muted)">'+esc(d.arch)+' · '+esc(d.sizeHint)+'</span><div style="font-size:10px;color:var(--muted)">'+esc(d.message||'')+'</div></div>'+
+    stTxt+' '+btn+'</div>';
+  }).join('');
+ });
+ api('/api/linux/sessions').then(function(r){
+  var el=$('lxSess'); if(!el) return;
+  var list=(r&&r.data)||[];
+  if(!list.length){ el.innerHTML='<div style="color:var(--muted)">暂无 Linux 终端会话</div>'; return; }
+  el.innerHTML=list.map(function(s){
+   var perm = s.permanent?'<span class="badge purple">永久</span>':'<span class="badge gray">临时</span>';
+   var delBtn = s.permanent?'':' <button class="btn-ghost btn-sm danger" onclick="linuxDel(\''+s.id+'\')">删</button>';
+   return '<div style="display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">'+
+    '<div style="flex:1"><b>'+esc(s.label)+'</b> <span style="font-size:10px;color:var(--muted)">'+esc(s.distroId)+'</span><div style="font-size:10px;color:var(--muted);max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc((s.output||'').split('\n').slice(-2).join('')||'(暂无输出)')+'</div></div>'+
+    perm+' <button class="btn-ghost btn-sm" onclick="linuxExecOpen(\''+s.id+'\',\''+esc(s.label)+'\')">进入</button>'+delBtn+'</div>';
+  }).join('');
+ });
+}
+function linuxInstall(id){
+ api('/api/linux/install',{method:'POST',body:{distroId:id}}).then(function(r){ toast(r.msg||'已开始下载', r.code===0); linuxLoad(); });
+}
+function linuxRemove(id){
+ if(!confirm('确定卸载该 Linux 系统？（会删除其 rootfs）')) return;
+ api('/api/linux/remove',{method:'POST',body:{distroId:id}}).then(function(r){ toast(r.msg||'', r.code===0); linuxLoad(); });
+}
+function linuxNewTerm(){
+ api('/api/linux/distros').then(function(r){
+  var list=((r&&r.data)||[]).filter(function(d){return d.installed;});
+  if(!list.length){ toast('请先安装一个 Linux 系统', false); return; }
+  var opts=list.map(function(d){return '<option value="'+d.id+'">'+d.name+'</option>';}).join('');
+  openModal('新建 Linux 终端', '<div class="form-row"><label>系统</label><select class="input" id="lxnDistro">'+opts+'</select></div>'+
+   '<div class="form-row"><label>名称（可选）</label><input class="input" id="lxnLabel" placeholder="如：我的 Linux 终端"></div>', function(){
+    var distroId=$('lxnDistro').value;
+    var label=$('lxnLabel').value.trim();
+    api('/api/linux/create',{method:'POST',body:{distroId:distroId,label:label}}).then(function(r){
+     toast(r.msg||'已创建', r.code===0); if(r.code===0){ closeModal(); linuxLoad(); }
+    });
+   });
+ });
+}
+function linuxDel(id){
+ if(!confirm('确定删除该 Linux 终端？')) return;
+ api('/api/linux/delete',{method:'POST',body:{id:id}}).then(function(r){ toast(r.msg||'', r.code===0); linuxLoad(); });
+}
+function linuxExecOpen(id, label){
+ openModal('🖥 '+esc(label),
+  '<div class="form-row"><label>命令</label><div style="display:flex;gap:6px"><input class="input" id="lxeCmd" placeholder="如 uname -a / apk add curl" style="flex:1;font-family:monospace" onkeydown="if(event.key===\'Enter\')linuxExecRun(\''+id+'\')"><button class="btn" onclick="linuxExecRun(\''+id+'\')">执行</button></div></div>'+
+  '<div id="lxeOut" style="font-family:monospace;font-size:11px;background:var(--inset);border-radius:6px;padding:10px;max-height:320px;overflow-y:auto;white-space:pre-wrap">$ 待输入命令…</div>', function(){});
+}
+function linuxExecRun(id){
+ var cmd=$('lxeCmd').value.trim(); if(!cmd){ toast('请输入命令', false); return; }
+ var out=$('lxeOut'); if(out) out.textContent='$ '+cmd+'\n执行中…';
+ api('/api/linux/exec',{method:'POST',body:{id:id,cmd:cmd}}).then(function(r){
+  var o=$('lxeOut'); if(!o) return;
+  if(r.code===0){ o.textContent='$ '+cmd+'\n'+(r.data.output||'(无输出)'); }
+  else { o.textContent='$ '+cmd+'\n❌ '+(r.msg||'失败'); }
+  var c=$('lxeCmd'); if(c) c.value='';
+ });
+}
 // ★ v1.104 终端文件管理（真实服务器目录 = 容器挂载卷，像文件管理器一样浏览/预览/编辑）
 function termFiles(){
  var cur = '/data/qitong';

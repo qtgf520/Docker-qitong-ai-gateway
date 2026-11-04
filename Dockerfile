@@ -7,7 +7,7 @@ WORKDIR /app
 # 时区 + 健康检查工具
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
-    && apt-get update -qq && apt-get install -y -qq curl >/dev/null 2>&1 \
+    && apt-get update -qq && apt-get install -y -qq curl proot tar xz-utils >/dev/null 2>&1 \
     && rm -rf /var/lib/apt/lists/*
 
 # 数据目录（挂载卷）

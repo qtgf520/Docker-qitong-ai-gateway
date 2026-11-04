@@ -47,6 +47,9 @@ object AdminApi {
         } catch (_: Exception) {}
     }
 
+    /** ★ v1.174 暴露供 Main 复用（递归序列化 Map<String,Any?> 等） */
+    fun encodeElementPublic(data: Any?): JsonElement = encodeElement(data)
+
     private fun encodeElement(data: Any?): JsonElement = when (data) {
         null -> JsonNull
         is JsonElement -> data
@@ -1117,16 +1120,22 @@ private fun providerToMap(p: Provider) = mapOf(
             }
             // ★ v1.166 Agent 连贯循环：解析工具调用→执行→结果回填→再调模型继续（最多 8 轮，沙盒不会半路死掉）
             var agentLoop = 0
+            // ★ v1.174 Agent 运行可视化：内置聊天渠道登记运行
+            val agentRunId = com.qitong.gateway.http.AgentRunTracker.start("chat", "user$userId", user?.username ?: "user$userId", body["content"]?.jsonPrimitive?.content ?: "")
+            com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "收到消息，开始处理…")
             // ★ v1.169 修复「工具重复执行」：已执行调用签名集合——模型照抄上一轮调用标签/复述描述时
             //   parseCalls 按签名过滤已执行过的调用，同一工具不会被二次执行
             val executedSigs = mutableSetOf<String>()
             while (agentLoop < 8) {
                 agentLoop++
+                com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = agentLoop, action = "第 $agentLoop 轮思考…")
                 val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(lastResult!!, executedSigs)
                 if (calls.isEmpty()) break
                 val sb = StringBuilder()
                 for ((fn, args) in calls) {
+                    com.qitong.gateway.http.AgentRunTracker.toolCall(agentRunId, fn, args.toString())
                     val r = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, database)
+                    com.qitong.gateway.http.AgentRunTracker.toolResult(agentRunId, fn, r)
                     // ★ v1.169 登记已执行签名，防模型下一轮照抄标签/复述描述导致同一工具执行两遍
                     executedSigs.add(com.qitong.gateway.sandbox.SandboxEngine.callSignature(fn, args))
                     sb.append("【$fn 执行结果】\n$r\n")

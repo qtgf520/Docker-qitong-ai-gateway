@@ -107,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.173
+ * 綦桐AI网关 · Docker 服务器版 v1.174
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -119,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.173   ║
+        ║   綦桐AI网关 · Docker Server v1.174   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -146,6 +146,8 @@ fun main(args: Array<String>) {
     }
     // ★ v1.104 SSH 配置持久化：启动时绑定 DB（加载已保存的 SSH 连接，重启不丢）
     runCatching { com.qitong.gateway.http.TerminalManager.bindSshDb(database) }
+    // ★ v1.174 Linux 终端系统：确保 qtai-sj 专属永久终端存在（不可删除，Agent 可操作）
+    runCatching { com.qitong.gateway.http.LinuxSystemManager.ensureQtaiTerminal() }
 
     val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
     if (database.getConfig("auto_failover", "true").toBoolean()) {
@@ -214,7 +216,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.173"))
+                put("version", JsonPrimitive("1.174"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -236,12 +238,22 @@ fun Application.moduleGateway(database: Database) {
                 return@get
             }
             // ★ v1.105 按 API Key 属主隔离模型列表（管理员=全部；普通用户=公用+自己的+被授权的）
-            val ownerId = runCatching { call.attributes[com.qitong.gateway.http.GatewayProxy.ApiKeyOwnerKey] as Long }.getOrDefault(0L)
+            // ★ v1.174 本地免鉴权请求也读 Authorization 头里的 API Key：有 key 则按 key 属主过滤隐藏模型（内网/回环也可验证）
+            var ownerId = runCatching { call.attributes[com.qitong.gateway.http.GatewayProxy.ApiKeyOwnerKey] as Long }.getOrDefault(0L)
+            if (ownerId == 0L) {
+                val auth = call.request.headers["Authorization"]
+                if (auth != null && auth.startsWith("Bearer ")) {
+                    val keyTry = runCatching { database.validateApiKey(auth.removePrefix("Bearer ").trim()) }.getOrNull()
+                    if (keyTry != null) ownerId = keyTry.ownerId
+                }
+            }
             val ownerUser = if (ownerId > 0) database.getUserById(ownerId) else null
             val allModels = database.getEnabledModels()
-            val models = if (ownerId > 0 && ownerUser?.role != "admin")
+            // ★ v1.174 隐藏的模型跟停用同理：对 API Key 属主彻底过滤（隐藏了就不出现在 /v1/models）
+            val hiddenIds = database.getHiddenModelIds(ownerId)
+            val models = (if (ownerId > 0 && ownerUser?.role != "admin")
                 allModels.filter { m -> m.isPublic || m.ownerId == ownerId || m.authorizedUsers.contains(ownerId) }
-            else allModels
+            else allModels).filter { !hiddenIds.contains(it.id) }
             // ★ v1.107 按测速健康排序：能用的在前（健康+延迟低优先），并附健康状态
             val sortedModels = com.qitong.gateway.http.GatewayScheduler.getSortedModels(models)
             val modelList = sortedModels.map { m ->
@@ -1467,6 +1479,80 @@ fun Application.moduleWeb(database: Database) {
                 AdminApi.ok(call, mapOf("ttlMinutes" to ttl), if (ttl == 0) "已设为永久会话（不会自动清理）" else "已设为 $ttl 分钟无操作自动清理")
             } else AdminApi.fail(call, "会话不存在", 404)
         }
+        // ★ v1.174 Linux 系统安装状态（面板轮询进度）
+        get("/api/linux/distros") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, com.qitong.gateway.http.LinuxSystemManager.allInstallStates(), "ok")
+        }
+        post("/api/linux/install") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员可安装系统", 403); return@post }
+            val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            val distroId = body["distroId"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val (okd, msg) = com.qitong.gateway.http.LinuxSystemManager.install(distroId)
+            if (okd) AdminApi.ok(call, null, msg) else AdminApi.fail(call, msg, 400)
+        }
+        post("/api/linux/remove") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员可卸载系统", 403); return@post }
+            val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            val distroId = body["distroId"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val (okd, msg) = com.qitong.gateway.http.LinuxSystemManager.remove(distroId)
+            if (okd) AdminApi.ok(call, null, msg) else AdminApi.fail(call, msg, 400)
+        }
+        // Linux 会话管理（创建/列表/执行/删除/设置永久；按用户隔离）
+        get("/api/linux/sessions") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, com.qitong.gateway.http.LinuxSystemManager.linuxSessionsJson(if (u.role == "admin") 0L else u.id), "ok")
+        }
+        post("/api/linux/create") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            val distroId = body["distroId"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (distroId.isBlank()) { AdminApi.fail(call, "请选择系统（如 alpine/debian）", 400); return@post }
+            val label = body["label"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val s = com.qitong.gateway.http.LinuxSystemManager.create(distroId, label, if (u.role == "admin") 0L else u.id)
+            AdminApi.ok(call, mapOf("id" to s.id, "label" to s.label, "distroId" to s.distroId), "Linux 终端已创建")
+        }
+        post("/api/linux/exec") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            val id = body["id"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val cmd = body["cmd"]?.jsonPrimitive?.content.orEmpty()
+            if (id.isBlank()) { AdminApi.fail(call, "会话ID无效", 400); return@post }
+            if (!com.qitong.gateway.http.LinuxSystemManager.canAccess(id, if (u.role == "admin") 0L else u.id)) { AdminApi.fail(call, "无权操作该 Linux 终端", 403); return@post }
+            val (okd, out) = com.qitong.gateway.http.LinuxSystemManager.execLinux(id, cmd)
+            if (okd) AdminApi.ok(call, mapOf("output" to out, "id" to id), "ok") else AdminApi.fail(call, out, 400)
+        }
+        post("/api/linux/delete") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            val id = body["id"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (id.isBlank()) { AdminApi.fail(call, "会话ID无效", 400); return@post }
+            if (!com.qitong.gateway.http.LinuxSystemManager.canAccess(id, u.id)) { AdminApi.fail(call, "无权操作", 403); return@post }
+            val s = com.qitong.gateway.http.LinuxSystemManager.getSession(id)
+            if (s != null && s.permanent) { AdminApi.fail(call, "该终端为永久终端，不可删除", 400); return@post }
+            com.qitong.gateway.http.LinuxSystemManager.removeSession(id)
+            AdminApi.ok(call, null, "已删除 Linux 终端")
+        }
+        post("/api/linux/set-permanent") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            val id = body["id"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val permanent = body["permanent"]?.let {
+                when { it is JsonPrimitive -> it.content == "true" || it.content == "1"; else -> false }
+            } ?: false
+            if (id.isBlank()) { AdminApi.fail(call, "会话ID无效", 400); return@post }
+            if (com.qitong.gateway.http.LinuxSystemManager.setPermanent(id, permanent)) {
+                AdminApi.ok(call, mapOf("permanent" to permanent), if (permanent) "已设为永久终端（不自动清理、不可删除）" else "已取消永久（超时自动清理）")
+            } else AdminApi.fail(call, "操作失败（永久终端不可取消或会话不存在）", 400)
+        }
+        // ★ v1.174 Agent 实时运行状态（沙盒可视化；管理员=全部，普通用户=自己的）
+        get("/api/agent/runs") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, com.qitong.gateway.http.AgentRunTracker.snapshot(if (u.role == "admin") 0L else u.id), "ok")
+        }
         // AI 智能操作终端：自然语言 -> 大模型生成命令 -> 执行
         post("/api/terminal/ai-exec") {
             val u = call.requireAuth(database) ?: return@post
@@ -2531,7 +2617,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.173"))
+                put("version", JsonPrimitive("1.174"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3375,7 +3461,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.173"))
+                    put("version", JsonPrimitive("1.174"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
@@ -3423,6 +3509,25 @@ fun Application.moduleWeb(database: Database) {
                     put("runtimeActiveKey", JsonPrimitive(com.qitong.gateway.http.GatewayProxy.lastServedKey))
                     put("runtimeActiveAt", JsonPrimitive(com.qitong.gateway.http.GatewayProxy.lastServedAt))
                     put("forcedPool", JsonArray(forcedPoolStr.split(",").filter { it.isNotBlank() }.map { JsonPrimitive(it) }))
+                    // ★ v1.174 Agent 实时运行状态（沙盒可视化；管理员看全部，普通用户看自己的）
+                    put("agentRuns", JsonArray(
+                        com.qitong.gateway.http.AgentRunTracker.snapshot(if (isAdmin) 0L else viewerId).map { row ->
+                            buildJsonObject { row.forEach { (k, v) -> put(k, AdminApi.encodeElementPublic(v)) } }
+                        }
+                    ))
+                    // ★ v1.174 Linux 系统状态（安装清单 + 会话数）
+                    put("linux", buildJsonObject {
+                        put("distros", JsonArray(
+                            com.qitong.gateway.http.LinuxSystemManager.allInstallStates().map { row ->
+                                buildJsonObject { row.forEach { (k, v) -> put(k, AdminApi.encodeElementPublic(v)) } }
+                            }
+                        ))
+                        put("sessions", JsonArray(
+                            com.qitong.gateway.http.LinuxSystemManager.linuxSessionsJson(if (isAdmin) 0L else viewerId).map { row ->
+                                buildJsonObject { row.forEach { (k, v) -> put(k, AdminApi.encodeElementPublic(v)) } }
+                            }
+                        ))
+                    })
                     // ★ v1.172 预测式预热状态（思考阶段已预建连接的目标 + 命中统计；故障转移用连接池，本身无需感知）
                     put("prewarm", buildJsonObject {
                         val pw = com.qitong.gateway.http.PredictivePrewarm.snapshot()
@@ -3445,11 +3550,12 @@ fun Application.moduleWeb(database: Database) {
                         else if (viewerId > 0) database.getUserConfig(viewerId, "speed_interval_min", "240")
                         else "240"
                     ))
-                    // 排行榜数据源：用户只看 公用+自己的模型；管理员看全部
+                    // 排行榜数据源：用户只看 公用+自己的模型；管理员看全部（★ v1.174 隐藏的模型跟停用同理彻底过滤）
                     val allModels = database.getModels()
-                    val visibleModels = if (isAdmin) allModels
+                    val hiddenIds = database.getHiddenModelIds(viewerId)
+                    val visibleModels = (if (isAdmin) allModels
                     else if (viewerId > 0) allModels.filter { m -> m.isPublic || m.ownerId == viewerId }
-                    else allModels.filter { it.isPublic }
+                    else allModels.filter { it.isPublic }).filter { !hiddenIds.contains(it.id) }
                     val enabledModels = visibleModels.filter { it.isEnabled }
                     // 可见模型 key 集合（过滤全局健康缓存）
                     val visibleKeys = visibleModels.map { GatewayScheduler.routeKey(it.providerId, it.modelId) }.toSet()

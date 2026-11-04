@@ -634,11 +634,15 @@ object WeixinBotManager {
                 val isAdmin = d.getWeixinUserPerm(msg.from) >= 3 ||
                     d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
                 var loop = 0
+                // ★ v1.174 Agent 运行可视化：微信渠道登记运行（后台实时沙盒面板按用户隔离查看）
+                val agentRunId = com.qitong.gateway.http.AgentRunTracker.start("weixin", msg.from, d.getWeixinBoundUser(msg.from)?.username ?: "", userText)
+                com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "收到消息，开始处理…")
                 var noCallGuide = 0   // ★ v77 引导计数器：模型只输出描述不输出标签时引导它
                 // ★ v1.169 修复「工具重复执行」：已执行调用签名集合——模型照抄上一轮调用标签/复述描述时，
                 //   parseCalls 按签名过滤已执行过的调用，同一工具不会被二次执行
                 val executedSigs = mutableSetOf<String>()
                 while (loop < 20) {
+                    com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loop + 1, action = "第 ${loop + 1} 轮思考…")
                     // ★ v75 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考（对齐 QQ v64）
                     if (stopSignals[msg.from] == true) {
                         stopSignals.remove(msg.from)
@@ -699,7 +703,9 @@ object WeixinBotManager {
                         val argShow = if (argTxt.length > 80) argTxt.take(80) + "…" else argTxt
                         if (argShow.isNotBlank()) send("🔧 正在执行：$fn($argShow)")
                         val r = try {
+                            com.qitong.gateway.http.AgentRunTracker.toolCall(agentRunId, fn, args.toString())
                             val rr = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
+                            com.qitong.gateway.http.AgentRunTracker.toolResult(agentRunId, fn, rr)
                             // ★ v1.169 登记已执行签名，防模型照抄标签/复述描述导致同一工具执行两遍
                             executedSigs.add(com.qitong.gateway.sandbox.SandboxEngine.callSignature(fn, args))
                             rr
