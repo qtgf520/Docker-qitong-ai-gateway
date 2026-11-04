@@ -1739,6 +1739,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 var noCallGuide = 0
                 // ★ v1.169 修复「工具重复执行」：本次会话已执行调用签名集合——同一 fn+参数第二轮不再重复执行
                 val executedSigs = mutableSetOf<String>()
+                // ★ v1.186 修复「QQ 纯聊天被诱导总结工具」：仅真正执行过工具才触发 closeBody 收敛总结（对齐微信 executedCalls）
+                //   原用 loopGuard>0 判断，假调用引导（模型说"正在调用"但没输出标签→引导）也会 loopGuard++ → 误触发收敛
+                //   → 模型被诱导"总结已推送的工具结果"但实际没执行 → 编出"我没真调任何工具"式空转话痨
+                var executedCalls = false
                 while (sandboxOn && content.isNotBlank() && loopGuard < 20) {
                     loopGuard++
                     com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loopGuard, action = "第 $loopGuard 轮 · 等模型回复中…")
@@ -1822,6 +1826,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             "❌ 工具执行异常（$fn）：${e.message}"
                         }
                         results.append("【$fn 执行结果】\n$r")
+                        // ★ v1.186 真执行过工具（对齐微信 executedCalls，供 closeBody 收敛判断）
+                        executedCalls = true
                         // ★ v1.166 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文本分段由 smartSend 自动拆
                         //   OpenClaw 式：结果就是结果，必须完整给用户看到
                         val rShow = r.trim()
@@ -1844,6 +1850,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 try {
                                     val (fn, r) = fut.get(30, java.util.concurrent.TimeUnit.SECONDS)
                                     results.append(if (results.isEmpty()) "" else "\n").append("【$fn 执行结果】\n$r")
+                                    // ★ v1.186 真执行过工具（对齐微信 executedCalls）
+                                    executedCalls = true
                                     // ★ v1.166 修复长文截断：并行工具结果也完整推送（不再 take(120)）
                                     val rShow = r.trim()
                                     smartSend("✅ $fn 完成：\n$rShow", false)
@@ -1948,7 +1956,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     if (calls2.isEmpty()) break
                 }
-                if (loopGuard > 0 && content.isNotBlank()) {
+                // ★ v1.186 收敛触发改用 executedCalls（真执行过工具才触发 closeBody 总结）——对齐微信
+                //   原 loopGuard>0 会让「假调用引导」（没真执行工具）也触发收敛 → 模型被诱导"总结已推送结果"却没结果 → 编"我没真调工具"
+                if (executedCalls && content.isNotBlank()) {
                     // ★ v55 返回前必清洗 XML 标签（防畸形格式泄漏给用户）
                     val cleaned = cleanFunctionTags(content)
                     // ★ v1.167 用户原文已在 askModel 入口幂等写入 hist，此处不再重复写（防 user→user 串台）

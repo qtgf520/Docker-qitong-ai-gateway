@@ -76,8 +76,20 @@ class QqApiClient {
 
     private fun base(bot: QqBot): String = if (bot.useSandbox) sandboxBase else prodBase
 
-    /** 发送群消息（被动回复带 msg_id，5 分钟内有效；主动消息留空走主动额度） */
+    /** 发送群消息（★v1.186 401 自动刷新 AccessToken 重试一次） */
     fun sendGroupMessage(bot: QqBot, accessToken: String, groupOpenid: String, content: String, msgId: String?): Boolean {
+        var code = groupRaw(bot, accessToken, groupOpenid, content, msgId)
+        if (code == 401) {
+            System.err.println("[QQBot] 群消息发送 401，强制刷新 AccessToken 后重试 ${bot.appid} -> $groupOpenid")
+            forceRefreshToken(bot)
+            val newTok = getAccessToken(bot)
+            if (!newTok.isNullOrBlank() && newTok != accessToken) code = groupRaw(bot, newTok, groupOpenid, content, msgId)
+        }
+        return code == 200
+    }
+
+    /** 群消息发送原始请求，返回 HTTP 状态码 */
+    private fun groupRaw(bot: QqBot, accessToken: String, groupOpenid: String, content: String, msgId: String?): Int {
         val payload = buildString {
             append("{\"content\":")
             append(org.json.JSONObject.quote(content))
@@ -94,17 +106,35 @@ class QqApiClient {
             .addHeader("Content-Type", "application/json")
             .post(payload.toRequestBody(jsonCt))
             .build()
-        client.newCall(req).execute().use { resp ->
-            val body = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) {
-                System.err.println("[QQBot] 群消息发送失败 ${bot.appid} -> $groupOpenid : HTTP ${resp.code} $body")
+        return try {
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) {
+                    System.err.println("[QQBot] 群消息发送失败 ${bot.appid} -> $groupOpenid : HTTP ${resp.code} $body")
+                }
+                resp.code
             }
-            return resp.isSuccessful
+        } catch (e: Exception) {
+            System.err.println("[QQBot] 群发送异常 ${bot.appid} -> $groupOpenid : ${e.message}")
+            -1
         }
     }
 
-    /** 发送私聊消息 */
+    /** 发送私聊消息（★v1.186 401 自动刷新 AccessToken 重试一次——修「QQ 私聊不回复」根因） */
     fun sendC2cMessage(bot: QqBot, accessToken: String, userOpenid: String, content: String, msgId: String?): Boolean {
+        var code = c2cRaw(bot, accessToken, userOpenid, content, msgId)
+        if (code == 401) {
+            // AccessToken 已被 QQ 端吊销/过期（缓存判断 7200s 但不保证官方不提前失效）→ 强制清缓存换新 token 重试一次
+            System.err.println("[QQBot] 私聊发送 401，强制刷新 AccessToken 后重试 ${bot.appid} -> $userOpenid")
+            forceRefreshToken(bot)
+            val newTok = getAccessToken(bot)
+            if (!newTok.isNullOrBlank() && newTok != accessToken) code = c2cRaw(bot, newTok, userOpenid, content, msgId)
+        }
+        return code == 200
+    }
+
+    /** 私聊发送原始请求，返回 HTTP 状态码 */
+    private fun c2cRaw(bot: QqBot, accessToken: String, userOpenid: String, content: String, msgId: String?): Int {
         val payload = buildString {
             append("{\"content\":")
             append(org.json.JSONObject.quote(content))
@@ -121,13 +151,23 @@ class QqApiClient {
             .addHeader("Content-Type", "application/json")
             .post(payload.toRequestBody(jsonCt))
             .build()
-        client.newCall(req).execute().use { resp ->
-            val body = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) {
-                System.err.println("[QQBot] 私聊消息发送失败 ${bot.appid} -> $userOpenid : HTTP ${resp.code} $body")
+        return try {
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) {
+                    System.err.println("[QQBot] 私聊消息发送失败 ${bot.appid} -> $userOpenid : HTTP ${resp.code} $body")
+                }
+                resp.code
             }
-            return resp.isSuccessful
+        } catch (e: Exception) {
+            System.err.println("[QQBot] 私聊发送异常 ${bot.appid} -> $userOpenid : ${e.message}")
+            -1
         }
+    }
+
+    /** ★v1.186 强制清除 token 缓存（401 兜底用，下次 getAccessToken 真正换新） */
+    fun forceRefreshToken(bot: QqBot) {
+        tokenCache.remove("${bot.appid}:${bot.useSandbox}")
     }
 
     /** 发送群卡片消息（markdown 模板，msg_type=2）。content 为 markdown 原文 */
