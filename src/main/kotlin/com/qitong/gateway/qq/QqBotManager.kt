@@ -52,6 +52,8 @@ object QqBotManager {
     private val taskPools = ConcurrentHashMap<String, MutableSet<kotlinx.coroutines.Job>>()
     // 每用户冷却时间戳
     private val lastReplyTs = ConcurrentHashMap<String, Long>()
+    // ★ v1.181 每用户最近一次消息文本（同内容防刷屏用；不同内容不受 3s 冷却限制，保证连续对话自然）
+    private val lastReplyText = ConcurrentHashMap<String, String>()
     // ★ v64 停止信号：用户发「停止/停一下/中断」→ 打断当前 Agent 思考/执行（大模型自由调度感知停止）
     private val stopSignals = ConcurrentHashMap<String, Boolean>()
     /** v51 分步绑定状态：openid -> (step, username)；step=1 等用户名，2 等密码 */
@@ -576,32 +578,45 @@ object QqBotManager {
         // ★ v47 修复：QQ 被动回复(msg_id)每条消息只能成功一次！
         //   过程推送（💭/✅）走主动消息（无 msg_id），最终回复 isFinal=true 才用被动回复（msg_id）
         var replyCount = 0
+        // ★ v1.181 过程推送配额保护：QQ 主动消息有每日配额，长任务多轮工具调用逐条烧会提前耗尽配额
+        //   → 中途推送全失败、用户看到「机器人突然不说话/只会最后蹦一句」。
+        //   方案：单次任务过程推送（isFinal=false）默认最多 5 条（可配 qq_progress_budget），超预算后静默、
+        //   把配额留给最终回复（isFinal=true 不受限，必达）。微信无此限制不受影响。
+        val progressBudget = db.getConfig("qq_progress_budget", "5").toIntOrNull() ?: 5
+        var progressUsed = 0
         val smartSend: (String, Boolean) -> Boolean = { content, isFinal ->
-            replyCount++
-            val usePassive = isFinal  // 只有最终回复用被动回复
-            val effectiveMsgId = if (usePassive) msgId else null
-            val at2 = api.getAccessToken(bot)
-            // ★ v71 QQ 大消息分段推送：超 1800 字符切多条，不丢信息（只有最终条用被动回复）
-            val pieces = splitText(content, 1800)
-            var anyOk = false
-            pieces.forEachIndexed { idx, piece ->
-                val isLastPiece = idx == pieces.lastIndex
-                val pieceMsgId = if (usePassive && isLastPiece) effectiveMsgId else null
-                if (groupOpenid.isNotBlank()) {
-                    if (cardMode && !at2.isNullOrBlank()) {
-                        if (api.sendGroupCardMessage(bot, at2, groupOpenid, piece, pieceMsgId)) anyOk = true
-                    } else if (!at2.isNullOrBlank()) {
-                        if (api.sendGroupMessage(bot, at2, groupOpenid, piece, pieceMsgId)) anyOk = true
+            if (!isFinal) progressUsed++
+            if (isFinal || progressUsed <= progressBudget) {
+                replyCount++
+                val usePassive = isFinal  // 只有最终回复用被动回复
+                val effectiveMsgId = if (usePassive) msgId else null
+                val at2 = api.getAccessToken(bot)
+                // ★ v71 QQ 大消息分段推送：超 1800 字符切多条，不丢信息（只有最终条用被动回复）
+                val pieces = splitText(content, 1800)
+                var anyOk = false
+                pieces.forEachIndexed { idx, piece ->
+                    val isLastPiece = idx == pieces.lastIndex
+                    val pieceMsgId = if (usePassive && isLastPiece) effectiveMsgId else null
+                    if (groupOpenid.isNotBlank()) {
+                        if (cardMode && !at2.isNullOrBlank()) {
+                            if (api.sendGroupCardMessage(bot, at2, groupOpenid, piece, pieceMsgId)) anyOk = true
+                        } else if (!at2.isNullOrBlank()) {
+                            if (api.sendGroupMessage(bot, at2, groupOpenid, piece, pieceMsgId)) anyOk = true
+                        } else {
+                            if (usePassive && isLastPiece) { send(piece); anyOk = true }
+                        }
                     } else {
-                        if (usePassive && isLastPiece) { send(piece); anyOk = true }
+                        if (!at2.isNullOrBlank()) {
+                            if (api.sendC2cMessage(bot, at2, userOpenid, piece, pieceMsgId)) anyOk = true
+                        } else { if (usePassive && isLastPiece) { send(piece); anyOk = true } }
                     }
-                } else {
-                    if (!at2.isNullOrBlank()) {
-                        if (api.sendC2cMessage(bot, at2, userOpenid, piece, pieceMsgId)) anyOk = true
-                    } else { if (usePassive && isLastPiece) { send(piece); anyOk = true } }
                 }
+                anyOk
+            } else {
+                // ★ v1.181 预算耗尽：静默跳过过程推送（不消耗被动回复名额），配额留给最终回复
+                System.out.println("[QQBot] 过程推送预算已耗尽（$progressUsed/$progressBudget），静默保最终回复")
+                true
             }
-            anyOk
         }
         // 0) 内置指令（签到/积分/全员禁言）
         val builtin = matchBuiltin(text, groupOpenid)
@@ -1177,7 +1192,13 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (u != null && !(u["aiEnabled"] as Boolean)) return
         val cfg = if (groupOpenid.isNotBlank()) db.getQqGroupConfig(groupOpenid) else null
         if (cfg != null && !(cfg["aiEnabled"] as Boolean)) return
-        if (onCooldown(userOpenid, 3)) return
+        // ★ v1.181 修复「QQ 不接话/不自然」：移除 AI 路径的全局 3 秒静默冷却（不同消息会被静默吞掉、无任何回复）
+        //   微信无此冷却所以连续对话自然；现在改为「仅同内容防刷屏」——3 秒内相同内容拦截，不同消息立即并发处理（v1.166 并发池）
+        if (onCooldown(userOpenid, 3) && lastReplyText[userOpenid] == text) {
+            System.out.println("[QQBot] ${bot.appid} 同内容防刷屏拦截（3s内重复）: $text")
+            return
+        }
+        lastReplyText[userOpenid] = text
 
         // ★ v1.130 真思考模式：不再预先推假的「思考中」，改为真实进展推送（askModel 内有调用才推💭/🔧/✅）
         // ★ v62 模型失败重试2次（避免「处理失败」——askModel 返回 null 时重试）
