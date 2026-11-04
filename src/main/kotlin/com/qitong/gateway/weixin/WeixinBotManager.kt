@@ -225,6 +225,17 @@ object WeixinBotManager {
         val t = msg.content.trim()
         if (t.isBlank()) return
         val t0 = System.currentTimeMillis()
+        // ★ v1.178 统一消息管道：微信消息进入事件（事件总线已挂载，订阅者可监听/统计/联动）
+        runCatching {
+            com.qitong.gateway.pipeline.GatewayEventBus.publish(
+                com.qitong.gateway.pipeline.GatewayEventBus.Events.MESSAGE_RECEIVED,
+                mapOf("ctx" to com.qitong.gateway.pipeline.MsgContext(
+                    channel = "weixin", userId = 0L, userOpenid = msg.from,
+                    groupOpenid = "", text = t.take(200), isAdmin = false,
+                    convKey = "${bot.id}:${msg.from}"
+                ))
+            )
+        }
         // ★ v87 消息动态数：每收到一条真实消息就 +1（后台/动态预览可见）
         runCatching {
             val st = statusOf(bot.id)

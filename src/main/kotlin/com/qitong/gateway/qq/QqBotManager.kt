@@ -423,6 +423,18 @@ object QqBotManager {
 
         // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
         val key = "${bot.id}:g:${msg.groupOpenid}:${msg.memberOpenid}"
+        // ★ v1.178 统一消息管道：QQ 群消息进入事件（事件总线已挂载，订阅者可监听/统计/联动）
+        runCatching {
+            com.qitong.gateway.pipeline.GatewayEventBus.publish(
+                com.qitong.gateway.pipeline.GatewayEventBus.Events.MESSAGE_RECEIVED,
+                mapOf("ctx" to com.qitong.gateway.pipeline.MsgContext(
+                    channel = "qq", userId = 0L, userOpenid = msg.memberOpenid,
+                    groupOpenid = msg.groupOpenid, text = text.take(200), isAdmin = false,
+                    convKey = key
+                ))
+            )
+        }
+
         withUserLock(key) {
             dispatch(bot, key, msg.groupOpenid, msg.memberOpenid, text, msg.msgId,
                 send = { content -> api.sendGroupMessage(bot, at, msg.groupOpenid, content, msg.msgId) })
@@ -439,6 +451,17 @@ object QqBotManager {
         }
         // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
         val key = "${bot.id}:c:${msg.userOpenid}"
+        // ★ v1.178 统一消息管道：QQ 私聊消息进入事件（事件总线已挂载，订阅者可监听/统计/联动）
+        runCatching {
+            com.qitong.gateway.pipeline.GatewayEventBus.publish(
+                com.qitong.gateway.pipeline.GatewayEventBus.Events.MESSAGE_RECEIVED,
+                mapOf("ctx" to com.qitong.gateway.pipeline.MsgContext(
+                    channel = "qq", userId = 0L, userOpenid = msg.userOpenid,
+                    groupOpenid = "", text = msg.content.trim().take(200), isAdmin = false,
+                    convKey = key
+                ))
+            )
+        }
         withUserLock(key) {
             dispatch(bot, key, "", msg.userOpenid, msg.content.trim(), msg.msgId,
                 send = { content -> api.sendC2cMessage(bot, at, msg.userOpenid, content, msg.msgId) })
