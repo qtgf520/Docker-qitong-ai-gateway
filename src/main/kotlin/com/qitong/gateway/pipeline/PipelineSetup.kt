@@ -50,7 +50,7 @@ object PipelineSetup {
         // 3) 订阅事件：消息进入/回复/工具执行/记忆沉淀，各模块解耦
         subscribeEvents(database)
 
-        println("[PipelineSetup] v1.181 管道装配完成: chat=${chatPipeline.stages.size}Stages, qq=${qqPipeline.stages.size}Stages, wx=${wxPipeline.stages.size}Stages")
+        println("[PipelineSetup] v1.182 管道装配完成: chat=${chatPipeline.stages.size}Stages, qq=${qqPipeline.stages.size}Stages, wx=${wxPipeline.stages.size}Stages")
     }
 
     /** 构建指定渠道的管道（注入该渠道的 Agent executor；可空→兜底占位） */
@@ -113,11 +113,23 @@ object PipelineSetup {
             }
         }
 
-        // 工具执行成功：供审计/统计订阅
+        // 工具执行成功：供审计/统计订阅 → 同时写入首页系统动态（实时反馈核心价值）
         GatewayEventBus.subscribe(GatewayEventBus.Events.TOOL_EXECUTED) { p ->
             runCatching {
                 val fn = p["fn"] as? String ?: return@subscribe
-                println("[EventBus] tool.executed fn=$fn")
+                val channel = p["channel"] as? String ?: "?"
+                val args = (p["args"] as? String)?.take(60) ?: ""
+                val resultBrief = (p["result"] as? String)?.take(80) ?: ""
+                val ok = !resultBrief.startsWith("❌") && !resultBrief.startsWith("⛔") && !resultBrief.startsWith("⚠️") && !resultBrief.startsWith("⏱️")
+                println("[EventBus] tool.executed fn=$fn channel=$channel $args ${if (ok) "✅" else "❌"}")
+                // ★ v1.182 重要工具执行写入系统动态（过滤高频只读查询，避免刷屏：只记 modify 类/失败类）
+                val modifyFns = listOf("model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create",
+                    "linux_run", "linux_create", "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "skill_add", "skill_del", "skill_toggle",
+                    "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable", "model_delete", "api_key_create", "api_key_delete",
+                    "user_set_balance", "user_set_role", "config_set", "announcement_add", "mail_send", "image_gen", "card_gen", "backup_create")
+                if (fn in modifyFns || !ok) {
+                    try { database.addGatewayLog("tool", "🔧 [$channel] $fn $args ${if (ok) "✅" else resultBrief}") } catch (_: Exception) {}
+                }
             }
         }
 

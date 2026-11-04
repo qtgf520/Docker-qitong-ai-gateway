@@ -555,7 +555,7 @@ $KNOWLEDGE_JSON
         // ★ v59 管理员 terminal_run（高危）直接执行，不再二次确认拦截（管理员已授权=确认）；其他高危仍拦截
         if (risk == "high" && fn != "terminal_run") return "⚠️ 高危操作（$fn）需要二次确认，沙盒已拦截。请确认后重试：确认执行 $fn"
 
-        return try {
+        val result = try {
             // ★ v1.166 沙盒稳定性：35s 超时保护——任何函数卡住都会返回超时提示而不是挂死沙盒（Agent 循环因此丢结果=「沙盒死了」根因）
             kotlinx.coroutines.withTimeout(35_000L) {
                 when (fn) {
@@ -1561,6 +1561,19 @@ $KNOWLEDGE_JSON
         } catch (e: Exception) {
             "❌ 沙盒执行失败: ${e.message}"
         }
+        // ★ v1.182 工具执行事件发布：三渠道（内置聊天/QQ/微信）所有工具执行统一在此发布 TOOL_EXECUTED 事件
+        //   订阅者可联动审计统计、首页系统动态、插件等。事件总线由 v1.178 管道装配挂载，无订阅者时零开销。
+        try {
+            val argBrief = args.entries.joinToString(",") { "${it.key}=${it.value.take(30)}" }.take(120)
+            com.qitong.gateway.pipeline.GatewayEventBus.publish(
+                com.qitong.gateway.pipeline.GatewayEventBus.Events.TOOL_EXECUTED,
+                mapOf(
+                    "fn" to fn, "args" to argBrief, "result" to (result.take(200)),
+                    "userId" to userId, "isAdmin" to isAdmin, "channel" to channel
+                )
+            )
+        } catch (_: Exception) { /* 事件发布失败不影响工具结果 */ }
+        return result
     }
 
     private fun parseKnowledgeBrief(): String {
