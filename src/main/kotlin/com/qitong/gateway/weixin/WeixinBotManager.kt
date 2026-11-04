@@ -541,6 +541,15 @@ object WeixinBotManager {
         val userKey = if (bot.id > 0) "${bot.id}:${msg.from}" else msg.from
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
         val job = scope.launch {
+            // ★ v1.184 管道预检：限流 Stage 真正接管微信（绑定用户按配额检查；管理员不限）+ 白名单 Stage（可配开启）
+            val gateBlocked = com.qitong.gateway.pipeline.PipelineGate.precheck(
+                "weixin", bound?.id ?: 0L, msg.from, isAdmin, t, d
+            )
+            if (gateBlocked != null) {
+                send(gateBlocked)
+                d.addWeixinLog(bot.id, msg.from, "gate", gateBlocked.take(80), System.currentTimeMillis() - t0)
+                return@launch
+            }
             // ★ v1.130 真思考模式：不再预先推假的「思考中」，改为真实进展推送（有工具调用才推💭/🔧/✅，无调用直接出答案）
             val reply = askModel(bot, msg, t, bound?.id ?: 0L) { thinkMsg -> d.addWeixinLog(bot.id, msg.from, "think", thinkMsg, 0); send(thinkMsg) }
             if (!reply.isNullOrBlank()) send(reply) else send("⚠️ 抱歉，我这边处理失败了，请再试一次")

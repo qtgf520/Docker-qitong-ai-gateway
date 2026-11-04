@@ -864,6 +864,15 @@ private fun providerToMap(p: Provider) = mapOf(
         val userContent = body["content"]?.jsonPrimitive?.content ?: ""
         val modelId = body["model"]?.jsonPrimitive?.content ?: ""
         val stream = body["stream"]?.let { parseBool(it) } ?: false
+        // ★ v1.184 管道预检：限流 Stage 真正接管内置聊天（登录用户按配额检查；管理员不限）
+        if (userId > 0) {
+            val gateBlocked = com.qitong.gateway.pipeline.PipelineGate.precheck(
+                "chat", userId, "user$userId", (user?.role == "admin" || user?.role == "agent"), userContent, database
+            )
+            if (gateBlocked != null) {
+                return mapOf("conversationId" to conversationId, "reply" to gateBlocked, "error" to gateBlocked)
+            }
+        }
         // ★ v1.178 统一消息管道：内置聊天渠道消息进入事件（事件总线已挂载，订阅者可监听/统计）
         if (userId > 0) {
             runCatching {

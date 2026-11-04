@@ -224,7 +224,15 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
-### v1.183
+### v1.184
+**管道 Stage 深化（限流/白名单 Stage 真正接管三渠道）** —— 统一编排层从"骨架"到"真正生效"：
+
+- **新增 PipelineGate 管道预检**：三渠道（内置聊天/QQ/微信）消息进入正式处理前统一过预检
+- **限流 Stage 真正生效**：绑定用户按配额（QPS/每日/RPM/TPM）检查，管理员不限——之前限流只存在于管道骨架、没接进实际链路，现在 QQ/微信/内置聊天 四入口全部接入
+- **白名单 Stage 可配**：`pipeline_whitelist_enabled=true` 时未绑定用户仅放行绑定类指令（默认关，不破坏未绑定可聊体验）
+- **零侵入**：只加判断不改原流程，与现有 askModel/并发池完全兼容
+
+## v1.183
 **记忆沉淀事件接入（MEMORY_SAVED 发布 → 首页系统动态）** —— 事件总线四项事件全部闭环：
 
 - **三渠道统一发布**：在记忆落库统一入口 `addMemory` 发布 `memory.saved` 事件（内置聊天/QQ/微信所有记忆沉淀全覆盖，一次接入），携带 userId/title/content/type/importance/source

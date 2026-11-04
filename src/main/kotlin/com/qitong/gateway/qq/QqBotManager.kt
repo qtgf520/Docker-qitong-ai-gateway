@@ -1192,6 +1192,15 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         if (u != null && !(u["aiEnabled"] as Boolean)) return
         val cfg = if (groupOpenid.isNotBlank()) db.getQqGroupConfig(groupOpenid) else null
         if (cfg != null && !(cfg["aiEnabled"] as Boolean)) return
+        // ★ v1.184 管道预检：限流 Stage 真正接管 QQ（绑定用户按配额检查；管理员不限）+ 白名单 Stage（可配开启）
+        val gateBlocked = com.qitong.gateway.pipeline.PipelineGate.precheck(
+            "qq", db.getQqBoundUser(userOpenid)?.id ?: 0L, userOpenid, perm >= 3, text, db
+        )
+        if (gateBlocked != null) {
+            send(gateBlocked)
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "gate", gateBlocked.take(80), System.currentTimeMillis() - t0)
+            return
+        }
         // ★ v1.181 修复「QQ 不接话/不自然」：移除 AI 路径的全局 3 秒静默冷却（不同消息会被静默吞掉、无任何回复）
         //   微信无此冷却所以连续对话自然；现在改为「仅同内容防刷屏」——3 秒内相同内容拦截，不同消息立即并发处理（v1.166 并发池）
         if (onCooldown(userOpenid, 3) && lastReplyText[userOpenid] == text) {
