@@ -244,6 +244,23 @@ object QqBotManager {
                             println("[QQBot] ${b.appid} 掉线自动重登（status=$s lastErr=$lastErr）")
                             startBot(b)
                         }
+                        // ★ v1.180 在线静默守护：状态 ONLINE 但通道长时间收不到任何业务消息（Dispatch）→ 判定通道假死
+                        //    QQ 官方 WS 在「状态机 ONLINE 但推送通道已坏」时不会主动报错（不触发 ERROR/OFFLINE），
+                        //    表现为：微信能聊、QQ 收不到消息（用户消息进了 qq_logs 却无回复）。
+                        //    根治：超过阈值分钟无 Dispatch 主动重启（阈值可配 qq_silent_guard_min，默认 30 分钟；0=关闭）
+                        val client = clients[b.id]
+                        if (s == QqBotStatus.ONLINE && client != null) {
+                            val guardMin = database.getConfig("qq_silent_guard_min", "30").toIntOrNull() ?: 30
+                            val lastAt = client.lastDispatchAtMs
+                            if (guardMin > 0 && lastAt > 0) {
+                                val silentMs = System.currentTimeMillis() - lastAt
+                                if (silentMs > guardMin * 60 * 1000L) {
+                                    println("[QQBot] ${b.appid} 在线静默 ${silentMs / 60000} 分钟无消息推送，判定通道假死，自动重启")
+                                    db.addQqLog(b.appid, "", "", "bot_status", "在线静默 ${silentMs / 60000} 分钟无消息推送，自动重启", 0)
+                                    startBot(b)
+                                }
+                            }
+                        }
                     }
                 }.onFailure { e -> System.err.println("[QQBot] 掉线重登检查异常: ${e.message}") }
             }

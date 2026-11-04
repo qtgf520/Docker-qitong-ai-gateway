@@ -60,6 +60,11 @@ class QqGatewayClient(
     @Volatile private var lastHeartbeatAckAt = System.currentTimeMillis()
     private val HEARTBEAT_ACK_TIMEOUT_MS = 45_000L     // 超过 45s 无 ACK 判定心跳超时
     private val HEARTBEAT_MAX_MISSED = 3               // 连续 3 次心跳无 ACK 触发重连
+    // ★ v1.180 在线假死守护：记录最后一次收到 Dispatch 消息的时间（推送通道活性）
+    //   连接只收 HELLO/ACK 却再无任何业务消息推送 = 通道假死（状态 ONLINE 但实际收不到消息）。
+    //   暴露给外层掉线监控：在线但长时间无 Dispatch → 强制重启，避免「微信能聊 QQ 失灵」。
+    @JvmField @Volatile var lastDispatchAtMs: Long = 0L
+    @JvmField @Volatile var readyAtMs: Long = 0L
 
     fun start(accessToken: String) {
         this.accessToken = accessToken
@@ -154,10 +159,13 @@ class QqGatewayClient(
                         sessionId = obj.optJSONObject("d")?.optString("session_id")
                         backoffMs = 2000L
                         consecutiveFailures = 0   // ★ v1.166 连上即复位，下次掉线从 2s 重新退避
+                        readyAtMs = System.currentTimeMillis()
+                        lastDispatchAtMs = System.currentTimeMillis()  // READY 本身也算通道活性
                         onStatusChange(QqBotStatus.ONLINE, "上线 session=$sessionId")
                         System.out.println("[QQBot] ${bot.appid} READY，机器人上线")
                     }
                     "GROUP_AT_MESSAGE_CREATE" -> {
+                        lastDispatchAtMs = System.currentTimeMillis()
                         val d = obj.optJSONObject("d") ?: return
                         onGroupMessage(
                             QqGroupMessage(
@@ -169,6 +177,7 @@ class QqGatewayClient(
                         )
                     }
                     "C2C_MESSAGE_CREATE" -> {
+                        lastDispatchAtMs = System.currentTimeMillis()
                         val d = obj.optJSONObject("d") ?: return
                         onC2cMessage(
                             QqC2cMessage(
