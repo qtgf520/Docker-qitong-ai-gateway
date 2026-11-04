@@ -517,6 +517,22 @@ object QqBotManager {
     ) {
         val t0 = System.currentTimeMillis()
         val t = text.trim()
+        // ★ v1.185 进度模式口令：说「隐藏步骤/别发步骤/只回结果」→ 关闭过程推送；「显示步骤/打开步骤」→ 打开
+        if (t.contains("隐藏步骤", true) || t.contains("别发步骤", true) || t.contains("不要发步骤", true) ||
+            t.contains("只回结果", true) || t.contains("不需要过程", true) || t.contains("别把步骤", true) ||
+            t.contains("隐藏过程", true) || t.contains("别发过程", true) || t.contains("静默模式", true) || t.contains("简洁模式", true)) {
+            db.setUserConfig(db.getQqBoundUser(userOpenid)?.id ?: 0L, "progress_mode", "quiet")
+            send("🫥 好的，已开启简洁模式：之后我干活的过程步骤不再推送，只把最终结果发给你。\n想恢复就发「显示步骤」。")
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "progress", "开启简洁模式(quiet)", System.currentTimeMillis() - t0)
+            return
+        }
+        if (t.contains("显示步骤", true) || t.contains("打开步骤", true) || t.contains("看步骤", true) ||
+            t.contains("显示过程", true) || t.contains("打开过程", true) || t.contains("恢复步骤", true) || t.contains("完整模式", true)) {
+            db.setUserConfig(db.getQqBoundUser(userOpenid)?.id ?: 0L, "progress_mode", "verbose")
+            send("👁️ 好的，已恢复完整模式：之后干活我会实时推送每一步过程 💭→🔧→✅。\n想简洁就发「隐藏步骤」。")
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "progress", "开启完整模式(verbose)", System.currentTimeMillis() - t0)
+            return
+        }
         // ★ v64 停止指令：用户发「停止/停一下/中断/不干了」→ 打断当前 Agent 思考/执行（由大模型自由调度感知）
         if (t.equals("停止", true) || t.equals("停", true) || t.equals("停一下", true) ||
             t.equals("中断", true) || t.equals("不干了", true) || t.equals("算了", true) || t.equals("停止执行", true)) {
@@ -582,11 +598,13 @@ object QqBotManager {
         //   → 中途推送全失败、用户看到「机器人突然不说话/只会最后蹦一句」。
         //   方案：单次任务过程推送（isFinal=false）默认最多 5 条（可配 qq_progress_budget），超预算后静默、
         //   把配额留给最终回复（isFinal=true 不受限，必达）。微信无此限制不受影响。
+        // ★ v1.185 进度模式：用户配置 progress_mode=quiet（说「隐藏步骤」）→ 过程推送全部静默，只回最终结果
         val progressBudget = db.getConfig("qq_progress_budget", "5").toIntOrNull() ?: 5
+        val quietProgress = db.getUserConfig(db.getQqBoundUser(userOpenid)?.id ?: 0L, "progress_mode", "verbose") == "quiet"
         var progressUsed = 0
         val smartSend: (String, Boolean) -> Boolean = { content, isFinal ->
             if (!isFinal) progressUsed++
-            if (isFinal || progressUsed <= progressBudget) {
+            if (isFinal || (!quietProgress && progressUsed <= progressBudget)) {
                 replyCount++
                 val usePassive = isFinal  // 只有最终回复用被动回复
                 val effectiveMsgId = if (usePassive) msgId else null

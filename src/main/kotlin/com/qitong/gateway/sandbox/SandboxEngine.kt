@@ -40,7 +40,9 @@ object SandboxEngine {
         "mail_send", "update_logs", "code_run", "memory_search", "todo_add", "todo_list", "todo_done", "todo_del",
         "file_read", "file_write", "file_search", "skill_learn", "skill_list", "image_gen", "cache_stats", "skill_auto_learn",
         "git_version", "git_log", "provider_list", "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
+        "provider_sync",  // ★ v1.185 同步服务商模型
         "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
+        "model_hide", "model_unhide",  // ★ v1.185 按用户隐藏/取消隐藏模型
         "api_key_list", "api_key_create", "api_key_delete", "user_list", "user_set_balance", "user_set_role", "user_delete",
         "config_get", "config_set", "announcement_add", "announcement_delete", "ticket_reply", "ticket_close",
         "skill_add", "skill_del", "skill_toggle", "skill_my",
@@ -143,6 +145,9 @@ object SandboxEngine {
             .put(func("model_set_public", "设置模型是否公用（管理员；1=所有人可见，0=私有）", "admin", "modify", listOf(param("id", true, "模型ID"), param("is_public", true, "1或0")), "设置结果"))
             .put(func("model_set_authorized", "设置模型可授权用户ID列表（逗号分隔；定制模型只有这些人可见）", "admin", "modify", listOf(param("id", true, "模型ID"), param("user_ids", true, "用户ID逗号分隔，空=仅属主")), "设置结果"))
             .put(func("model_delete", "删除模型（管理员）", "admin", "modify", listOf(param("id", true, "模型ID")), "删除结果"))
+            .put(func("provider_sync", "同步服务商模型（管理员；从服务商拉取最新模型列表）", "admin", "modify", listOf(param("id", true, "服务商ID")), "同步结果"))
+            .put(func("model_hide", "按当前用户隐藏模型（隐藏后自己列表/测试不再显示；对自己生效）", "user", "modify", listOf(param("id", true, "模型ID")), "隐藏结果"))
+            .put(func("model_unhide", "取消隐藏模型（恢复显示）", "user", "modify", listOf(param("id", true, "模型ID")), "恢复结果"))
             .put(func("api_key_list", "查看全部API密钥（管理员）", "admin", "read", emptyList(), "密钥/标签/启停状态/属主"))
             .put(func("api_key_create", "创建API密钥（管理员；label标签，model_ids模型ID逗号分隔可选）", "admin", "modify", listOf(param("label", true, "密钥标签/备注"), param("model_ids", false, "可访问模型ID逗号分隔，空=全部")), "新密钥内容"))
             .put(func("api_key_delete", "删除API密钥（管理员）", "admin", "modify", listOf(param("key", true, "密钥值")), "删除结果"))
@@ -533,7 +538,9 @@ $KNOWLEDGE_JSON
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
             "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn", "skill_add", "skill_del", "skill_toggle" -> "user" to "modify"
             "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
+            "provider_sync",  // ★ v1.185 同步服务商模型（admin/modify）
             "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
+            "model_hide", "model_unhide",  // ★ v1.185 按用户隐藏/取消隐藏（user/modify，各用户管自己可见的）
             "api_key_create", "api_key_delete", "user_set_balance", "user_set_role", "user_delete",
             "config_set", "announcement_add", "announcement_delete", "ticket_reply", "ticket_close" -> "admin" to "modify"
             // v1.166 新增：普通用户只读/自助
@@ -812,6 +819,37 @@ $KNOWLEDGE_JSON
                 "model_enable" -> SkillExecutor.execute(db, "800003", args["model_name"] ?: "", userId)
                 "model_disable" -> SkillExecutor.execute(db, "800004", args["model_name"] ?: "", userId)
                 "provider_get_all" -> SkillExecutor.execute(db, "600007", "", userId)
+                "provider_sync" -> {
+                    // ★ v1.185 同步服务商模型（管理员）
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    if (id <= 0) "⚠️ 语法：provider_sync(id=服务商ID)"
+                    else {
+                        try {
+                            val r = com.qitong.gateway.http.AdminApi.syncProviderModels(db, id)
+                            if (r.count > 0) "✅ 服务商 ID=$id 同步成功，新增 ${r.count} 个模型${if (!r.error.isNullOrBlank()) "（${r.error}）" else ""}"
+                            else "⚠️ 服务商 ID=$id 同步完成但没有新模型${if (!r.error.isNullOrBlank()) "：${r.error}" else ""}"
+                        } catch (e: Exception) { "❌ 同步失败：${e.message}" }
+                    }
+                }
+                "model_hide" -> {
+                    // ★ v1.185 按用户隐藏模型（用户级：隐藏后自己列表不再显示；管理员可隐藏任意，普通用户隐藏自己可见的）
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    val m = try { db.getModels().firstOrNull { it.id == id } } catch (_: Exception) { null }
+                    if (m == null) "⚠️ 模型 ID=$id 不存在"
+                    else {
+                        db.hideModel(userId, id)
+                        "🙈 模型「${m.modelId}」已对你隐藏（后台列表不再显示）。发「取消隐藏 $id」或说“不隐藏这个模型”恢复"
+                    }
+                }
+                "model_unhide" -> {
+                    // ★ v1.185 取消隐藏模型
+                    val id = args["id"]?.toLongOrNull() ?: 0
+                    if (id <= 0) "⚠️ 语法：model_unhide(id=模型ID)"
+                    else {
+                        db.unhideModel(userId, id)
+                        "👁️ 模型 ID=$id 已恢复显示"
+                    }
+                }
                 "provider_list" -> {
                     // ★ v1.117 查看全部服务商
                     val provs = db.getProviders()

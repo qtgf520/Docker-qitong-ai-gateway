@@ -312,6 +312,22 @@ object WeixinBotManager {
         val bound = d.getWeixinBoundUser(msg.from)
         val isAdmin = bound?.let { it.role == "admin" || it.role == "agent" } == true ||
             d.getWeixinUserPerm(msg.from) >= 3
+        // ★ v1.185 进度模式口令：说「隐藏步骤/别发步骤/只回结果」→ 关闭过程推送；「显示步骤/打开步骤」→ 打开
+        if (t.contains("隐藏步骤", true) || t.contains("别发步骤", true) || t.contains("不要发步骤", true) ||
+            t.contains("只回结果", true) || t.contains("不需要过程", true) || t.contains("别把步骤", true) ||
+            t.contains("隐藏过程", true) || t.contains("别发过程", true) || t.contains("静默模式", true) || t.contains("简洁模式", true)) {
+            d.setUserConfig(bound?.id ?: 0L, "progress_mode", "quiet")
+            send("🫥 好的，已开启简洁模式：之后我干活的过程步骤不再推送，只把最终结果发给你。\n想恢复就发「显示步骤」。")
+            d.addWeixinLog(bot.id, msg.from, "command", "开启简洁模式(quiet)", System.currentTimeMillis() - t0)
+            return
+        }
+        if (t.contains("显示步骤", true) || t.contains("打开步骤", true) || t.contains("看步骤", true) ||
+            t.contains("显示过程", true) || t.contains("打开过程", true) || t.contains("恢复步骤", true) || t.contains("完整模式", true)) {
+            d.setUserConfig(bound?.id ?: 0L, "progress_mode", "verbose")
+            send("👁️ 好的，已恢复完整模式：之后干活我会实时推送每一步过程 💭→🔧→✅。\n想简洁就发「隐藏步骤」。")
+            d.addWeixinLog(bot.id, msg.from, "command", "开启完整模式(verbose)", System.currentTimeMillis() - t0)
+            return
+        }
         when {
             t == "绑定账号" -> { pendingBind[msg.from] = 1 to ""; send("🔐 开始绑定网关账号\n第 1 步：请发送你的【账号用户名】"); return }
             t == "我的账号" -> {
@@ -562,6 +578,9 @@ object WeixinBotManager {
     /** loopback 调用网关大脑（qtai-sj 走完整沙盒 Agent 循环：思考推送→调工具→结果回填→多轮） */
     private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long, send: (String) -> Unit): String? {
         val d = db ?: return null
+        // ★ v1.185 进度模式：用户配置 progress_mode=quiet（说「隐藏步骤」）→ 过程推送全部静默，只回最终结果
+        val quietProgress = d.getUserConfig(userId, "progress_mode", "verbose") == "quiet"
+        val pSend: (String) -> Unit = { m -> if (!quietProgress) send(m) }
         // ★ v1.166 每用户上下文隔离 key 增加 botId：同一个微信联系人被多个 bot 服务时，各 bot 上下文/记忆互不串
         val key = if (bot.id > 0) "${bot.id}:${msg.from}" else msg.from
         // ★ v1.166 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
@@ -673,7 +692,7 @@ object WeixinBotManager {
                     // ★ v1.133 修复双递增 bug：每轮只 +1，真正能跑满 20 轮（原来两个 loop++ → 每轮 +2 只跑 10 轮就被截断=「任务做一半卡住」元凶）
                     // ★ v1.130 长任务进度：每 10s 推一次「还在处理」，比原来 30s 更密，用户不再觉得卡死
                     if (System.currentTimeMillis() - lastProgressAt > 10_000) {
-                        send("⏳ 任务还在处理中（第 $loop 轮），我继续干着，请稍候…")
+                        pSend("⏳ 任务还在处理中（第 $loop 轮），我继续干着，请稍候…")
                         lastProgressAt = System.currentTimeMillis()
                     }
                     // ★ v1.167 user 已在入口幂等写入，循环内不再补写（避免重复写 user）
@@ -684,7 +703,7 @@ object WeixinBotManager {
                                 content.contains("准备调用") || content.contains("我需要调用") || content.contains("我来调用"))) {
                             noCallGuide++
                             // ★ v1.130 引导前推送：让用户知道「模型假思考了，正在纠正」
-                            send("💭 我确认一下要调用哪个工具…")
+                            pSend("💭 我确认一下要调用哪个工具…")
                             val guideBody = JSONObject()
                                 .put("model", bot.aiModel)
                                 .put("messages", JSONArray()
@@ -712,7 +731,7 @@ object WeixinBotManager {
                     }
                     // ★ v1.130 龙虾式实时进展：先讲要调用什么工具
                     val fnNames = calls.map { it.first }.distinct()
-                    send("💭 我正在进行第 $loop 步：调用「${fnNames.joinToString("、")}」…")
+                    pSend("💭 我正在进行第 $loop 步：调用「${fnNames.joinToString("、")}」…")
                     val results = StringBuilder()
                     // ★ v82 并行工具执行（并行批处理）：独立调用并发跑，结果按序汇总
                     val totalSteps = calls.size
@@ -721,7 +740,7 @@ object WeixinBotManager {
                         val (fn, args) = calls[0]
                         val argTxt = args.entries.joinToString(",") { "${it.key}=${it.value}" }
                         val argShow = if (argTxt.length > 80) argTxt.take(80) + "…" else argTxt
-                        if (argShow.isNotBlank()) send("🔧 正在执行：$fn($argShow)")
+                        if (argShow.isNotBlank()) pSend("🔧 正在执行：$fn($argShow)")
                         val r = try {
                             com.qitong.gateway.http.AgentRunTracker.toolCall(agentRunId, fn, args.toString())
                             val rr = com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, userId, d, "weixin")
@@ -735,11 +754,11 @@ object WeixinBotManager {
                         results.append("【$fn 执行结果】\n$r\n")
                         // ★ v1.166 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文由 send 内部分段
                         val rShow = r.trim()
-                        send("✅ $fn 完成：\n$rShow")
+                        pSend("✅ $fn 完成：\n$rShow")
                         executedCalls = true
                     } else {
                         // 多调用并行（★v1.130 实时推送并行概况）
-                        send("⚡ 我同时处理 ${calls.size} 件事：「${fnNames.joinToString("、")}」")
+                        pSend("⚡ 我同时处理 ${calls.size} 件事：「${fnNames.joinToString("、")}」")
                         val executor = java.util.concurrent.Executors.newFixedThreadPool(calls.size.coerceAtMost(5))
                         try {
                             val futures = calls.map { (fn, args) ->
@@ -760,11 +779,11 @@ object WeixinBotManager {
                                     results.append("【$fn 执行结果】\n$r\n")
                                     // ★ v1.166 修复长文截断：并行工具结果完整推送（不再 take(120)）
                                     val rShow = r.trim()
-                                    send("✅ $fn 完成：\n$rShow")
+                                    pSend("✅ $fn 完成：\n$rShow")
                                     executedCalls = true
                                 } catch (e: Exception) {
                                     results.append("【工具执行异常】\n${e.message}\n")
-                                    send("⚠️ 并行工具执行异常：${e.message}")
+                                    pSend("⚠️ 并行工具执行异常：${e.message}")
                                 }
                             }
                         } finally {
@@ -811,7 +830,7 @@ object WeixinBotManager {
                     // ★ v1.166 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
-                        send("💭 好的，我继续查…")
+                        pSend("💭 好的，我继续查…")
                         val guideBody2 = JSONObject()
                             .put("model", bot.aiModel)
                             .put("messages", JSONArray()
