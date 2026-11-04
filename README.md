@@ -224,7 +224,15 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
-### v1.182
+### v1.183
+**记忆沉淀事件接入（MEMORY_SAVED 发布 → 首页系统动态）** —— 事件总线四项事件全部闭环：
+
+- **三渠道统一发布**：在记忆落库统一入口 `addMemory` 发布 `memory.saved` 事件（内置聊天/QQ/微信所有记忆沉淀全覆盖，一次接入），携带 userId/title/content/type/importance/source
+- **订阅→系统动态**：高价值长期记忆（importance>=7，如 v1.177 个人信息）实时写入首页「⚡系统动态」——"记住用户"一目了然
+- **可扩展**：任意新增插件/记忆分析/用户画像订阅 `memory.saved` 即可联动
+- **至此事件总线四项事件全部闭环**：message.received / message.replied / tool.executed / memory.saved
+
+## v1.182
 **工具执行事件接入（TOOL_EXECUTED 发布 → 首页系统动态实时可见）** —— 兑现事件总线完整价值：
 
 - **三渠道统一发布**：在沙盒统一执行入口 `executeSuspend` 发布 `tool.executed` 事件（内置聊天/QQ/微信所有工具执行全覆盖，一次接入），携带 fn/args/result/userId/channel

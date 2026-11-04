@@ -1854,7 +1854,21 @@ fun updateUserLogin(id: Long) {
             "INSERT INTO brain_memory (user_id,title,content,type,emotion,importance,timestamp,source,tags,model_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
             userId, title, content, type, emotion, importance, now, source, tags, modelId
         )
-        return lastInsertId()
+        val id = lastInsertId()
+        // ★ v1.183 记忆沉淀事件发布：三渠道（内置聊天/QQ/微信）统一在此发布 MEMORY_SAVED 事件
+        //   订阅者可联动首页系统动态/审计统计/用户画像，事件总线由 v1.178 管道装配挂载，无订阅者零开销
+        if (importance >= 5) {
+            try {
+                com.qitong.gateway.pipeline.GatewayEventBus.publish(
+                    com.qitong.gateway.pipeline.GatewayEventBus.Events.MEMORY_SAVED,
+                    mapOf(
+                        "userId" to userId, "title" to title, "content" to content.take(120),
+                        "type" to type, "importance" to importance, "source" to source
+                    )
+                )
+            } catch (_: Exception) { /* 事件发布失败不影响记忆落库 */ }
+        }
+        return id
     }
 
     // ============ 响应缓存（v92：同请求短时间命中直接返回，省 token 省延迟） ============
@@ -2144,7 +2158,8 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
-                                                                        Triple("v1.182", "工具执行事件接入（TOOL_EXECUTED 发布 → 首页系统动态实时可见）", "兑现事件总线完整价值：①三渠道统一发布——在沙盒统一执行入口 executeSuspend 发布 tool.executed 事件（内置聊天/QQ/微信所有工具执行全覆盖，一次接入），携带 fn/args/result/userId/channel；②订阅→系统动态——订阅事件并把重要工具执行（modify 类操作 + 失败/异常）写入首页系统动态实时可见，高频只读查询自动过滤不刷屏；③可扩展——任意新增插件/审计/统计订阅 tool.executed 即可联动，无需改核心执行链路。"),
+                                                                                    Triple("v1.183", "记忆沉淀事件接入（MEMORY_SAVED 发布 → 首页系统动态）", "事件总线四项事件全部闭环：①三渠道统一发布——在记忆落库统一入口 addMemory 发布 memory.saved 事件（内置聊天/QQ/微信所有记忆沉淀全覆盖，一次接入），携带 userId/title/content/type/importance/source；②订阅→系统动态——高价值长期记忆（importance>=7，如 v1.177 个人信息）实时写入首页系统动态，记住用户一目了然；③可扩展——任意新增插件/记忆分析/用户画像订阅 memory.saved 即可联动；至此事件总线四项事件全部闭环：message.received/message.replied/tool.executed/memory.saved。"),
+            Triple("v1.182", "工具执行事件接入（TOOL_EXECUTED 发布 → 首页系统动态实时可见）", "兑现事件总线完整价值：①三渠道统一发布——在沙盒统一执行入口 executeSuspend 发布 tool.executed 事件（内置聊天/QQ/微信所有工具执行全覆盖，一次接入），携带 fn/args/result/userId/channel；②订阅→系统动态——订阅事件并把重要工具执行（modify 类操作 + 失败/异常）写入首页系统动态实时可见，高频只读查询自动过滤不刷屏；③可扩展——任意新增插件/审计/统计订阅 tool.executed 即可联动，无需改核心执行链路。"),
             Triple("v1.181", "QQ 对话自然化（移除静默冷却 + 过程推送配额保护）", "让 QQ 像微信一样自然接话、长任务反馈不中断：①移除 3 秒静默吞消息——AI 路径原 onCooldown 3s 会把用户 3 秒内连发的不同消息静默吞掉（无任何回复），表现 QQ 不接话、像被指令了一下；改为仅同内容防刷屏——3 秒内相同内容才拦截，不同消息立即并发处理（v1.166 并发池），QQ 恢复有来有回连续对话；②过程推送配额保护——QQ 主动消息有每日配额，长任务多轮工具调用逐条烧会提前耗尽配额导致中途推送全失败；单次任务过程推送（💭/🔧/✅）默认最多 5 条（可配 qq_progress_budget），超预算后静默、把配额留给最终回复（必达），微信无此限制不受影响。"),
             Triple("v1.180", "QQ 在线静默守护（修复微信能聊QQ收不到消息）", "根治 QQ 机器人「状态在线却收不到消息」的假死问题：①根因——QQ 官方 WebSocket 在推送通道损坏时不会主动报错（状态仍 ONLINE），旧掉线监控只看 ERROR/OFFLINE 检测不到，表现为微信（长轮询主动拉）正常、QQ（WS 被动收）失灵；②在线假死检测——QqGatewayClient 记录最后一次收到业务消息（Dispatch）的时间 lastDispatchAtMs，READY/群消息/私聊消息都刷新；③静默守护——掉线监控增强：状态 ONLINE 但超过阈值分钟无任何业务消息推送 → 判定通道假死自动重启（默认 30 分钟，可配 qq_silent_guard_min，设 0 关闭）。"),
             Triple("v1.179", "三渠道（QQ/微信）全面接入事件总线", "补全 v1.178 统一消息管道的三渠道覆盖：①QQ 群消息进入管道时发布 message.received 事件（带 groupOpenid 群语义），QQ 私聊消息同样接入；②微信消息进入管道时发布 message.received 事件；③三渠道闭环：内置聊天 + QQ + 微信全部走统一事件总线，任何新增能力只需订阅事件即可三端同时生效。"),

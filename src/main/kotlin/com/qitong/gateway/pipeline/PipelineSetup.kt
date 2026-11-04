@@ -50,7 +50,7 @@ object PipelineSetup {
         // 3) 订阅事件：消息进入/回复/工具执行/记忆沉淀，各模块解耦
         subscribeEvents(database)
 
-        println("[PipelineSetup] v1.182 管道装配完成: chat=${chatPipeline.stages.size}Stages, qq=${qqPipeline.stages.size}Stages, wx=${wxPipeline.stages.size}Stages")
+        println("[PipelineSetup] v1.183 管道装配完成: chat=${chatPipeline.stages.size}Stages, qq=${qqPipeline.stages.size}Stages, wx=${wxPipeline.stages.size}Stages")
     }
 
     /** 构建指定渠道的管道（注入该渠道的 Agent executor；可空→兜底占位） */
@@ -133,12 +133,18 @@ object PipelineSetup {
             }
         }
 
-        // 记忆沉淀：供记忆分析/用户画像订阅
+        // 记忆沉淀：供记忆分析/用户画像订阅 → 高价值记忆写入首页系统动态
         GatewayEventBus.subscribe(GatewayEventBus.Events.MEMORY_SAVED) { p ->
             runCatching {
                 val userId = p["userId"] as? Long ?: return@subscribe
                 val content = p["content"] as? String ?: return@subscribe
                 println("[EventBus] memory.saved userId=$userId content=${content.take(30)}")
+                // ★ v1.183 高价值长期记忆（importance>=7，如 v1.177 个人信息）写入系统动态，首页实时可见
+                val imp = (p["importance"] as? Int) ?: 0
+                val title = p["title"] as? String ?: ""
+                if (imp >= 7) {
+                    try { database.addGatewayLog("memory", "🧠 记住用户(userId=$userId)：${if (title.isNotBlank()) "$title · " else ""}${content.take(60)}") } catch (_: Exception) {}
+                }
             }
         }
     }
