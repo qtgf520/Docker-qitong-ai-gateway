@@ -135,19 +135,35 @@ scp -i /root/.ssh/hk_server_key -o StrictHostKeyChecking=no -o ConnectTimeout=10
 gzip -c "$JAR" | ssh -i /root/.ssh/hk_server_key -o StrictHostKeyChecking=no root@103.23.149.10 'cat > /opt/qitong-gateway/g.gz && cd /opt/qitong-gateway && gunzip -f g.gz && mv g qitong-gateway.jar.new'
 ```
 
-**② 服务器换 jar + 重建容器**（用 linux_ssh 通道执行，通道已配置免密）：
+**② 服务器换 jar + 重建容器 + 存储治理（★ 每次部署必做，防止存储爆满锁机）**：
 ```bash
 cd /opt/qitong-gateway
+# ★ 部署前检查磁盘（存储治理铁律 Step0）：可用 < 5G 立即全量清理再继续，否则锁机风险
+df -h / | tail -1
 cp qitong-gateway.jar qitong-gateway.jar.bak_v旧版_$(date +%Y%m%d_%H%M%S)
 mv qitong-gateway.jar.new qitong-gateway.jar
 docker compose up -d --build    # ★ 必须 --build，否则不 COPY 新 jar！
-# ★ v1.164 部署后必做：清理旧备份（jar 只留最新1个 + tgz 只留最新1个 + 未使用镜像）——防止磁盘/内存越积越满
+# ========== ★ v1.175 存储治理铁律（每次部署后必清，防磁盘爆满锁机） ==========
+# 1) 旧 jar 备份只留最新 1 个
 ls -t qitong-gateway.jar.bak_* 2>/dev/null | tail -n +2 | xargs -r rm -f
+# 2) 旧 tgz 备份只留最新 1 个
 ls -t qitong-backup-*.tgz 2>/dev/null | tail -n +2 | xargs -r rm -f
-docker image prune -f
-docker system prune -f
+# 3) Docker 悬空镜像/构建缓存/无用网络卷（大头）
+docker image prune -af 2>/dev/null
+docker builder prune -af 2>/dev/null
+docker system prune -af --volumes 2>/dev/null
+# 4) 容器日志截断（journald/docker logs 常被忽略的隐藏大头，爆满元凶之一）
+truncate -s 0 $(docker inspect --format='{{.LogPath}}' qitong-ai-gateway 2>/dev/null) 2>/dev/null || true
+journalctl --vacuum-size=50M 2>/dev/null
+# 5) /tmp 临时文件（bundle/zip/脚本）
+rm -f /tmp/*.bundle /tmp/*.zip /tmp/*.sh /tmp/qitong-* /tmp/g.gz 2>/dev/null
+# 6) 容器内 apt 缓存 + 构建残留
+docker exec qitong-ai-gateway sh -c 'rm -rf /var/lib/apt/lists/* /tmp/* 2>/dev/null' 2>/dev/null || true
+# 7) ★ 部署后复核磁盘：可用空间应明显回升；< 5G 再次告警
+df -h / | tail -1
 ```
-> ⚠️ **v1.164 血泪教训：服务器每次部署必须清旧包**。旧 jar 备份 5 个 + tgz 10 个 + 未使用镜像，曾堆到 818M 且内存 swap 占用 611M，用户炸「内存不能每次开发爆满」。部署后立即清理（只留最新），JVM 已限堆（-Xmx512m）+ 容器 mem_limit 768m，杜绝内存无限增长。
+> ⚠️ **v1.175 血泪教训（存储爆满锁机）**：本次因旧包/镜像/日志/临时文件堆积，服务器存储 100% 爆满直接锁机（SSH/HTTP 全部不可达，非网络限流！），用户被迫处理。**每次部署必须执行上面 7 步全部清理**，部署前检查磁盘、部署后复核两条硬门禁不可跳过。JVM 已限堆（-Xmx512m）+ 容器 mem_limit 768m + 存储清理 7 步，双管齐下杜绝爆满。
+> ⚠️ **v1.164 血泪教训（内存爆满）**：旧 jar 备份 5 个 + tgz 10 个 + 未使用镜像，曾堆到 818M。部署后立即清理（只留最新）。
 
 ### 血泪教训
 - **`docker compose up -d --force-recreate` 不会重新 COPY jar**！必须 `--build`（或 `update --force` + `up -d --build`）

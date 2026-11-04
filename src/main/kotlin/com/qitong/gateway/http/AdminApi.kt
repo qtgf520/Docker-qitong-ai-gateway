@@ -897,6 +897,12 @@ private fun providerToMap(p: Provider) = mapOf(
                 put("content", JsonPrimitive(it.content))
             }
         }.toMutableList()
+        // ★ v1.175 修复「内置聊天不会调用工具」：注入沙盒 SYSTEM_PROMPT（含全部工具知识库，linux_run 等在此）——
+        //   此前内置聊天只在 QQ/微信注入沙盒提示词，AdminApi.chat 漏了，导致内置聊天模型看不到任何工具、从不输出调用标签
+        messages.add(0, buildJsonObject {
+            put("role", JsonPrimitive("system"))
+            put("content", JsonPrimitive(com.qitong.gateway.sandbox.SandboxEngine.SYSTEM_PROMPT))
+        })
         if (persona != null && (persona.name.isNotBlank() || persona.background.isNotBlank())) {
             val sb = StringBuilder()
             if (persona.name.isNotBlank()) sb.append("你的名字是${persona.name}。")
