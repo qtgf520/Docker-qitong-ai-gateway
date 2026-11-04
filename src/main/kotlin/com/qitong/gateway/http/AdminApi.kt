@@ -864,6 +864,19 @@ private fun providerToMap(p: Provider) = mapOf(
         val userContent = body["content"]?.jsonPrimitive?.content ?: ""
         val modelId = body["model"]?.jsonPrimitive?.content ?: ""
         val stream = body["stream"]?.let { parseBool(it) } ?: false
+        // ★ v1.178 统一消息管道：内置聊天渠道消息进入事件（事件总线已挂载，订阅者可监听/统计）
+        if (userId > 0) {
+            runCatching {
+                com.qitong.gateway.pipeline.GatewayEventBus.publish(
+                    com.qitong.gateway.pipeline.GatewayEventBus.Events.MESSAGE_RECEIVED,
+                    mapOf("ctx" to com.qitong.gateway.pipeline.MsgContext(
+                        channel = "chat", userId = userId, userOpenid = "user$userId",
+                        text = userContent.take(200), isAdmin = (user?.role == "admin" || user?.role == "agent"),
+                        convKey = "chat:$conversationId"
+                    ))
+                )
+            }
+        }
         // ★ v86 树形分支：regenFrom=重生成基点消息ID（截断其后并重新生成）；parentId=父消息ID
         val regenFrom = body["regenFrom"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
         val parentId = body["parentId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0
@@ -1199,6 +1212,20 @@ private fun providerToMap(p: Provider) = mapOf(
         }
 
         val finalReply = lastResult ?: "所有上游模型均不可用，请检查服务商配置"
+        // ★ v1.178 统一消息管道：内置聊天渠道回复完成事件（订阅者可监听/统计/联动）
+        runCatching {
+            com.qitong.gateway.pipeline.GatewayEventBus.publish(
+                com.qitong.gateway.pipeline.GatewayEventBus.Events.MESSAGE_REPLIED,
+                mapOf(
+                    "ctx" to com.qitong.gateway.pipeline.MsgContext(
+                        channel = "chat", userId = userId, userOpenid = "user$userId",
+                        text = userContent.take(200), isAdmin = (user?.role == "admin" || user?.role == "agent"),
+                        convKey = "chat:$conversationId"
+                    ),
+                    "reply" to finalReply.take(300), "rounds" to 0, "toolCalls" to emptyList<String>()
+                )
+            )
+        }
         return mapOf(
             "conversationId" to conversationId,
             "reply" to finalReply,
