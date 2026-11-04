@@ -1708,6 +1708,85 @@ fun updateUserLogin(id: Long) {
         return (base + hit).coerceAtMost(9)
     }
 
+    // ============ ★ v1.177 记忆智能化：个人信息识别 + 主动回忆 ============
+
+    /**
+     * 识别消息是否为「高价值个人信息」（名字/职业/喜好/习惯/家庭/身份/联系方式等）。
+     * 命中则返回该信息的类型标签（如 name/job/hobby/habit/family/contact/agree），否则返回 null。
+     * 规则驱动（够用且不依赖模型），命中信息存为 type=long 长期记忆、importance 高。
+     */
+    fun classifyPersonalInfo(content: String): String? {
+        val c = content.trim()
+        if (c.length < 2 || c.length > 80) return null   // 太短/太长不算
+        // 名字：我叫/我是/你可以叫我/叫我（不含"我是谁"这类疑问）
+        if (Regex("""(我叫|我的名字是|你可以叫我|叫我|别人叫我|朋友叫我)[\s:：]?[\u4e00-\u9fa5A-Za-z]{1,12}""").containsMatchIn(c) && !c.contains("?")) return "name"
+        // 自我介绍句式：我是[职业/身份]（我是学生/我是程序员/我是老师）
+        if (Regex("""我是(一名|一个|个)?[\u4e00-\u9fa5A-Za-z]{1,10}(生|师|员|工|医生|护士|工程师|程序员|设计师|学生|老师|老板|宝妈)?$""").containsMatchIn(c)) return "identity"
+        // 职业：做...工作 / 在...上班 / 干...
+        if (Regex("""(做|干|从事|负责|现在的职业是)[\s:：]?[\u4e00-\u9fa5A-Za-z]{1,14}(工作|行业|职业)?""").containsMatchIn(c) || c.contains("上班") || c.contains("的职业是")) return "job"
+        // 喜好：我喜欢/爱/最爱/喜欢[xx] / 不太喜欢
+        if (Regex("""(我喜欢|我爱|我超喜欢|最爱|我最爱|特别喜欢|超爱)[\s:：]?[\u4e00-\u9fa5A-Za-z0-9]{1,16}""").containsMatchIn(c) || c.contains("我喜欢")) return "hobby"
+        // 习惯/日常：我习惯/我一般/我每天/我经常/我通常
+        if (Regex("""(我习惯|我一般|我每天|我经常|我通常|我平时|我总爱)[\s:：]?[\u4e00-\u9fa5A-Za-z0-9]{1,20}""").containsMatchIn(c)) return "habit"
+        // 家庭/情感：我家人/我爸妈/我孩子/我对象/我老公/我老婆/我家
+        if (Regex("""(我家人|我爸爸|我妈妈|我爸妈|我孩子|我儿子|我女儿|我对象|我老公|我老婆|我男|我女|我家里|我家)""").containsMatchIn(c)) return "family"
+        // 联系方式/账号：我QQ/我微信/我电话/我邮箱
+        if (Regex("""(我QQ|我的QQ|我微信|我的微信|我电话|我的电话|我邮箱|我的邮箱|我手机|我的手机)""").containsMatchIn(c)) return "contact"
+        // 重要约定：答应/说好/约定/一起（含"下次/明天/到时候"）
+        if (Regex("""(说好了|答应你|约定|下次一定|说好|一言为定|改天|有空一起)""").containsMatchIn(c)) return "agree"
+        return null
+    }
+
+    /**
+     * ★ 主动回忆：按回顾关键词命中记忆，返回格式化的「回忆注入」文本。
+     * 触发词：上次/之前/以前/我记得/还记得/你叫什么/我叫什么/我们说好/约定。
+     * 只返回 importance 高 + 最近访问的记忆，控制条数防刷屏。
+     */
+    fun recallMemories(userId: Long, message: String, limit: Int = 3): String {
+        if (userId <= 0) return ""
+        val triggers = listOf("上次", "之前", "以前", "我还记得", "你记得", "还记得", "说好", "约定", "我们说", "我叫什么", "你叫什么")
+        if (!triggers.any { message.contains(it, true) }) return ""
+        // 从消息里提取可能的回忆关键词（去掉停用词后取实词片段，最多取 2 个）
+        val words = message.replace(Regex("[，。！？、,.!?\\s：:]+"), " ")
+            .split(" ")
+            .map { it.trim() }
+            .filter { it.length >= 2 && !triggers.contains(it) }
+            .take(2)
+        // 构造查询：base 条件（高价值记忆） + 每个关键词 AND (content LIKE ? OR title LIKE ?)
+        val cond = StringBuilder("user_id=? AND (type='long' OR importance>=6)")
+        val args = mutableListOf<Any>(userId)
+        for (w in words) {
+            cond.append(" AND (content LIKE ? OR title LIKE ?)")
+            args.add("%$w%")
+            args.add("%$w%")
+        }
+        val rows = try {
+            query(
+                "SELECT content FROM brain_memory WHERE $cond ORDER BY importance DESC, access_count DESC, timestamp DESC LIMIT $limit",
+                *args.toTypedArray()
+            )
+        } catch (_: Exception) { emptyList() }
+        if (rows.isEmpty()) return ""
+        return rows.map { "【回忆】${(it["content"] as? String ?: "").take(60)}" }.joinToString("\n")
+    }
+
+    /** 按 ID 批量取记忆内容（主动回忆命中后组装注入用） */
+    fun getMemoriesByIds(ids: List<Long>): List<Map<String, Any?>> {
+        if (ids.isEmpty()) return emptyList()
+        val idsStr = ids.joinToString(",")
+        return try {
+            query("SELECT * FROM brain_memory WHERE id IN ($idsStr)").map {
+                mapOf(
+                    "id" to ((it["id"] as Number).toLong()),
+                    "title" to (it["title"] as? String ?: ""),
+                    "content" to (it["content"] as? String ?: ""),
+                    "type" to (it["type"] as? String ?: "short"),
+                    "importance" to ((it["importance"] as? Number)?.toInt() ?: 5)
+                )
+            }
+        } catch (_: Exception) { emptyList() }
+    }
+
     /** ★ v1.166 获取全部记忆（管理员用）：含账号记忆 + QQ/微信/群 来源记忆，备注来源标签
      *  ★ v1.161 记忆隔离升级：管理员默认只返回自己的账号记忆；传 userId 查指定账号、传 openid/botId 查指定渠道用户 */
     fun getAllMemories(
@@ -2065,6 +2144,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.177", "记忆智能化：个人信息自动提炼 + 主动回忆 + 智能体体验打磨", "①个人信息自动提炼：对话中用户主动透露的名字/职业/喜好/习惯/家庭/重要约定等信息，按规则识别为高价值长期记忆（importance 高），与普通寒暄分开沉淀，检索时优先命中。②主动回忆：新消息出现「上次/之前/我记得/名字/你叫什么」等回顾信号时，自动调 getMemoriesWithHints 翻阅命中记录注入上下文，机器人像老朋友一样自然接话、不遗忘重要约定。③记忆注入更聪明：按 importance + 最近访问排序，控制注入条数防刷屏；寒暄不背诵、重要不遗忘。④智能体体验打磨：工具过程推送一句话同步进度，结果不刷屏。"),
             Triple("v1.176", "内置聊天接入沙盒工具 + 存储治理铁律", "①修复内置聊天不调用工具的真正根因：AdminApi.chat 构造 messages 时漏注入 SandboxEngine.SYSTEM_PROMPT（QQ/微信均有、独缺内置聊天），模型看不到任何工具知识库（含 linux_run）从不输出调用标签，导致「执行一半就卡住/不会用 Linux」。已补注入，内置聊天现与 QQ/微信一致可自主调度全部沙盒工具。②Linux 端到端验证通过：内置聊天要求「用 Linux 执行 uname」→ 模型自主 [[沙盒:linux_run(cmd=uname -a)]] → qtai-sj 专属终端 proot 真实执行成功（x86_64 Linux）。③proot 固化进 Docker 镜像（服务器 Dockerfile 补 proot/tar/xz-utils + COPY 修正），容器重启不再丢。④存储治理铁律：每次部署必清旧包/镜像/缓存/日志/tmp 并复核磁盘，防存储 100% 爆满锁机（本次真实事故教训已写 DEV_GUIDE 部署章节）。"),
             Triple("v1.175", "Linux接入智能体 + 沙盒卡顿修复 + 执行可见", "①Linux 系统接入沙盒智能体：qtai-sj 新增 linux_run（在 Linux 系统执行命令）/ linux_list（列出 Linux 终端会话）/ linux_create（新建 Linux 终端）三个工具，QQ/微信/内置聊天三渠道均可用，智能体自己会调用 Linux 专属终端干活（如装软件/跑脚本/查系统）。②执行卡住修复：Linux 命令改异步任务机制（长任务后台跑、轮询查结果），不再同步阻塞 30 秒卡死沙盒；沙盒 withTimeout 35s 与机器人单轮 60s 对齐，消除 Agent 循环卡点。③执行可见：AgentRunTracker 循环结束/异常自动标记状态，实时沙盒面板能看清每步干到哪、为何停。"),
             Triple("v1.174", "隐藏延伸至测速/OpenAI接口 + 沙盒Agent运行可视化 + Linux终端系统", "①隐藏功能延伸：模型按用户隐藏不再只过滤模型管理页列表——首页测速排行、OpenAI 兼容接口 /v1/models 同样按当前用户隐藏模型过滤（跟停用一个道理，隐藏=对你彻底不可见不可用）。②沙盒 Agent 运行可视化：新增实时运行状态面板，QQ/微信/内置聊天 正在跑的 Agent 任务（轮次/工具调用/结果/状态）实时推送后台，按绑定用户隔离，群内消息保持简洁不再刷屏过程。③Linux 终端系统：终端页新增「Linux 系统」能力，可下载安装适配的 Ubuntu/Linux rootfs（proot 用户态运行），从此网关内有真实 Linux 环境；新建终端可改时长（默认30分钟/可永久），qtai-sj 专属永久终端不可删除、Agent 可操作。"),

@@ -997,6 +997,18 @@ private fun providerToMap(p: Provider) = mapOf(
                 })
             }
         }
+        // ★ v1.177 主动回忆：用户消息提到「上次/之前/说好」等回顾词 → 自动检索高价值记忆注入本次上下文，让模型自然接话
+        if (userId > 0 && memoryEnabled) {
+            runCatching {
+                val recall = database.recallMemories(userId, userContent, 3)
+                if (recall.isNotBlank()) {
+                    messages.add(buildJsonObject {
+                        put("role", JsonPrimitive("system"))
+                        put("content", JsonPrimitive("以下是用户过往向你透露/约定的信息，若与本轮话题相关，自然地接话；不相关则忽略：\n$recall"))
+                    })
+                }
+            }
+        }
         val requestBody = buildJsonObject {
             put("model", JsonPrimitive(effectiveModel))
             put("messages", JsonArray(messages))
@@ -1206,10 +1218,17 @@ private fun providerToMap(p: Provider) = mapOf(
                 if (memoryEnabled && userContent.isNotBlank()) {
                     // ★ v1.166 importance 用弱规则计算（关键词命中 +1，基线 5，上限 9）
                     val imp = database.calcImportance(userContent, 5)
+                    // ★ v1.177 记忆智能化：识别个人信息（名字/爱好/职业等）→ 存为高价值长期记忆，与普通寒暄分开
+                    val infoType = database.classifyPersonalInfo(userContent)
+                    val isPersonal = infoType != null
                     database.addMemory(
                         userId,
-                        "对话记录", userContent.trim().take(200),
-                        "short", "neutral", imp, "auto", "chat", effectiveModel
+                        if (isPersonal) "个人信息·${infoType}" else "对话记录",
+                        userContent.trim().take(200),
+                        if (isPersonal) "long" else "short",
+                        "neutral",
+                        if (isPersonal) imp.coerceAtLeast(7) else imp,  // 个人信息 importance>=7 长期保留
+                        "auto", "chat", effectiveModel
                     )
                     // ★ v1.166 滚动摘要：每 5 条新记忆自动压一条结构化摘要（token 降一个数量级，对齐大脑模块建议3）
                     runCatching {

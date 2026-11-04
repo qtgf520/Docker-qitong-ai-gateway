@@ -838,8 +838,25 @@ object WeixinBotManager {
                         val memText = userText.trim()
                         if (memText.length in 4..200 && !memText.startsWith("绑定") && !memText.startsWith("停止") &&
                             !memText.startsWith("管理") && memText != "我的账号" && memText != "退出账号") {
-                            if (userId > 0) d.addMemory(userId, "微信对话", memText.take(150), "short", "neutral", 3, "weixin_chat", "", "")
-                            else d.saveWxBrainMemory(msg.from, memText.take(200), botId = bot.id)
+                            if (userId > 0) {
+                                // ★ v1.177 个人信息识别：高价值信息（名字/爱好/职业等）存为长期记忆 importance>=7
+                                val infoType = d.classifyPersonalInfo(memText)
+                                val isPersonal = infoType != null
+                                d.addMemory(
+                                    userId,
+                                    if (isPersonal) "个人信息·$infoType" else "微信对话",
+                                    memText.take(150), if (isPersonal) "long" else "short", "neutral",
+                                    if (isPersonal) d.calcImportance(memText, 7) else 3,
+                                    "weixin_chat", "", ""
+                                )
+                                // ★ v1.177 主动回忆：提到回顾词 → 检索记忆注入本次上下文
+                                runCatching {
+                                    val recall = d.recallMemories(userId, memText, 3)
+                                    if (recall.isNotBlank()) {
+                                        content = recall + "\n\n" + content
+                                    }
+                                }
+                            } else d.saveWxBrainMemory(msg.from, memText.take(200), botId = bot.id)
                         }
                     }
                 }

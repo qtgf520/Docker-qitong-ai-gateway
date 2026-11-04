@@ -1940,7 +1940,26 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 if (userText.length >= 4) {
                     if (effUserId > 0) {
                         val memTag = if (groupOpenid.isNotBlank()) "qq_group:$groupOpenid" else "qq_c2c"
-                        runCatching { db.addMemory(effUserId, "QQ对话", userText.take(200), "short", "neutral", db.calcImportance(userText, 5), "qq_chat", memTag, "") }
+                        // ★ v1.177 个人信息识别：高价值信息（名字/爱好/职业等）存为长期记忆 importance>=7
+                        val infoType = db.classifyPersonalInfo(userText)
+                        val isPersonal = infoType != null
+                        runCatching {
+                            db.addMemory(
+                                effUserId,
+                                if (isPersonal) "个人信息·$infoType" else "QQ对话",
+                                userText.take(200), if (isPersonal) "long" else "short", "neutral",
+                                if (isPersonal) db.calcImportance(userText, 7) else db.calcImportance(userText, 5),
+                                "qq_chat", memTag, ""
+                            )
+                        }
+                        // ★ v1.177 主动回忆：提到回顾词 → 检索记忆注入本次上下文（绑定用户）
+                        runCatching {
+                            val recall = db.recallMemories(effUserId, userText, 3)
+                            if (recall.isNotBlank()) {
+                                // 注入到 assistant 上下文的尾部（供模型下次自然接话）
+                                content = recall + "\n\n" + content
+                            }
+                        }
                     } else {
                         // ★ v1.168 未绑定用户也按场景隔离：群聊 tag=qq:{groupOpenid}:{memberOpenid}，私聊 tag=qq:c2c:{userOpenid}
                         val unboundTag = if (groupOpenid.isNotBlank()) "qq:$groupOpenid:$userOpenid" else "qq:c2c:$userOpenid"
