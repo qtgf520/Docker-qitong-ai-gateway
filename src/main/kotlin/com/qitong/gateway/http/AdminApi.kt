@@ -1128,7 +1128,7 @@ private fun providerToMap(p: Provider) = mapOf(
             val executedSigs = mutableSetOf<String>()
             while (agentLoop < 8) {
                 agentLoop++
-                com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = agentLoop, action = "第 $agentLoop 轮思考…")
+                com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = agentLoop, action = "第 $agentLoop 轮 · 等模型回复中…")
                 val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(lastResult!!, executedSigs)
                 if (calls.isEmpty()) break
                 val sb = StringBuilder()

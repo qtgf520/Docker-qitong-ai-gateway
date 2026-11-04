@@ -118,7 +118,7 @@ object LinuxSystemManager {
                 conn.connectTimeout = 20_000
                 conn.readTimeout = 120_000
                 conn.instanceFollowRedirects = true
-                conn.setRequestProperty("User-Agent", "QiTongGateway/1.174")
+                conn.setRequestProperty("User-Agent", "QiTongGateway/1.175")
                 conn.connect()
                 if (conn.responseCode !in 200..399) {
                     installStates[distroId] = InstallState(distroId, "failed", 0, "下载失败 HTTP ${conn.responseCode}")
@@ -292,8 +292,9 @@ object LinuxSystemManager {
         return try {
             val proc = ProcessBuilder(prootCmd).redirectErrorStream(true).start()
             val out = proc.inputStream.bufferedReader().readText()
-            val waited = proc.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)
-            if (!waited) { proc.destroyForcibly(); "⚠️ 命令超时（30秒）已终止\n$out" }
+            // ★ v1.175 卡顿修复：同步等 25s 上限（沙盒 withTimeout 35s 内安全），超时明确提示不卡死
+            val waited = proc.waitFor(25, java.util.concurrent.TimeUnit.SECONDS)
+            if (!waited) { proc.destroyForcibly(); "⚠️ Linux 命令执行超时（25秒），进程已终止。可能是耗时任务，建议拆成小步骤执行（如先装依赖再跑）\n$out".take(2000) }
             else out.ifBlank { "(无输出)" }
         } catch (e: Exception) {
             // proot 未找到

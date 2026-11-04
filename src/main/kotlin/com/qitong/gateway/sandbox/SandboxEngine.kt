@@ -28,6 +28,7 @@ object SandboxEngine {
         "provider_get_all", "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
         "user_balance", "user_recharge", "user_deduct",
         "terminal_run", "terminal_create", "terminal_list", "terminal_status",
+        "linux_run", "linux_create", "linux_list",  // ★ v1.175 Linux 系统工具
         "web_browse",  // ★ v1.166 网页浏览（curl 抓取转文本，felinks 风格）
         "qq_bots_list", "qq_bots_groups", "qq_points_rank", "help",
         "mcp_list", "mcp_call", "web_search",
@@ -80,6 +81,9 @@ object SandboxEngine {
             .put(func("terminal_create", "创建临时终端会话（管理员）", "admin", "modify", listOf(param("label", false, "终端名称，如 终端1")), "终端ID/名称"))
             .put(func("terminal_list", "查看已创建的终端会话列表（管理员）", "admin", "read", emptyList(), "终端ID/名称列表"))
             .put(func("terminal_status", "查询异步终端任务执行状态/结果（管理员）", "admin", "read", listOf(param("id", true, "异步任务ID，如 task-2001")), "任务运行中/完成/输出"))
+            .put(func("linux_run", "在 Linux 系统（Alpine/Debian）中执行命令（proot 真实 Linux 环境，可装软件/跑脚本/查系统；Linux 系统需先安装）", "admin", "modify", listOf(param("cmd", true, "要在 Linux 里执行的命令"), param("id", false, "Linux 会话ID，默认 qtai-sj 专属终端 linux-qtai")), "Linux 命令输出"))
+            .put(func("linux_list", "列出 Linux 系统终端会话（含 qtai-sj 专属永久终端）", "user", "read", emptyList(), "Linux 会话列表/是否安装系统"))
+            .put(func("linux_create", "新建 Linux 系统终端会话", "user", "modify", listOf(param("distro", false, "系统：alpine/debian，默认alpine"), param("label", false, "终端名称")), "Linux 终端ID/名称"))
             .put(func("qq_bots_list", "获取全部 QQ 机器人配置（只读）", "admin", "read", emptyList(), "机器人 AppID/名称/启用状态/模型"))
             .put(func("qq_bots_groups", "获取全部 QQ 群配置（只读）", "admin", "read", emptyList(), "群名/群 openid/AI 开关"))
             .put(func("qq_points_rank", "查看积分排行（只读）", "user", "read", emptyList(), "积分排行"))
@@ -521,8 +525,10 @@ $KNOWLEDGE_JSON
             "git_version", "git_log", "announcement_list", "skill_my" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
             "qq_bots_list", "qq_bots_groups", "weixin_bots_list", "mcp_list", "terminal_list", "terminal_status", "workflow_list", "file_read", "file_search",
+            "linux_list",  // ★ v1.175 Linux 会话列表(user/read)
             "api_key_list", "user_list", "config_get" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
+            "linux_run", "linux_create",  // ★ v1.175 Linux 执行/创建（admin/modify）
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
             "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn", "skill_add", "skill_del", "skill_toggle" -> "user" to "modify"
             "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
@@ -1154,6 +1160,37 @@ $KNOWLEDGE_JSON
                     val id = args["id"] ?: ""
                     if (id.isBlank()) "⚠️ 语法：terminal_status(id=任务ID，如 task-2001)"
                     else com.qitong.gateway.http.TerminalManager.asyncStatus(id.trim())
+                }
+                "linux_list" -> {
+                    // ★ v1.175 Linux 会话列表（qtai-sj 专属终端+用户自己的，管理员看全部）
+                    val sessions = com.qitong.gateway.http.LinuxSystemManager.linuxSessionsJson(if (isAdmin) 0L else userId)
+                    if (sessions.isEmpty()) "📋 暂无 Linux 会话（可 linux_create 创建；qtai-sj 专属终端自动维护）"
+                    else "🐧 【Linux 终端会话 ${sessions.size} 个】\n" + sessions.take(10).joinToString("\n") { s ->
+                        "· ${s["label"]} | ${s["id"]} | ${s["distroId"]}${if (s["permanent"] == true) " [永久]" else ""}"
+                    }
+                }
+                "linux_create" -> {
+                    // ★ v1.175 新建 Linux 终端会话
+                    val distro = (args["distro"] ?: "alpine").trim().lowercase()
+                    val label = args["label"]?.trim().orEmpty()
+                    val s = com.qitong.gateway.http.LinuxSystemManager.create(distro, label, if (isAdmin) 0L else userId)
+                    "✅ Linux 终端已创建\n🐧 系统: ${s.distroId}\n🆔 ID: ${s.id}\n📛 名称: ${s.label}\n\n发「linux_run(cmd=命令, id=${s.id})」在 Linux 里执行"
+                }
+                "linux_run" -> {
+                    // ★ v1.175 在 Linux 系统执行命令（proot 真实环境；默认 qtai-sj 专属终端）
+                    val cmd = args["cmd"]?.trim().orEmpty()
+                    if (cmd.isBlank()) "⚠️ 语法：linux_run(cmd=要在 Linux 里执行的命令, id=会话ID可省略)"
+                    else {
+                        val sid = args["id"]?.trim().orEmpty().ifBlank { com.qitong.gateway.http.LinuxSystemManager.QTAI_TERMINAL_ID }
+                        // 会话权限校验：普通用户只能操作自己的或全局
+                        if (!isAdmin && !com.qitong.gateway.http.LinuxSystemManager.canAccess(sid, userId)) {
+                            "⛔ 无权操作该 Linux 终端（${sid}），可 linux_create 建自己的"
+                        } else {
+                            val (okl, out) = com.qitong.gateway.http.LinuxSystemManager.execLinux(sid, cmd)
+                            if (okl) "🐧 [$sid] 执行: $cmd\n📤 输出:\n$out".take(2500)
+                            else "❌ $out"
+                        }
+                    }
                 }
                 "web_browse" -> {
                     // ★ v1.166 网页浏览（felinks 式文本抓取）：curl 抓 HTML → 去标签 → 提取标题/正文/链接

@@ -103,6 +103,13 @@ object AgentRunTracker {
         runs.entries.removeIf { (_, r) ->
             r.status != "running" && now - r.updatedAt > 30 * 60 * 1000L
         }
+        // ★ v1.175 卡顿可见：运行中但 90 秒没任何状态更新（模型/工具超时卡住）→ 标记超时结束，面板能看到"卡在哪"
+        runs.entries.forEach { (_, r) ->
+            if (r.status == "running" && now - r.updatedAt > 90 * 1000L) {
+                r.status = "done"
+                r.currentAction = r.currentAction + "（⏱ 超时结束：90秒无进展）"
+            }
+        }
         // 运行中但超过 2 小时强制标记超时
         runs.entries.forEach { (_, r) ->
             if (r.status == "running" && now - r.startedAt > 2 * 60 * 60 * 1000L) r.status = "done"

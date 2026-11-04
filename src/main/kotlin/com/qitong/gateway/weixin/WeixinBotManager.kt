@@ -642,7 +642,7 @@ object WeixinBotManager {
                 //   parseCalls 按签名过滤已执行过的调用，同一工具不会被二次执行
                 val executedSigs = mutableSetOf<String>()
                 while (loop < 20) {
-                    com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loop + 1, action = "第 ${loop + 1} 轮思考…")
+                    com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loop + 1, action = "第 ${loop + 1} 轮 · 等模型回复中…")
                     // ★ v75 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考（对齐 QQ v64）
                     if (stopSignals[msg.from] == true) {
                         stopSignals.remove(msg.from)

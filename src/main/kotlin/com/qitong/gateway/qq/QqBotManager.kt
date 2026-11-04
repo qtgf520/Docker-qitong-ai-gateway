@@ -1653,7 +1653,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 val executedSigs = mutableSetOf<String>()
                 while (sandboxOn && content.isNotBlank() && loopGuard < 20) {
                     loopGuard++
-                    com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loopGuard, action = "第 $loopGuard 轮思考…")
+                    com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loopGuard, action = "第 $loopGuard 轮 · 等模型回复中…")
                     // ★ v64 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考
                     if (stopSignals[userOpenid] == true) {
                         stopSignals.remove(userOpenid)
