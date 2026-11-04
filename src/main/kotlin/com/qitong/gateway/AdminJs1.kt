@@ -553,9 +553,8 @@ loaders.providers = function(){
  api('/api/providers').then(function(r){
   state.providers = r.data || [];
   var rows = state.providers.map(function(p){
-   var canSeeKey = p.apiKey && p.apiKey.indexOf('****') < 0;
-   // ★ v1.166 Key 可见性：原添加者(owner)或管理员能看到完整 key，其他人显示 **** + 提示
-   var keyTxt = p.apiKey ? (p.apiKey.indexOf('****')>=0 ? '<span style="font-size:11px;color:var(--muted)">'+esc(p.apiKey)+'（仅属主可见）</span>' : '<span style="font-family:monospace">'+esc(p.apiKey)+'</span>') : '<span style="color:var(--muted)">无</span>';
+   // ★ v1.173 Key 全面脱敏：一律掩码显示 + 提取按钮（凭密码验证）
+   var keyTxt = p.apiKey ? '<span style="font-family:monospace;font-size:12px">'+esc(p.apiKey)+'</span> ' + (p.canReveal ? '<button class="btn-ghost btn-sm" style="padding:1px 6px;font-size:11px" title="凭添加者密码提取完整Key" onclick="revealProviderKey('+p.id+')">🔑 提取</button>' : '<span style="font-size:11px;color:var(--muted)">（无权提取）</span>') : '<span style="color:var(--muted)">无</span>';
    var pubTxt = p.isPublic ? '<span class="badge green">公用</span>' : (p.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
    return '<tr data-pvid="'+p.id+'"><td><input type="checkbox" class="pv-chk" value="'+p.id+'" onclick="pvSelChange()"></td><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
   }).join('');
@@ -577,7 +576,8 @@ loaders.providers = function(){
 window.editProvider = function(id){
  var p = state.providers.find(function(x){ return x.id===id; }) || {};
  var canEditKey = !p.apiKey || p.apiKey.indexOf('****') < 0;
- var keyVal = canEditKey ? esc(p.apiKey||'') : '';
+ // ★ v1.173 key 一律脱敏：编辑框不再回显完整 key，留空=保持不变；需要完整 key 先点列表「🔑 提取」
+ var keyVal = '';
  var html = [
   '<div class="form-row"><label>名称 *</label><input id="pvName" class="input" value="'+esc(p.name||'')+'"></div>',
   '<div class="form-row"><label>类型</label><select id="pvType" class="input"><option value="OpenAI Compatible"'+(p.type==='OpenAI Compatible'?' selected':'')+'>OpenAI Compatible</option><option value="Ollama"'+(p.type==='Ollama'?' selected':'')+'>Ollama</option><option value="Custom"'+(p.type==='Custom'?' selected':'')+'>Custom</option></select></div>',
@@ -644,6 +644,28 @@ window.syncProvider = function(id){
  toast('同步模型列表...', true);
  api('/api/providers/' + id + '/sync', { method:'POST' }).then(function(r){
   if(r.code === 0){ toast(r.msg, true); loaders.models(); } else toast(r.msg, false);
+ });
+};
+// ★ v1.173 密码验证提取服务商完整 Key（私有=属主本人验证；系统=有权限管理员验证；杜绝互相窥探）
+window.revealProviderKey = function(id){
+ var p = state.providers.find(function(x){ return x.id===id; }) || {};
+ openModal('🔑 提取完整 Key · '+esc(p.name||('P'+id)), 
+  '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">该服务商 Key 已脱敏。输入'+(p.ownerId>0?'添加者（属主）':'当前管理员')+'的<b>登录密码</b>验证后即可提取完整 Key。</div>'+
+  '<div class="form-row"><label>登录密码</label><input id="rvPwd" class="input" type="password" placeholder="请输入登录密码"></div>'+
+  '<div id="rvOut" style="font-family:ui-monospace,monospace;font-size:12px;background:var(--inset);padding:10px;border-radius:6px;word-break:break-all;display:none"></div>', function(){
+  var pwd = $('rvPwd') ? $('rvPwd').value : '';
+  if(!pwd){ toast('请输入登录密码', false); return; }
+  api('/api/providers/' + id + '/reveal', { method:'POST', body: { password: pwd } }).then(function(r){
+   if(r.code !== 0 || !r.data || !r.data.apiKey){ toast(r.msg || '验证失败', false); return; }
+   var fullKey = r.data.apiKey;
+   var out = $('rvOut');
+   if(out){
+    out.style.display = 'block';
+    out.innerHTML = '<div style="margin-bottom:6px">✅ 验证通过，完整 Key：</div><code style="font-size:11px">'+esc(fullKey)+'</code>';
+   }
+   copyText(fullKey, '完整 Key 已复制');
+   toast('提取成功，已复制', true);
+  });
  });
 };
 """

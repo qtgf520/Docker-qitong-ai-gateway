@@ -7,11 +7,16 @@ object AdminJs2 {
 loaders.models = function(){
  var box = $('view-models');
  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
- Promise.all([api('/api/models'), api('/api/providers')]).then(function(res){
+ var incHidden = localStorage.getItem('qt_models_includeHidden') === '1';
+ Promise.all([api('/api/models' + (incHidden ? '?includeHidden=1' : '')), api('/api/providers')]).then(function(res){
   state.models = res[0].data || []; state.providers = res[1].data || [];
   var pmap = {}; state.providers.forEach(function(p){ var pLabel = (p.customId||'') ? p.customId : ('P'+p.id); pmap[p.id] = pLabel + ' ' + p.name; });
    var rows = state.models.map(function(m){
     var enBtn = '<button class="btn-ghost ' + (m.isEnabled ? '' : 'danger') + '" style="padding:2px 8px;font-size:12px" onclick="toggleModel(' + m.id + ')">' + (m.isEnabled ? '停用' : '启用') + '</button>';
+    // ★ v1.173 按用户隐藏按钮（仅对自己生效）
+    var hideBtn = m.hidden
+     ? '<button class="btn-ghost" style="padding:2px 8px;font-size:12px;color:var(--green)" title="已对你隐藏，点击恢复显示" onclick="toggleModelHidden(' + m.id + ',false)">恢复显示</button>'
+     : '<button class="btn-ghost" style="padding:2px 8px;font-size:12px" title="隐藏后仅你自己看不到该模型" onclick="toggleModelHidden(' + m.id + ',true)">隐藏</button>';
     var pubTxt = m.isPublic ? '<span class="badge green">公用</span>' : (m.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
     var priceTxt = m.price > 0 ? ('¥'+m.price+'/M') : '<span style="color:var(--muted)">默认价</span>';
     var auTxt = (m.authorizedNames||'') ? '<span class="badge purple">'+esc(m.authorizedNames)+'</span>' : (m.isPublic ? '<span style="color:var(--muted)">—</span>' : '<span class="badge gray">仅属主</span>');
@@ -28,18 +33,19 @@ loaders.models = function(){
      '<td>'+(m.supportsVision?'<span title="支持图片理解">🖼</span> ':'')+(m.supportsAudio?'<span title="支持语音">🎤</span> ':'')+(m.supportsVideo?'<span title="支持视频">🎬</span> ':'')+enBtn+'</td>'+
 '<td style="white-space:nowrap"><button class="btn-ghost btn-sm md-test-btn" onclick="testOneModel('+m.providerId+',\''+esc(m.modelId)+'\',\''+esc(key)+'\')">测速</button> '+
       '<button class="btn-ghost btn-sm" style="color:var(--cyan)" onclick="tryModel('+m.id+',\''+esc(m.modelId)+'\',\''+esc(m.displayName)+'\')">试用</button> '+
-      '<button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
+      '<button class="btn-ghost" onclick="editModel('+m.id+')">编辑</button> '+hideBtn+' <button class="btn-ghost" style="color:var(--red)" onclick="delModel('+m.id+')">删除</button></td></tr>';
    }).join('');
    box.innerHTML = [
 '<div class="action-bar">',
       '<button class="btn" onclick="editModel(0)">手动添加模型</button>',
       '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">自动全部测速</button>',
       '<button class="btn" style="color:#fff" onclick="loadModelAliases()">🏷️ 显示名管理</button>',
+      '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted);cursor:pointer" title="显示你已隐藏的模型"><input type="checkbox" id="mdShowHidden" '+(incHidden?'checked':'')+' onchange="mdToggleShowHidden()">显示已隐藏</label>',
       '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
      // ★ v1.166 多选批量操作（下拉式）
      '<span style="border-left:1px solid var(--border);padding-left:10px;display:inline-flex;gap:6px;align-items:center">' +
       '<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)"><input type="checkbox" id="mdChkAll" onclick="mdSelAll(this.checked)">全选</label>' +
-      '<select id="mdBatchSel" class="input" style="width:130px;padding:5px 24px 5px 8px"><option value="">批量操作...</option><option value="enable">批量启用</option><option value="disable">批量停用</option><option value="public">批量设公用</option><option value="delete">批量删除</option></select>' +
+      '<select id="mdBatchSel" class="input" style="width:140px;padding:5px 24px 5px 8px"><option value="">批量操作...</option><option value="enable">批量启用</option><option value="disable">批量停用</option><option value="public">批量设公用</option><option value="hide">批量隐藏</option><option value="unhide">批量恢复</option><option value="delete">批量删除</option></select>' +
       '<button class="btn btn-sm" onclick="mdBatchAction()">执行</button>' +
       '<span id="mdSelCount" style="font-size:11px;color:var(--muted)"></span>' +
      '</span>',
@@ -260,7 +266,7 @@ window.mdBatchAction = function(){
 window.mdBatch = function(action){
  var ids = mdGetSelected();
  if(!ids.length){ toast('请先勾选模型', false); return; }
- var label = { enable:'批量启用', disable:'批量停用', public:'批量设公用', delete:'批量删除' }[action] || action;
+ var label = { enable:'批量启用', disable:'批量停用', public:'批量设公用', hide:'批量隐藏', unhide:'批量恢复', delete:'批量删除' }[action] || action;
  if(action === 'delete' && !confirm('确定批量删除选中的 '+ids.length+' 个模型？')) return;
  if(action !== 'delete' && !confirm('确定对选中的 '+ids.length+' 个模型执行「'+label+'」？')) return;
  // 批量操作：串行调单接口（简单可靠）
@@ -271,6 +277,7 @@ window.mdBatch = function(action){
    var req = null;
    if(action === 'delete') req = api('/api/models/' + id, { method:'DELETE' });
    else if(action === 'enable' || action === 'disable') req = api('/api/models/toggle', { method:'POST', body: { id: id, enabled: action === 'enable' } });
+   else if(action === 'hide' || action === 'unhide') req = api('/api/models/hide', { method:'POST', body: { id: id, hidden: action === 'hide' } });
    else if(action === 'public') {
     var m = state.models.find(function(x){ return x.id===id; });
     req = api('/api/models', { method:'POST', body: { id: id, providerId: m.providerId, modelId: m.modelId, displayName: m.displayName, isEnabled: m.isEnabled, isPublic: true, isDefault: m.isDefault, customAlias: m.customAlias, contextWindow: m.contextWindow, price: m.price, authorizedUsers: JSON.stringify(m.authorizedUsers||[]), supportsVision: m.supportsVision, supportsAudio: m.supportsAudio, supportsVideo: m.supportsVideo } });
@@ -291,6 +298,19 @@ window.toggleModel = function(id){
   toast(r.msg, r.code === 0);
   loaders.models();
  });
+};
+// ★ v1.173 模型按用户隐藏/恢复（仅对自己生效，非全局）
+window.toggleModelHidden = function(id, hidden){
+ api('/api/models/hide', { method:'POST', body: { id: id, hidden: hidden } }).then(function(r){
+  toast(r.msg, r.code === 0);
+  if(r.code === 0) loaders.models();
+ });
+};
+// ★ v1.173 「显示已隐藏」开关：切换 includeHidden 并重载
+window.mdToggleShowHidden = function(){
+ var cb = $('mdShowHidden');
+ localStorage.setItem('qt_models_includeHidden', cb && cb.checked ? '1' : '0');
+ loaders.models();
 };
 // 自动全部测速（对齐原APP batchTestAllModels）：后台任务逐个测 + 前端轮询逐步更新每行状态
 window.runBatchSpeedTest = function(){

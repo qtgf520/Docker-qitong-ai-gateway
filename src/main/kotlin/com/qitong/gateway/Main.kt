@@ -107,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.172
+ * 綦桐AI网关 · Docker 服务器版 v1.173
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -119,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.172   ║
+        ║   綦桐AI网关 · Docker Server v1.173   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -214,7 +214,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.172"))
+                put("version", JsonPrimitive("1.173"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -617,9 +617,23 @@ fun Application.moduleWeb(database: Database) {
             if (result.error == null) AdminApi.ok(call, mapOf("synced" to result.count), "同步成功 ${result.count} 个模型")
             else AdminApi.fail(call, "同步失败：${result.error}", 400)
         }
+        // ★ v1.173 密码验证提取服务商完整 Key（私有=属主本人；系统=有权限管理员，验证各自登录密码）
+        post("/api/providers/{id}/reveal") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: run { AdminApi.fail(call, "服务商ID无效", 400); return@post }
+            val u = call.requireAuth(database) ?: return@post
+            val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            val password = body["password"]?.jsonPrimitive?.content ?: ""
+            val (ok, result) = AdminApi.revealProviderKey(database, u, id, password)
+            if (!ok) { AdminApi.fail(call, result ?: "验证失败", 403); return@post }
+            AdminApi.ok(call, mapOf("apiKey" to (result ?: "")), "验证通过，已提取完整Key")
+        }
 
         // 模型
-        get("/api/models") { val u = call.requireAuth(database) ?: return@get; AdminApi.ok(call, AdminApi.getVisibleModels(database, u)) }
+        get("/api/models") {
+            val u = call.requireAuth(database) ?: return@get
+            val includeHidden = call.request.queryParameters["includeHidden"] == "1"
+            AdminApi.ok(call, AdminApi.getVisibleModels(database, u, includeHidden))
+        }
         post("/api/models") {
             val u = call.requireAuth(database) ?: return@post
             val body = call.receive<JsonObject>()
@@ -645,6 +659,23 @@ fun Application.moduleWeb(database: Database) {
             } ?: !model.isEnabled
             database.updateModel(model.copy(isEnabled = newEnabled))
             AdminApi.ok(call, mapOf("id" to id, "enabled" to newEnabled), if (newEnabled) "模型已启用" else "模型已停用")
+        }
+        // ★ v1.173 模型按用户隐藏/显示（纯按当前用户隔离，非全局；管理员/代理/普通用户各自生效）
+        post("/api/models/hide") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "模型ID无效", 400); return@post }
+            val model = database.getModelById(id)
+            if (model == null) { AdminApi.fail(call, "模型不存在", 404); return@post }
+            // ★ v1.173 布尔/字符串双兼容解析（JsonPrimitive 布尔与字符串 content 均为 true/false，直接按 content 判断）
+            val hidden = body["hidden"]?.let {
+                when {
+                    it is JsonPrimitive -> it.content == "true" || it.content == "1"
+                    else -> true
+                }
+            } ?: true
+            if (hidden) database.hideModel(u.id, id) else database.unhideModel(u.id, id)
+            AdminApi.ok(call, mapOf("id" to id, "hidden" to hidden), if (hidden) "已隐藏该模型（仅你自己看不到）" else "已恢复显示")
         }
         // 批量测速（原APP方式：逐个串行，通过自动启用，失败可选自动关闭）
         post("/api/speedtest/batch") {
@@ -2500,7 +2531,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.172"))
+                put("version", JsonPrimitive("1.173"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3344,7 +3375,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.172"))
+                    put("version", JsonPrimitive("1.173"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

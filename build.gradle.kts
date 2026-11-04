@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.qitong.gateway"
-version = "1.172"
+version = "1.173"
 
 repositories {
     mavenCentral()

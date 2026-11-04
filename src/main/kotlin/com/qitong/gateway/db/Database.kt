@@ -925,7 +925,7 @@ class Database(private val dbPath: String) {
         return lastInsertId()
     }
     fun updateModel(m: AiModel) {
-val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUsers)
+        val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUsers)
         stmt(
             "UPDATE models SET provider_id=?,model_id=?,display_name=?,is_default=?,sync_status=?,is_enabled=?,custom_alias=?,use_proxy=?,context_window=?,owner_id=?,is_public=?,price=?,authorized_users=?,supports_vision=?,supports_audio=?,supports_video=?,weight=?,channel_group=? WHERE id=?",
             m.providerId, m.modelId, m.displayName, if (m.isDefault) 1 else 0, m.syncStatus, if (m.isEnabled) 1 else 0, m.customAlias, if (m.useProxy) 1 else 0, m.contextWindow, m.ownerId, if (m.isPublic) 1 else 0, m.price, authorized, if (m.supportsVision) 1 else 0, if (m.supportsAudio) 1 else 0, if (m.supportsVideo) 1 else 0, m.weight, m.channelGroup, m.id
@@ -935,9 +935,34 @@ val authorized = kotlinx.serialization.json.Json.encodeToString(m.authorizedUser
     fun deleteModel(id: Long) {
         stmt("DELETE FROM models WHERE id=?", id)
     }
-
     fun deleteModelsByProvider(providerId: Long) {
         stmt("DELETE FROM models WHERE provider_id=?", providerId)
+    }
+
+    // ============ 模型隐藏（★ v1.173 按用户隔离，非全局） ============
+
+    /** 表：记录 "哪个用户隐藏了哪个模型"（user_id + model_id 唯一） */
+    fun createModelHiddenTable() {
+        runCatching { stmt("CREATE TABLE IF NOT EXISTS model_hidden (user_id INTEGER NOT NULL, model_id INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, model_id))") }
+    }
+
+    /** 用户隐藏的模型ID集合 */
+    fun getHiddenModelIds(userId: Long): Set<Long> = runCatching {
+        query("SELECT model_id FROM model_hidden WHERE user_id=?", userId)
+            .mapNotNull { (it["model_id"] as? Number)?.toLong() }
+            .toSet()
+    }.getOrDefault(emptySet())
+
+    /** 隐藏模型（幂等） */
+    fun hideModel(userId: Long, modelId: Long) {
+        createModelHiddenTable()
+        stmt("INSERT OR IGNORE INTO model_hidden (user_id, model_id, created_at) VALUES (?,?,?)", userId, modelId, System.currentTimeMillis())
+    }
+
+    /** 取消隐藏（幂等） */
+    fun unhideModel(userId: Long, modelId: Long) {
+        createModelHiddenTable()
+        stmt("DELETE FROM model_hidden WHERE user_id=? AND model_id=?", userId, modelId)
     }
 
     // ============ 会话 ============
@@ -2035,9 +2060,12 @@ fun updateUserLogin(id: Long) {
         runCatching { stmt("ALTER TABLE models ADD COLUMN supports_audio INTEGER NOT NULL DEFAULT 0") }
         runCatching { stmt("ALTER TABLE models ADD COLUMN supports_video INTEGER NOT NULL DEFAULT 0") }
         runCatching { stmt("ALTER TABLE models ADD COLUMN weight INTEGER NOT NULL DEFAULT 50") }
+        // ★ v1.173 模型按用户隐藏表（启动即建，防首次访问 no such table）
+        runCatching { stmt("CREATE TABLE IF NOT EXISTS model_hidden (user_id INTEGER NOT NULL, model_id INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, model_id))") }
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+            Triple("v1.173", "服务商Key密码验证提取 + 模型按用户隐藏", "①服务商 API Key 全面脱敏：后台服务商列表 Key 一律掩码显示（管理员也不例外），不再直接明文展示任何人的 Key。②密码验证提取：新增 POST /api/providers/{id}/reveal，需输入该服务商添加者（属主）的登录密码（BCrypt 校验）才能提取完整 Key；系统级服务商验证当前管理员自己的密码；其他管理员也无法直接查看，杜绝互相窥探。③模型按用户隐藏：模型列表每行新增「隐藏」按钮，隐藏后该模型对当前用户关闭显示（纯按用户隔离，非全局）；提供「显示已隐藏」开关随时恢复。④全员可用：后台管理员、用户代理、普通用户都可对自己的模型列表执行隐藏/恢复，互不影响。"),
             Triple("v1.172", "预测式自动切换（思考阶段预热，故障转移毫秒级）", "对齐原APP v3.18.24 预测式预热：①思考阶段介入——当请求发出（含 QQ/微信/qtai-sj 大脑），自动记录当前模型特征（modelId/providerId/请求模态/用户池），触发三级预测预热；②三级预测策略——强制故障池当前命中模型的下一个（池序=切换优先）→ 测速排行榜当前模型的下一个健康模型 → 兜底全局最优模型；③连接预建——对预测目标发轻量 HEAD 请求（5s 超时、后台异步、失败静默），提前完成 TCP+TLS+HTTP/2 握手，连接放入 OkHttp 共享连接池（复用 UpstreamClient 200 连接池）；④切换零感知——故障转移时目标连接已就绪，切换到下一模型毫秒级完成；⑤命中统计——/api/status 新增 prewarm 状态（已预热目标/累计预热次数/累计命中次数），预热命中自动登记。完全后台异步，不阻塞主请求，不影响现有故障转移/测速逻辑。"),
             Triple("v1.171", "模型配置customAlias直接作对外别名 + 显示名按钮颜色修复", "①模型配置里单独模型的自定义别名（customAlias）直接对外生效：/v1/models 对这些模型追加密名条目（id=别名、display_name=别名、alias_of=真实模型），外部 APP 拉列表即看到别名；请求侧 GatewayProxy 实时反查 findModelByAlias（命中 customAlias → 映射回真实模型转发，带归属校验），配置里改别名立即生效，无需额外配置。②修复模型页「🏷️ 显示名管理」按钮文字看不见：青色文字在靛蓝背景上对比度不足，改纯白。③Shizuku 保活 Operit 与綦桐AI网关（RUN_IN_BACKGROUND/START_FOREGROUND/deviceidle 白名单/standby active）。"),
             Triple("v1.170", "模型试用401修复 + 模型自定义显示名(对外别名) + OpenAI余额查询", "①修复模型页「试用」按钮 401：tryModel 的 fetch 请求没带 Authorization 头（/api/chat/stream 强制 requireAuth），补 Bearer token 即可。②模型自定义显示名（对外别名）：复用 model_mappings 表并新增 owner_id 字段做用户隔离——管理员映射全局共享，普通用户可自建自己的别名（如「DeepSeek 免费」→ 真实 deepseek-chat）；/v1/models 对外列表在真实模型后追加别名条目（id=别名、display_name=自定义名），外部 APP 拉模型列表看到的就是自定义名，用别名请求时网关自动反查映射到真实模型转发（同一轮注册的全局/用户映射都能命中）；后台模型页新增「显示名」管理入口（管理员=全部映射，用户=自己的）。③OpenAI 兼容余额查询：新增 GET /v1/dashboard/billing/credit_grants（按 API Key 属主隔离，普通用户只看自己的余额/累计充值/配额用量；本地请求免 key 时归属 0 不泄露），对接方可像 OpenAI 一样查余额。④模型测速与速度排行沿用现有用户隔离逻辑不变（/api/status healthCache 只显示当前用户可见模型）。"),

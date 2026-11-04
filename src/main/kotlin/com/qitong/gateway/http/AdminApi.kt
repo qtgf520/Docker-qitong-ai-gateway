@@ -187,27 +187,41 @@ private fun providerToMap(p: Provider) = mapOf(
     // ============ 服务商 CRUD（多租户） ============
 
     /** 获取可见服务商：admin=全部；普通用户=系统+公用+自己私有（key 一律脱敏，除非是自己的） */
+    /** ★ v1.173 Key 掩码：保留前6后4便于识别，中间 ****（管理员也不例外，一律脱敏） */
+    private fun maskApiKey(key: String?): String {
+        val k = key ?: ""
+        return if (k.length <= 10) "****" else k.take(6) + "****" + k.takeLast(4)
+    }
+
     fun getVisibleProviders(database: Database, user: User): List<Map<String, Any?>> {
-        if (user.role == "admin") {
-            return database.getProviders().map { p ->
-                providerToMap(p).toMutableMap().apply {
-                    // 显示属主用户名
-                    val owner = if (p.ownerId > 0) database.getUserById(p.ownerId) else null
-                    this["ownerName"] = owner?.username ?: (if (p.ownerId == 0L) "系统" else "未知")
-                }
+        // admin=全部；普通用户=系统+公用+自己私有（★ v1.173 key 一律脱敏，不再直接明文展示，管理员也不例外）
+        val rows = if (user.role == "admin") database.getProviders()
+            else database.getVisibleProviders(user.id)
+                .filter { it.isPublic || it.ownerId == user.id || it.ownerId == 0L && hasPerm(user, Perm.P_MANAGE) }
+        return rows.map { p ->
+            providerToMap(p).toMutableMap().apply {
+                // ★ v1.173 安全脱敏：任何人（含管理员）都看不到完整 key，只能看到掩码
+                this["apiKey"] = maskApiKey(p.apiKey)
+                // canReveal：当前用户能否凭密码提取完整 key（私有=属主本人；系统=有管理权限者）
+                this["canReveal"] = (p.ownerId > 0 && p.ownerId == user.id) || (p.ownerId == 0L && hasPerm(user, Perm.P_MANAGE))
+                val owner = if (p.ownerId > 0) database.getUserById(p.ownerId) else null
+                this["ownerName"] = owner?.username ?: (if (p.ownerId == 0L) "系统" else "未知")
             }
         }
-        // 普通用户：自己私有 + 公用 + 有权限的系统服务商
-        return database.getVisibleProviders(user.id)
-            .filter { it.isPublic || it.ownerId == user.id || it.ownerId == 0L && hasPerm(user, Perm.P_MANAGE) }
-            .map { p ->
-                providerToMap(p).toMutableMap().apply {
-                    // 安全脱敏：只有 owner 自己能看到完整 key，其余一律 ****
-                    if (p.ownerId != user.id) this["apiKey"] = "****"
-                    val owner = if (p.ownerId > 0) database.getUserById(p.ownerId) else null
-                    this["ownerName"] = owner?.username ?: (if (p.ownerId == 0L) "系统" else "未知")
-                }
-            }
+    }
+
+    /** ★ v1.173 密码验证提取服务商完整 Key：私有=属主本人验自己密码；系统=有管理权限者验自己密码 */
+    fun revealProviderKey(database: Database, user: User, providerId: Long, password: String): Pair<Boolean, String?> {
+        val p = database.getProviderById(providerId) ?: return false to "服务商不存在"
+        if (password.isBlank()) return false to "请输入登录密码"
+        val checker = when {
+            // 私有服务商：只有添加者（属主）本人能提取，验证属主密码（其他人即使管理员也不行）
+            p.ownerId > 0 -> if (p.ownerId == user.id) user else return false to "仅该服务商添加者本人可提取完整Key"
+            // 系统服务商：需要有管理权限，验证当前登录者自己的密码（防止管理员之间互窥）
+            else -> if (hasPerm(user, Perm.P_MANAGE)) user else return false to "无权限提取该系统服务商Key"
+        }
+        if (!org.mindrot.jbcrypt.BCrypt.checkpw(password, checker.passwordHash)) return false to "登录密码错误"
+        return true to (p.apiKey ?: "")
     }
 
     fun saveProvider(database: Database, body: JsonObject, user: User): Long {
@@ -225,7 +239,8 @@ private fun providerToMap(p: Provider) = mapOf(
         // key 保持：编辑时若前端提交空或 **** 则保留原key（防止覆盖）
         val existing = if (id > 0) database.getProviderById(id) else null
         var apiKey = body["apiKey"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-        if (apiKey == null || apiKey == "****") apiKey = existing?.apiKey
+        // ★ v1.173 掩码（含 ****）视为未修改，保留原 key
+        if (apiKey == null || apiKey.contains("****")) apiKey = existing?.apiKey
         val p = Provider(
             id = id,
             name = body["name"]?.jsonPrimitive?.content ?: "",
@@ -264,17 +279,23 @@ private fun providerToMap(p: Provider) = mapOf(
 
     // ============ 模型 CRUD（多租户） ============
 
-    /** 获取可见模型：admin=全部；普通用户=系统公用+公用+自己私有（含属主用户名）；末尾附 qtai-sj 自动化切换 */
-    fun getVisibleModels(database: Database, user: User): List<Map<String, Any?>> {
+    /** 获取可见模型：admin=全部；普通用户=系统公用+公用+自己私有（含属主用户名）；末尾附 qtai-sj 自动化切换
+     *  ★ v1.173 按当前用户隐藏：隐藏的模型默认过滤掉，includeHidden=true 时返回并带 hidden 标记（非全局，各用户独立） */
+    fun getVisibleModels(database: Database, user: User, includeHidden: Boolean = false): List<Map<String, Any?>> {
         val qtaiVirtual = mutableMapOf<String, Any>(
             "id" to -1L, "modelId" to "qtai-sj", "displayName" to "🔄 自动化切换",
             "providerId" to 0L, "isPublic" to true, "isEnabled" to true, "isDefault" to false,
             "ownerId" to 0L, "ownerName" to "系统", "price" to 0.0, "contextWindow" to 0,
             "customAlias" to "", "virtual" to true
         )
+        val hiddenIds = database.getHiddenModelIds(user.id)
         if (user.role == "admin") {
-            val list = database.getModels().map { m ->
+            val list = database.getModels()
+                .filter { includeHidden || !hiddenIds.contains(it.id) }
+                .map { m ->
                 modelToMap(m).toMutableMap().apply {
+                    // ★ v1.173 当前用户隐藏标记
+                    this["hidden"] = hiddenIds.contains(m.id)
                     val owner = if (m.ownerId > 0) database.getUserById(m.ownerId) else null
                     this["ownerName"] = owner?.username ?: (if (m.ownerId == 0L) "系统" else "未知")
                     // ★ v1.106 服务商 P 标识（对外对接看得到挂在哪个服务商）
@@ -290,11 +311,14 @@ private fun providerToMap(p: Provider) = mapOf(
             .map { it.id }
         val list = database.getVisibleModels(user.id)
             .filter { m ->
-                m.ownerId == user.id || m.isPublic || (m.ownerId == 0L && m.isPublic) ||
-                m.providerId in providerIds || m.authorizedUsers.contains(user.id)   // ★ v1.105 授权用户可见
+                (includeHidden || !hiddenIds.contains(m.id)) &&
+                (m.ownerId == user.id || m.isPublic || (m.ownerId == 0L && m.isPublic) ||
+                m.providerId in providerIds || m.authorizedUsers.contains(user.id))   // ★ v1.105 授权用户可见
             }
             .map { m ->
                 modelToMap(m).toMutableMap().apply {
+                    // ★ v1.173 当前用户隐藏标记
+                    this["hidden"] = hiddenIds.contains(m.id)
                     val owner = if (m.ownerId > 0) database.getUserById(m.ownerId) else null
                     this["ownerName"] = owner?.username ?: (if (m.ownerId == 0L) "系统" else "未知")
                     // ★ v1.105 授权用户显示为可读用户名列表
