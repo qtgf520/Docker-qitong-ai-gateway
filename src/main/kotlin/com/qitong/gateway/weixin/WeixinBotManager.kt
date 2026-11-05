@@ -676,6 +676,10 @@ object WeixinBotManager {
                 // ★ v1.174 Agent 运行可视化：微信渠道登记运行（后台实时沙盒面板按用户隔离查看）
                 val agentRunId = com.qitong.gateway.http.AgentRunTracker.start("weixin", msg.from, d.getWeixinBoundUser(msg.from)?.username ?: "", userText)
                 com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "收到消息，开始处理…")
+                // ★ v1.190 模型回复到达后台实时刷新（微信渠道）——首次模型回复已到达
+                if (content.isNotBlank()) {
+                    com.qitong.gateway.http.AgentRunTracker.modelReply(agentRunId, content)
+                }
                 var noCallGuide = 0   // ★ v77 引导计数器：模型只输出描述不输出标签时引导它
                 // ★ v1.169 修复「工具重复执行」：已执行调用签名集合——模型照抄上一轮调用标签/复述描述时，
                 //   parseCalls 按签名过滤已执行过的调用，同一工具不会被二次执行
@@ -836,6 +840,10 @@ object WeixinBotManager {
                     // ★ v1.167 工具「调用+结果」只在本请求临时上下文（nextBody）内传递，不再写入多轮 hist
                     //   （修复串台：否则下一条闲聊会把上一轮工具过程带进上下文，机器人「问他这个他说那个」）
                     content = nextContent
+                    // ★ v1.190 多轮工具循环里模型回复到达也实时上报后台
+                    if (content.isNotBlank()) {
+                        com.qitong.gateway.http.AgentRunTracker.modelReply(agentRunId, content)
+                    }
                     // ★ v1.166 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
@@ -878,6 +886,8 @@ object WeixinBotManager {
                     // ★ v1.169 收尾二次解析也带去重（与主调用、calls2 一致）
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty()) break
                 }
+                // ★ v1.190 微信 Agent 循环跑完，后台立即显示"完成"
+                com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done", "✅ 任务完成")
                 while (hist.size > 20) hist.removeAt(0)
                 // ★ v92 微信记忆闭环增强：qtai-sj（sandboxOn）模式也沉淀记忆（对齐 QQ 长期记忆；受 memory_enabled 开关控制）
                 // ★v1.115 未绑定用户也按 openid 沉淀（对齐 QQ），绑定账号仍走账号记忆

@@ -1732,6 +1732,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 // ★ v1.174 Agent 运行可视化：QQ 渠道登记运行（后台实时沙盒面板按用户隔离查看）
                 val agentRunId = com.qitong.gateway.http.AgentRunTracker.start("qq", userOpenid, db.getQqBoundUser(userOpenid)?.username ?: "", userText)
                 com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "收到消息，开始处理…")
+                // ★ v1.190 首次模型回复到达后台实时刷新（不再一直"等待模型回复"）
+                if (content.isNotBlank()) {
+                    com.qitong.gateway.http.AgentRunTracker.modelReply(agentRunId, content)
+                }
                 // 只推一次「处理中」，中间步骤全部静默（最后结果由外层推）
                 var stepHintSent = false
                 var lastProgressAt = System.currentTimeMillis()
@@ -1921,6 +1925,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     //   导致下一条新消息进来时历史尾部是「user:【工具执行结果】」，模型误判为新任务延续，
                     //   出现「问他这个他说那个」）。工具过程数据只在本次请求的临时上下文内传递。
                     content = nextContent
+                    // ★ v1.190 多轮工具循环里模型回复到达也实时上报后台
+                    if (content.isNotBlank()) {
+                        com.qitong.gateway.http.AgentRunTracker.modelReply(agentRunId, content)
+                    }
                     // ★ v1.166 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步/再查」但没输出调用标签 →
                     //   引导一次让它输出真标签继续执行，而不是直接 break 停半路
                     val calls2 = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
@@ -2002,6 +2010,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         }
                         if (!closeContent.isNullOrBlank() && closeContent.length > 2) {
                             val closeCleaned = cleanFunctionTags(closeContent)
+                            // ★ v1.190 跑完后台立即显示"完成"（不再一直 running/等待模型回复）
+                            com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done", "✅ 任务完成")
                             // ★ v1.167 修复串台：只写最终回复进 hist（原连续写 cleaned+closeCleaned 两个
                             //   assistant，下一轮模型看到 assistant→assistant，把工具收尾当成上一条回答）
                             synchronized(hist) {
@@ -2023,6 +2033,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                         }
                     }
+                    // ★ v1.190 跑完后台立即显示"完成"
+                    com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done", "✅ 任务完成")
                     return cleaned
                 }
                 // ★ v55 非沙盒循环路径也清洗（如解析不到调用时的直接返回）
@@ -2035,6 +2047,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                         }
                     }
+                    // ★ v1.190 跑完后台立即显示"完成"
+                    com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done", "✅ 任务完成")
                     return cleaned
                 }
                 // ★ v1.167 用户原文已在入口写入，这里只写 assistant
@@ -2078,6 +2092,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         runCatching { db.saveGroupBrainMemory(groupOpenid, userText.take(200)) }
                     }
                 }
+                // ★ v1.190 跑完后台立即显示"完成"
+                com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done", "✅ 任务完成")
                 content
             }
         } catch (e: Exception) {

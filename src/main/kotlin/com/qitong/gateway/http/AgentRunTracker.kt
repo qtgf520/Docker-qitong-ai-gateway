@@ -70,10 +70,20 @@ object AgentRunTracker {
         r.updatedAt = System.currentTimeMillis()
     }
 
-    /** 结束运行 */
-    fun finish(id: String, status: String = "done") {
+    // ★ v1.190 模型回复到达上报：后台不再一直"等待模型回复"——模型一回复实时刷新
+    /** 上报模型回复摘要（回复到达即调用，面板从"等模型回复"变为"模型已回复：…"） */
+    fun modelReply(id: String, replyText: String) {
+        val r = runs[id] ?: return
+        r.toolResult = replyText.take(120)   // 复用结果列显示模型回复内容
+        r.currentAction = "模型已回复：${replyText.take(50)}"
+        r.updatedAt = System.currentTimeMillis()
+    }
+
+    /** 收尾（带最终动作文案，面板显示"完成/停止/错误"而不是一直 running） */
+    fun finish(id: String, status: String = "done", action: String = "") {
         val r = runs[id] ?: return
         r.status = status
+        if (action.isNotBlank()) r.currentAction = action
         r.updatedAt = System.currentTimeMillis()
     }
 
