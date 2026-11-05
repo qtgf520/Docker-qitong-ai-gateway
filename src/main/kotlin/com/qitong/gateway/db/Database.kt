@@ -665,6 +665,19 @@ class Database(private val dbPath: String) {
                 )"""
             )
             try { st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_gateway_logs_time ON gateway_logs(created_at DESC)") } catch (_: Exception) {}
+            // ★ v1.187 节点域名表：自定义接入域名（首页优先显示节点、隐藏IP；首次安装引导添加）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS node_domains (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    domain TEXT NOT NULL,
+                    port INTEGER NOT NULL DEFAULT 80,
+                    country TEXT NOT NULL DEFAULT '',
+                    note TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
             // QQ 用户积分（签到系统，按群独立：同一用户在不同群积分隔离）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_points (
@@ -2158,7 +2171,8 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
-                                                                                                                        Triple("v1.186", "QQ 私聊不回复 + QQ 不自然修复（AccessToken 401 自动刷新 + 收敛误触发）", "①QQ 私聊收不到回复根治：日志实锤私聊消息发送失败 HTTP 401 AccessToken无效或过期——模型正常处理结果已生成但发送时 Token 被官方吊销本地缓存仍认为有效（7200s 未到期），用户永远看不到回复；修复：私聊/群消息/卡片发送遇 401 自动强制刷新 AccessToken 并重试一次（forceRefreshToken 清缓存→换新 token→重新发送）。②QQ 不像人/总解释没真调工具根治：原 closeBody 收敛触发条件用 loopGuard>0（只要循环过就触发），但假调用引导（模型说正在调用却无标签→引导）也会+1 → 纯聊天被诱导总结已推送的工具结果却没结果→编出没真调任何工具式空转话痨；修复：改用 executedCalls（真执行过工具才触发收敛总结），完全对齐微信。"),
+                                                                                                                                    Triple("v1.187", "节点域名体系（自定义接入域名，首页隐藏IP优先显示节点）", "新增 node_domains 表 + /api/nodes CRUD：域名/端口（默认80无需填写，443/8443自动https）/国家/说明/启停/设为默认/删除/编辑；POST /api/nodes/auto-detect 一键把当前访问域名加入节点（首次安装引导：无节点时首页顶部提示添加绑定域名，支持自动获取或手动填写）；首页接入实例有节点时默认显示节点域名（隐藏IP），多个节点全部列出可复制，带☆默认/国家/说明/当前标记，无节点才显示IP兜底。"),
+            Triple("v1.186", "QQ 私聊不回复 + QQ 不自然修复（AccessToken 401 自动刷新 + 收敛误触发）", "①QQ 私聊收不到回复根治：日志实锤私聊消息发送失败 HTTP 401 AccessToken无效或过期——模型正常处理结果已生成但发送时 Token 被官方吊销本地缓存仍认为有效（7200s 未到期），用户永远看不到回复；修复：私聊/群消息/卡片发送遇 401 自动强制刷新 AccessToken 并重试一次（forceRefreshToken 清缓存→换新 token→重新发送）。②QQ 不像人/总解释没真调工具根治：原 closeBody 收敛触发条件用 loopGuard>0（只要循环过就触发），但假调用引导（模型说正在调用却无标签→引导）也会+1 → 纯聊天被诱导总结已推送的工具结果却没结果→编出没真调任何工具式空转话痨；修复：改用 executedCalls（真执行过工具才触发收敛总结），完全对齐微信。"),
             Triple("v1.185", "进度模式一句话控制 + 智能体全量管理权限", "①进度模式——对 QQ/微信说「隐藏步骤/别发步骤/只回结果/简洁模式」开启简洁模式：干活过程不再推送只回最终结果；说「显示步骤/打开步骤/完整模式」恢复实时过程推送；按绑定用户存储 progress_mode，QQ/微信各自生效，msg语法兼容多种口语表达；②智能体管理权限补齐——沙盒新增 provider_sync（同步服务商模型，管理员）、model_hide/model_unhide（按当前用户隐藏/恢复模型，用户级），已注册 KNOWN_FNS/权限表/KNOWLEDGE_JSON 三处同步，qtai-sj 可直接自主调用，网关全部设置一句话搞定。"),
             Triple("v1.184", "管道 Stage 深化（限流/白名单 Stage 真正接管三渠道）", "统一编排层从骨架到真正生效：①新增 PipelineGate 管道预检——三渠道（内置聊天/QQ/微信）消息进入正式处理前统一过预检；②限流 Stage 真正生效——绑定用户按配额（QPS/每日/RPM/TPM）检查，管理员不限，之前限流只存在于管道骨架没接进实际链路，现在 QQ/微信/内置聊天四入口全部接入；③白名单 Stage 可配——pipeline_whitelist_enabled=true 时未绑定用户仅放行绑定类指令（默认关，不破坏未绑定可聊体验）；④零侵入——只加判断不改原流程，与现有 askModel/并发池完全兼容。"),
             Triple("v1.183", "记忆沉淀事件接入（MEMORY_SAVED 发布 → 首页系统动态）", "事件总线四项事件全部闭环：①三渠道统一发布——在记忆落库统一入口 addMemory 发布 memory.saved 事件（内置聊天/QQ/微信所有记忆沉淀全覆盖，一次接入），携带 userId/title/content/type/importance/source；②订阅→系统动态——高价值长期记忆（importance>=7，如 v1.177 个人信息）实时写入首页系统动态，记住用户一目了然；③可扩展——任意新增插件/记忆分析/用户画像订阅 memory.saved 即可联动；至此事件总线四项事件全部闭环：message.received/message.replied/tool.executed/memory.saved。"),
@@ -3448,6 +3462,85 @@ val logs = listOf(
 
     /** 清空系统动态（管理员） */
     fun clearGatewayLogs() { stmt("DELETE FROM gateway_logs") }
+
+    // ============ 节点域名（v1.187：自定义接入域名，首页优先显示、支持多节点） ============
+
+    /** 全部节点域名 */
+    fun getNodeDomains(): List<Map<String, Any?>> =
+        query("SELECT * FROM node_domains ORDER BY is_default DESC, id ASC").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "domain" to (row["domain"] as? String ?: ""),
+                "port" to ((row["port"] as? Number)?.toInt() ?: 80),
+                "country" to (row["country"] as? String ?: ""),
+                "note" to (row["note"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
+                "isDefault" to ((row["is_default"] as? Number)?.toInt() == 1),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0)
+            )
+        }
+
+    /** 启用的节点域名（首页接入实例用；默认节点优先） */
+    fun getEnabledNodeDomains(): List<Map<String, Any?>> =
+        query("SELECT * FROM node_domains WHERE enabled=1 ORDER BY is_default DESC, id ASC").map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "domain" to (row["domain"] as? String ?: ""),
+                "port" to ((row["port"] as? Number)?.toInt() ?: 80),
+                "country" to (row["country"] as? String ?: ""),
+                "note" to (row["note"] as? String ?: ""),
+                "isDefault" to ((row["is_default"] as? Number)?.toInt() == 1)
+            )
+        }
+
+    /** 添加节点域名（域名唯一；首条自动设默认） */
+    fun addNodeDomain(domain: String, port: Int, country: String, note: String, enabled: Boolean): Long {
+        val d = domain.trim().lowercase().removePrefix("https://").removePrefix("http://").trimEnd('/')
+        if (d.isBlank()) return 0
+        val exists = queryOne("SELECT id FROM node_domains WHERE domain=?", d)
+        if (exists != null) return exists
+        val first = queryOne("SELECT COUNT(*) FROM node_domains") ?: 0
+        stmt(
+            "INSERT INTO node_domains (domain,port,country,note,enabled,is_default,created_at) VALUES (?,?,?,?,?,?,?)",
+            d, port, country, note, if (enabled) 1 else 0, if (first == 0L) 1 else 0, System.currentTimeMillis()
+        )
+        return queryOne("SELECT id FROM node_domains WHERE domain=?", d) ?: 0
+    }
+
+    /** 更新节点域名 */
+    fun updateNodeDomain(id: Long, domain: String, port: Int, country: String, note: String, enabled: Boolean) {
+        stmt(
+            "UPDATE node_domains SET domain=?, port=?, country=?, note=?, enabled=? WHERE id=?",
+            domain.trim().lowercase().removePrefix("https://").removePrefix("http://").trimEnd('/'),
+            port, country, note, if (enabled) 1 else 0, id
+        )
+    }
+
+    /** 删除节点域名 */
+    fun deleteNodeDomain(id: Long) { stmt("DELETE FROM node_domains WHERE id=?", id) }
+
+    /** 停用/启用节点域名 */
+    fun setNodeDomainEnabled(id: Long, enabled: Boolean) {
+        stmt("UPDATE node_domains SET enabled=? WHERE id=?", if (enabled) 1 else 0, id)
+    }
+
+    /** 设为默认节点 */
+    fun setNodeDomainDefault(id: Long) {
+        stmt("UPDATE node_domains SET is_default=0")
+        stmt("UPDATE node_domains SET is_default=1 WHERE id=?", id)
+    }
+
+    /** 默认节点域名（无则返回空） */
+    fun getDefaultNodeDomain(): Map<String, Any?>? =
+        query("SELECT * FROM node_domains WHERE enabled=1 ORDER BY is_default DESC, id ASC LIMIT 1").firstOrNull()?.let { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "domain" to (row["domain"] as? String ?: ""),
+                "port" to ((row["port"] as? Number)?.toInt() ?: 80),
+                "country" to (row["country"] as? String ?: ""),
+                "note" to (row["note"] as? String ?: "")
+            )
+        }
 
     /** 按群清理聊天记录（群聊天记录单独管理） */
     fun clearQqLogsByGroup(groupOpenid: String) { stmt("DELETE FROM qq_logs WHERE group_openid=?", groupOpenid) }

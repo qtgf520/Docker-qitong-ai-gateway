@@ -107,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.186
+ * 綦桐AI网关 · Docker 服务器版 v1.187
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -119,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.186   ║
+        ║   綦桐AI网关 · Docker Server v1.187   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -130,8 +130,8 @@ fun main(args: Array<String>) {
     // ★ v1.178 统一消息管道 + 平台适配器：初始化注册（三渠道共用一套管道编排）
     runCatching {
         com.qitong.gateway.pipeline.PipelineSetup.install(database)
-        println("[Gateway] v1.186 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
-    }.onFailure { e -> System.err.println("[Gateway] v1.186 管道初始化失败: ${e.message}") }
+        println("[Gateway] v1.187 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
+    }.onFailure { e -> System.err.println("[Gateway] v1.187 管道初始化失败: ${e.message}") }
 
     // ★ v85 播种更新历史（首次启动写入，前端/QQ/微信/qtai-sj 可查）
     runCatching { database.migrateMultimodal() }
@@ -222,7 +222,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.186"))
+                put("version", JsonPrimitive("1.187"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -2623,7 +2623,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.186"))
+                put("version", JsonPrimitive("1.187"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3467,7 +3467,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.186"))
+                    put("version", JsonPrimitive("1.187"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
@@ -3479,7 +3479,7 @@ fun Application.moduleWeb(database: Database) {
                     put("role", JsonPrimitive(viewer?.role ?: ""))
                     put("requireApiKey", JsonPrimitive(database.getConfig("require_api_key", "true").toBoolean()))
                     put("autoFailover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
-                    // 网关地址
+                    // 网关地址（★ v1.187 节点域名优先：首页隐藏 IP，默认显示节点域名）
                     put("gatewayPort", JsonPrimitive(database.getConfig("gateway_port", "18889")))
                     put("serverIp", JsonPrimitive(serverIp()))
                     put("localAddr", JsonPrimitive("http://" + serverIp() + ":" + database.getConfig("gateway_port", "18889") + "/v1"))
@@ -3488,6 +3488,21 @@ fun Application.moduleWeb(database: Database) {
                     val domain = reqHost.substringBefore(":").trim().takeIf { it.isNotBlank() && !it.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+")) && it != "localhost" } ?: ""
                     put("serverDomain", JsonPrimitive(domain))
                     put("domainAddr", JsonPrimitive(if (domain.isNotBlank()) "https://$domain/v1" else ""))
+                    // ★ v1.187 节点域名列表（首页接入实例用：默认节点优先，多个可复制）
+                    val nodes = database.getEnabledNodeDomains()
+                    put("nodes", JsonArray(nodes.map { n ->
+                        buildJsonObject {
+                            put("id", JsonPrimitive(n["id"] as? Long ?: 0))
+                            put("domain", JsonPrimitive(n["domain"] as? String ?: ""))
+                            put("port", JsonPrimitive(n["port"] as? Int ?: 80))
+                            put("country", JsonPrimitive(n["country"] as? String ?: ""))
+                            put("note", JsonPrimitive(n["note"] as? String ?: ""))
+                            put("isDefault", JsonPrimitive((n["isDefault"] as? Boolean) == true))
+                        }
+                    }))
+                    // 默认节点（无时为空）
+                    val defaultNode = database.getDefaultNodeDomain()
+                    put("defaultNode", JsonPrimitive(defaultNode?.get("domain") as? String ?: ""))
                     // 强制故障池：管理员=全局池；用户=自己的池
                     val forcedPoolStr = if (isAdmin) {
                         database.getConfig("forced_pool_keys", "")
@@ -3596,6 +3611,81 @@ fun Application.moduleWeb(database: Database) {
                     }))
                 })
             }, 200)
+        }
+
+        // ★ v1.187 节点域名管理（自定义接入域名：添加/编辑/删除/停用/设为默认/自动获取当前访问域名）
+        get("/api/nodes") {
+            val u = call.requireAuth(database) ?: return@get
+            AdminApi.ok(call, database.getNodeDomains(), "ok")
+        }
+        post("/api/nodes/add") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员可管理节点域名", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val domain = body["domain"]?.jsonPrimitive?.content ?: run { AdminApi.fail(call, "域名不能为空", 400); return@post }
+            val port = body["port"]?.jsonPrimitive?.content?.toIntOrNull() ?: 80
+            val country = body["country"]?.jsonPrimitive?.content ?: ""
+            val note = body["note"]?.jsonPrimitive?.content ?: ""
+            val enabled = body["enabled"]?.let { it.jsonPrimitive?.content?.toBooleanStrictOrNull() } ?: true
+            val id = database.addNodeDomain(domain, port, country, note, enabled)
+            if (id <= 0) { AdminApi.fail(call, "添加失败（域名可能已存在或为空）", 400); return@post }
+            database.addOpLog(u.id, u.username, "节点域名", "添加节点 $domain", call.request.local.remoteHost)
+            database.addGatewayLog("node", "🌐 新增节点域名：$domain")
+            AdminApi.ok(call, mapOf("id" to id), "节点域名已添加")
+        }
+        post("/api/nodes/update") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员可管理节点域名", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "ID无效", 400); return@post }
+            val domain = body["domain"]?.jsonPrimitive?.content ?: run { AdminApi.fail(call, "域名不能为空", 400); return@post }
+            val port = body["port"]?.jsonPrimitive?.content?.toIntOrNull() ?: 80
+            val country = body["country"]?.jsonPrimitive?.content ?: ""
+            val note = body["note"]?.jsonPrimitive?.content ?: ""
+            val enabled = body["enabled"]?.let { it.jsonPrimitive?.content?.toBooleanStrictOrNull() } ?: true
+            database.updateNodeDomain(id, domain, port, country, note, enabled)
+            database.addOpLog(u.id, u.username, "节点域名", "编辑节点 $domain", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "节点域名已更新")
+        }
+        post("/api/nodes/delete") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员可管理节点域名", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "ID无效", 400); return@post }
+            database.deleteNodeDomain(id)
+            database.addGatewayLog("node", "🗑 删除节点域名（ID=$id）")
+            AdminApi.ok(call, null, "节点域名已删除")
+        }
+        post("/api/nodes/toggle") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员可管理节点域名", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "ID无效", 400); return@post }
+            val enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+            database.setNodeDomainEnabled(id, enabled)
+            AdminApi.ok(call, null, if (enabled) "节点已启用" else "节点已停用")
+        }
+        post("/api/nodes/default") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员可管理节点域名", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: run { AdminApi.fail(call, "ID无效", 400); return@post }
+            database.setNodeDomainDefault(id)
+            AdminApi.ok(call, null, "已设为默认节点")
+        }
+        post("/api/nodes/auto-detect") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员可管理节点域名", 403); return@post }
+            // 自动获取当前访问域名并加入节点（首次安装引导用）
+            val reqHost = call.request.headers["Host"] ?: ""
+            val autoDomain = reqHost.substringBefore(":").trim()
+                .takeIf { it.isNotBlank() && !it.matches(Regex("\\d+\\.\\d+\\.\\d+\\.\\d+")) && it != "localhost" }
+            if (autoDomain == null) { AdminApi.fail(call, "当前访问不是域名（IP/本地访问无法自动获取），请手动填写", 400); return@post }
+            val id = database.addNodeDomain(autoDomain, 80, "", "自动获取", true)
+            if (id <= 0) { AdminApi.fail(call, "该域名已存在", 400); return@post }
+            database.addOpLog(u.id, u.username, "节点域名", "自动获取域名 $autoDomain", call.request.local.remoteHost)
+            database.addGatewayLog("node", "🌐 自动获取节点域名：$autoDomain")
+            AdminApi.ok(call, mapOf("id" to id, "domain" to autoDomain), "已自动获取域名并添加")
         }
 
         // 网关启停控制：★ v1.166 仅管理员可操作全局开关；普通用户无权限（403），用户级 API 开关走独立接口

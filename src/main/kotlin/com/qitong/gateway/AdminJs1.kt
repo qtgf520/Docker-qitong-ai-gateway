@@ -183,16 +183,39 @@ api('/api/status').then(function(r){
   } else {
    poolHtml = '<div class="card"><h3>强制故障池 (0)</h3><div style="color:var(--muted);font-size:13px;padding:6px 0">故障池为空。在下方「模型排行榜」点 灯 把模型加入池，加入后 qtai-sj 会按池顺序自动故障转移；★灯跟随最近实际命中的模型。</div></div>';
   }
-  // 地址行（本地 + IP + 当前访问域名）
+// ★ v1.187 地址行（节点域名优先：首页隐藏 IP，默认显示节点；无节点才显示 IP 兜底 + 首次安装引导）
   var gwPort = st.gatewayPort || 18889;
   var ip = st.serverIp || '127.0.0.1';
-  var domainAddr = st.domainAddr || '';
-  var domainLine = domainAddr ? '<div class="form-row"><label>域名地址（当前访问）</label><div class="addr-line" onclick="copyAddr(this)">' + esc(domainAddr) + ' <span class="copy-tag">复制</span></div></div>' : '';
-  var addrHtml = '<div class="card"><h3>网关地址</h3>' +
-   '<div class="form-row"><label>本地地址</label><div class="addr-line" onclick="copyAddr(this)">http://localhost:' + gwPort + '/v1 <span class="copy-tag">复制</span></div></div>' +
-   '<div class="form-row"><label>服务器地址（IP）</label><div class="addr-line" onclick="copyAddr(this)">http://' + esc(ip) + ':' + gwPort + '/v1 <span class="copy-tag">复制</span></div></div>' +
-   domainLine + '</div>';
-box.innerHTML = [
+  var nodes = st.nodes || [];
+  var currentNode = st.serverDomain || '';
+  var nodeRows = '';
+  if (nodes.length > 0) {
+   // 节点优先：每个启用节点一行（接入实例），不显示 IP
+   nodeRows = nodes.map(function(n){
+    var proto = (n.port == 443 || n.port == 8443) ? 'https' : 'http';
+    var host = n.domain + (n.port && n.port != 80 && n.port != 443 ? ':' + n.port : '');
+    var addr = proto + '://' + host + '/v1';
+    var tag = n.isDefault ? '<span style="color:var(--cyan);font-size:11px;padding:0 4px">☆默认</span>' : '';
+    var country = n.country ? '<span style="color:var(--muted);font-size:11px">[' + esc(n.country) + ']</span>' : '';
+    var note = n.note ? '<span style="color:var(--muted);font-size:11px">' + esc(n.note) + '</span>' : '';
+    var cur = currentNode && currentNode === n.domain ? '<span style="color:var(--green);font-size:11px">·当前</span>' : '';
+    return '<div class="form-row"><label>接入实例' + tag + cur + ' ' + country + ' ' + note + '</label><div class="addr-line" onclick="copyAddr(this)">' + addr + ' <span class="copy-tag">复制</span></div></div>';
+   }).join('');
+  } else {
+   // 无节点：显示 IP 兜底 + 首次安装引导（提示添加节点域名）
+   addrHtmlPre = '<div class="card"><h3>网关地址</h3>' +
+    '<div style="padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;font-size:13px;color:var(--cyan)">🌐 首次安装：请添加你的绑定域名（节点），这样接入实例将优先显示域名而非 IP</div>' +
+    '<div class="form-row"><label>服务器地址（IP 兜底）</label><div class="addr-line" onclick="copyAddr(this)">http://' + esc(ip) + ':' + gwPort + '/v1 <span class="copy-tag">复制</span></div></div>';
+  }
+  // 节点管理按钮（管理员可增删改；普通用户只显示可作为接入实例的节点）
+  var nodeManageBtn = '';
+  if (st.isAdmin) {
+   nodeManageBtn = '<button class="btn-ghost" style="margin-top:8px" onclick="openNodeManage()">🌐 节点域名管理</button>';
+  }
+  var addrHtml = nodes.length > 0 ?
+   '<div class="card"><h3>网关接入（节点）</h3>' + nodeRows + nodeManageBtn + '</div>' :
+   (addrHtmlPre || '') + nodeManageBtn + '</div>';
+  box.innerHTML = [
     addrHtml,
     '<div class="card" id="announceCard"><h3>公告</h3><div style="color:var(--muted);padding:8px;font-size:13px">加载中...</div></div>',
     '<div class="grid grid-4" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">' +
@@ -523,7 +546,96 @@ window.clearForcedPool = function(){
  api('/api/gateway/forced-pool', { method:'POST', body: { action: 'clear' } }).then(function(r){
   toast(r.msg, r.code === 0);
   loaders.dashboard();
+  });
+};
+// ★ v1.187 节点域名管理弹窗（管理员：列表 + 添加/编辑/删除/停用/设为默认/自动获取）
+window.openNodeManage = function(){
+ var list = null;
+ var render = function(){
+  if(!list) return '<div style="color:var(--muted);padding:10px">加载中…</div>';
+  if(list.length === 0) return '<div style="color:var(--muted);padding:12px">还没有节点域名。<br>方式一：点击下方「自动获取当前域名」（当前访问域名自动加入）<br>方式二：手动填写你的绑定域名</div>' +
+   '<div style="margin-top:10px"><button class="btn" onclick="nodeAutoDetect()">🌐 自动获取当前域名</button></div>' +
+   '<div style="margin-top:8px"><button class="btn-ghost" onclick="nodeEdit(0)">✏️ 手动添加节点</button></div>';
+  var rows = list.map(function(n){
+   var proto = (n.port == 443 || n.port == 8443) ? 'https' : 'http';
+   var host = n.domain + (n.port && n.port != 80 && n.port != 443 ? ':' + n.port : '');
+   return '<tr>' +
+    '<td>' + (n.isDefault ? '<span style="color:var(--cyan)">☆默认</span>' : '') + '</td>' +
+    '<td>' + esc(n.domain) + (n.port && n.port != 80 && n.port != 443 ? ':' + n.port : '') + '</td>' +
+    '<td>' + esc(n.country || '') + '</td>' +
+    '<td style="font-size:12px;color:var(--muted)">' + esc(n.note || '') + '</td>' +
+    '<td>' + (n.enabled ? '<span style="color:var(--green)">启用</span>' : '<span style="color:var(--red)">停用</span>') + '</td>' +
+    '<td style="font-size:12px">' +
+     (n.enabled ? '<button class="btn-ghost" style="padding:1px 6px;font-size:11px" onclick="nodeToggle(' + n.id + ', false)">停用</button>' : '<button class="btn-ghost" style="padding:1px 6px;font-size:11px" onclick="nodeToggle(' + n.id + ', true)">启用</button>') +
+     (!n.isDefault ? '<button class="btn-ghost" style="padding:1px 6px;font-size:11px" onclick="nodeDefault(' + n.id + ')">设默认</button>' : '') +
+     '<button class="btn-ghost" style="padding:1px 6px;font-size:11px" onclick="nodeEdit(' + n.id + ')">编辑</button>' +
+     '<button class="btn-ghost" style="padding:1px 6px;font-size:11px;color:var(--red)" onclick="nodeDel(' + n.id + ')">删除</button>' +
+    '</td></tr>';
+  }).join('');
+  return '<div style="margin-bottom:8px"><button class="btn" onclick="nodeAutoDetect()">🌐 自动获取当前域名</button> <button class="btn-ghost" onclick="nodeEdit(0)">✏️ 添加节点</button></div>' +
+   '<div style="max-height:300px;overflow-y:auto"><table class="table"><thead><tr><th>默认</th><th>域名</th><th>国家</th><th>说明</th><th>状态</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+ };
+ var show = function(){
+  openModal('🌐 节点域名管理', render(), null, {width: 680});
+ };
+ api('/api/nodes').then(function(r){
+  list = (r && r.code === 0) ? (r.data || []) : [];
+  show();
  });
+};
+window.nodeAutoDetect = function(){
+ api('/api/nodes/auto-detect', { method:'POST', body:{} }).then(function(r){
+  if(r.code === 0){ toast('✅ ' + (r.msg || '已自动获取域名并添加'), true); openNodeManage(); }
+  else toast(r.msg || '自动获取失败', false);
+ });
+};
+window.nodeToggle = function(id, enabled){
+ api('/api/nodes/toggle', { method:'POST', body:{ id: id, enabled: enabled } }).then(function(r){
+  toast(r.msg || 'ok', r.code === 0); if(r.code === 0) openNodeManage();
+ });
+};
+window.nodeDefault = function(id){
+ api('/api/nodes/default', { method:'POST', body:{ id: id } }).then(function(r){
+  toast(r.msg || 'ok', r.code === 0); if(r.code === 0) openNodeManage();
+ });
+};
+window.nodeDel = function(id){
+ if(!confirm('确定删除该节点域名？')) return;
+ api('/api/nodes/delete', { method:'POST', body:{ id: id } }).then(function(r){
+  toast(r.msg || 'ok', r.code === 0); if(r.code === 0) openNodeManage();
+ });
+};
+window.nodeEdit = function(id){
+ var item = null;
+ if(id > 0){
+  api('/api/nodes').then(function(r){
+   if(r.code === 0) item = (r.data || []).find(function(x){ return x.id == id; });
+   showForm();
+  });
+ } else showForm();
+ function showForm(){
+  openModal(id > 0 ? '编辑节点域名' : '添加节点域名',
+   '<div class="form-row"><label>域名</label><input id="ndDomain" class="input" placeholder="如 ai.jili5.cn 或 ai.example.com" value="' + (item ? esc(item.domain) : '') + '"></div>' +
+   '<div class="form-row"><label>端口 <span style="color:var(--muted);font-size:11px">默认 80，无需填写；443/8443 走 https</span></label><input id="ndPort" class="input" type="number" placeholder="80" value="' + (item ? item.port : 80) + '"></div>' +
+   '<div class="form-row"><label>国家 <span style="color:var(--muted);font-size:11px">可选，如 香港/美国/新加坡</span></label><input id="ndCountry" class="input" placeholder="可选" value="' + (item ? esc(item.country) : '') + '"></div>' +
+   '<div class="form-row"><label>说明 <span style="color:var(--muted);font-size:11px">可选，如 主节点/备用</span></label><input id="ndNote" class="input" placeholder="可选" value="' + (item ? esc(item.note) : '') + '"></div>' +
+   '<div class="form-row"><label><input type="checkbox" id="ndEnabled" style="width:auto" ' + (!item || item.enabled ? 'checked' : '') + '> 启用该节点</label></div>',
+   function(){
+    var domain = $('ndDomain').value.trim();
+    if(!domain){ toast('请输入域名', false); return false; }
+    var port = parseInt($('ndPort').value || '80') || 80;
+    var country = $('ndCountry').value.trim();
+    var note = $('ndNote').value.trim();
+    var enabled = $('ndEnabled').checked;
+    var body = { domain: domain, port: port, country: country, note: note, enabled: enabled };
+    if(id > 0) body.id = id;
+    api(id > 0 ? '/api/nodes/update' : '/api/nodes/add', { method:'POST', body: body }).then(function(r){
+     toast(r.msg || 'ok', r.code === 0);
+     if(r.code === 0){ window.modalClose && modalClose(); openNodeManage(); }
+    });
+    return false;
+   }, {width: 460});
+ }
 };
 window.copyAddr = function(el){
  var txt = el.childNodes[0].textContent.trim();
