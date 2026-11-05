@@ -680,7 +680,16 @@ object WeixinBotManager {
                 // ★ v1.169 修复「工具重复执行」：已执行调用签名集合——模型照抄上一轮调用标签/复述描述时，
                 //   parseCalls 按签名过滤已执行过的调用，同一工具不会被二次执行
                 val executedSigs = mutableSetOf<String>()
+                // ★ v1.188 看门狗：单任务总耗时超 90s 强制中断（对齐 QQ，Agent 永不卡死）
+                val loopStartedAt = System.currentTimeMillis()
                 while (loop < 20) {
+                    // ★ v1.188 看门狗检查：超时强制收尾（工具网络卡死/模型挂起都能兜底）
+                    if (System.currentTimeMillis() - loopStartedAt > 90_000L) {
+                        System.err.println("[WeixinBot] ${bot.id} Agent 循环看门狗超时（90s），强制收尾")
+                        content = "⏱️ 任务处理超时（超过90秒），已自动结束。请确认指令是否合理，稍后重试或换个方式。"
+                        com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "⏱ 看门狗超时，已强制结束")
+                        break
+                    }
                     com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loop + 1, action = "第 ${loop + 1} 轮 · 等模型回复中…")
                     // ★ v75 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考（对齐 QQ v64）
                     if (stopSignals[msg.from] == true) {

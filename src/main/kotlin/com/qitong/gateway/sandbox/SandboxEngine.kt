@@ -781,7 +781,7 @@ $KNOWLEDGE_JSON
                     else {
                         val imgBody = "{\"model\":\"\",\"prompt\":${org.json.JSONObject.quote(prompt)},\"n\":1,\"size\":${org.json.JSONObject.quote(size)}}"
                         val imgResult = runCatching {
-                            okhttp3.OkHttpClient().newCall(
+                            com.qitong.gateway.network.WebToolClient.http.newCall(
                                 okhttp3.Request.Builder()
                                     .url("http://127.0.0.1:${System.getenv("GATEWAY_PORT") ?: "18889"}/v1/images/generations")
                                     .addHeader("Content-Type", "application/json")
@@ -1233,10 +1233,11 @@ $KNOWLEDGE_JSON
                 }
                 "web_browse" -> {
                     // ★ v1.166 网页浏览（felinks 式文本抓取）：curl 抓 HTML → 去标签 → 提取标题/正文/链接
+                    // ★ v1.188 修复「Agent 卡死」：UpstreamClient 长连接(60s)会让卡死的网页把线程永久阻塞 → 改用短超时专用 client
                     val url = args["url"] ?: ""
                     if (url.isBlank() || !url.startsWith("http")) "⚠️ 语法：web_browse(url=http(s)://网页地址)"
                     else try {
-                        val client = com.qitong.gateway.network.UpstreamClient.getClient(false)
+                        val client = com.qitong.gateway.network.WebToolClient.http
                         val req = okhttp3.Request.Builder().url(url).get()
                             .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120")
                             .addHeader("Accept", "text/html,application/xhtml+xml")
@@ -1320,12 +1321,14 @@ $KNOWLEDGE_JSON
                     if (query.isBlank()) "⚠️ 语法：web_search(query=关键词)"
                     else {
                         // 联网搜索：用 DuckDuckGo HTML 接口（免费无需 key）
+                        // ★ v1.188 修复「Agent 卡死」：原每次 new OkHttpClient() 默认 readTimeout=0 无限超时，
+                        //   DDG 挂起时线程永久阻塞泄漏连接池 → 改用 WebToolClient 短超时专用 client
                         val url = "https://html.duckduckgo.com/html/?q=" + java.net.URLEncoder.encode(query, "UTF-8")
                         val req = okhttp3.Request.Builder().url(url)
                             .addHeader("User-Agent", "Mozilla/5.0 (compatible; QitongAI/1.0)")
                             .build()
                         try {
-                            val http = okhttp3.OkHttpClient()
+                            val http = com.qitong.gateway.network.WebToolClient.http
                             http.newCall(req).execute().use { resp ->
                                 val html = resp.body?.string().orEmpty()
                                 // 提取搜索结果标题+摘要（简化解析）

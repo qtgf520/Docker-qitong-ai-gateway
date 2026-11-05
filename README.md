@@ -224,7 +224,15 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
-### v1.187
+### v1.188
+**Agent 卡死根治（网络工具短超时 + 循环看门狗）** —— 让智能体像真 Agent 一样"边想边干边讲、永不卡住"：
+
+- **根因① 网络工具无限超时**：`web_search` 每次 `new OkHttpClient()`（readTimeout=0 无限超时）、`web_browse` 用 UpstreamClient（60s 长连接）→ 目标站挂起时线程永久阻塞，外层 `withTimeout(35s)` 取消不了同步阻塞 IO → Agent 循环等结果等不到 → **卡死**
+- **修复①**：新增 `WebToolClient`（connect 8s / read 15s / callTimeout 20s，不重试），web_search / web_browse / image_gen 全部改用它 → 任何网络工具 20s 内必返回，配合 35s withTimeout 兜底，Agent 永不卡死
+- **根因② 循环无总耗时护栏**：QQ/微信 Agent 循环最多 20 轮但轮内可长时间阻塞，卡住就无限等
+- **修复②**：QQ/微信 Agent 循环新增**看门狗**——单任务 90s 强制中断并提示"任务处理超时已自动结束"，配合后台面板 90s 无进展标记，哪里卡住都能兜底收尾
+
+## v1.187
 **节点域名体系（自定义接入域名，首页隐藏 IP 优先显示节点）** —— 让网关接入地址告别裸 IP：
 
 - **节点域名管理**：新增 `node_domains` 表 + `/api/nodes` CRUD——域名 / 端口（默认 80 无需填写，443/8443 自动 https）/ 国家 / 说明 / 启停 / 设为默认 / 删除 / 编辑

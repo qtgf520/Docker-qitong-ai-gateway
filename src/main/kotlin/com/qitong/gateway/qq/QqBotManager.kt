@@ -1743,7 +1743,17 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 //   原用 loopGuard>0 判断，假调用引导（模型说"正在调用"但没输出标签→引导）也会 loopGuard++ → 误触发收敛
                 //   → 模型被诱导"总结已推送的工具结果"但实际没执行 → 编出"我没真调任何工具"式空转话痨
                 var executedCalls = false
+                // ★ v1.188 看门狗：单任务总耗时超 90s 强制中断（配合工具 20s 短超时，Agent 永不卡死）
+                //   原循环最多 20 轮但轮内模型/工具都可能长时间阻塞；现在无论卡在哪，90s 必须收尾
+                val loopStartedAt = System.currentTimeMillis()
                 while (sandboxOn && content.isNotBlank() && loopGuard < 20) {
+                    // ★ v1.188 看门狗检查：超时强制收尾，不再无限等（工具网络卡死/模型挂起都能兜底）
+                    if (System.currentTimeMillis() - loopStartedAt > 90_000L) {
+                        System.err.println("[QQBot] ${bot.appid} Agent 循环看门狗超时（90s），强制收尾")
+                        content = "⏱️ 任务处理超时（超过90秒），已自动结束。请确认指令是否合理，稍后重试或换个方式。"
+                        com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "⏱ 看门狗超时，已强制结束")
+                        break
+                    }
                     loopGuard++
                     com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loopGuard, action = "第 $loopGuard 轮 · 等模型回复中…")
                     // ★ v64 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考
