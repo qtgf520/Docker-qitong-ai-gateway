@@ -711,9 +711,13 @@ object WeixinBotManager {
                     // ★ v1.167 user 已在入口幂等写入，循环内不再补写（避免重复写 user）
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
                     if (calls.isEmpty()) {
+                        // ★ v1.191 说要做但没输出标签 → 引导真调用（对齐 QQ：抓取/查看/检查/重新/我来 等做事意图都引导）
+                        //   原来只认 5 个词，模型说「我重新抓取一下页面内容」识别不出 → break 返回空话
+                        val intented = content.contains("正在调用", true) || content.contains("调用沙盒", true) ||
+                            content.contains("准备调用", true) || content.contains("我需要调用", true) || content.contains("我来调用", true) ||
+                            continueIntent(content)
                         // ★ v77 假调用修复：模型只输出了"正在调用 xxx"描述但没输出严格标签 → 引导它输出真标签再执行
-                        if (noCallGuide < 2 && (content.contains("正在调用") || content.contains("调用沙盒") ||
-                                content.contains("准备调用") || content.contains("我需要调用") || content.contains("我来调用"))) {
+                        if (noCallGuide < 2 && intented) {
                             noCallGuide++
                             // ★ v1.130 引导前推送：让用户知道「模型假思考了，正在纠正」
                             pSend("💭 我确认一下要调用哪个工具…")
@@ -886,8 +890,9 @@ object WeixinBotManager {
                     // ★ v1.169 收尾二次解析也带去重（与主调用、calls2 一致）
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty()) break
                 }
-                // ★ v1.190 微信 Agent 循环跑完，后台立即显示"完成"
-                com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done", "✅ 任务完成")
+                // ★ v1.191 真执行过工具才标完成（否则标"已结束（未执行真实工具）"）——不再空话还标✅
+                com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
+                    if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                 while (hist.size > 20) hist.removeAt(0)
                 // ★ v92 微信记忆闭环增强：qtai-sj（sandboxOn）模式也沉淀记忆（对齐 QQ 长期记忆；受 memory_enabled 开关控制）
                 // ★v1.115 未绑定用户也按 openid 沉淀（对齐 QQ），绑定账号仍走账号记忆
@@ -996,13 +1001,25 @@ object WeixinBotManager {
         }
     }
 
-    /** ★ v1.166 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废） */
+    /** ★ v1.166 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废）
+     *  ★ v1.191 扩展：模型表达做事意图（抓取/查看/查找/搜索/读取/检查/确认/重新/试一下 等）但没输出工具标签 → 引导输出真标签 */
     private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
         text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
         text.contains("让我", true) || text.contains("我去", true) || text.contains("我来", true) ||
         text.contains("再确认", true) || text.contains("继续处理", true) || text.contains("继续执行", true) ||
         text.contains("还有", true) || text.contains("进一步", true) || text.contains("接下来", true) ||
-        text.contains("稍等", true) || text.contains("等我", true)
+        text.contains("稍等", true) || text.contains("等我", true) ||
+        // ★ v1.191 做事意图动作词：说了要干活就必须真调用，不能光说
+        text.contains("抓取", true) || text.contains("爬取", true) || text.contains("打开网站", true) ||
+        text.contains("查看", true) || text.contains("查找", true) || text.contains("搜索", true) ||
+        text.contains("查询", true) || text.contains("读取", true) || text.contains("浏览", true) ||
+        text.contains("检查", true) || text.contains("确认一下", true) || text.contains("看看", true) ||
+        text.contains("重新", true) || text.contains("试一下", true) || text.contains("测试一下", true) ||
+        text.contains("访问", true) || text.contains("拉取", true) || text.contains("获取", true) ||
+        text.contains("执行", true) || text.contains("跑一下", true) || text.contains("调用", true) ||
+        text.contains("需要查", true) || text.contains("查一下", true) || text.contains("看下", true) ||
+        text.contains("我看", true) || text.contains("我试", true) || text.contains("我查", true) ||
+        text.contains("来弄", true) || text.contains("搞定", true)
 
     /** 清洗回复里的函数调用标签（防 XML/JSON 泄漏给用户，对齐 QQ 侧逻辑） */
     // ★ v1.169 委托统一清洗器：SandboxEngine.cleanCallTags 覆盖原全部规则并新增「自然语言调用描述」清洗
