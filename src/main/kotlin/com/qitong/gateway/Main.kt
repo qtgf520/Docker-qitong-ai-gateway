@@ -107,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.191
+ * 綦桐AI网关 · Docker 服务器版 v1.192
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -119,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.191   ║
+        ║   綦桐AI网关 · Docker Server v1.192   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -130,8 +130,8 @@ fun main(args: Array<String>) {
     // ★ v1.178 统一消息管道 + 平台适配器：初始化注册（三渠道共用一套管道编排）
     runCatching {
         com.qitong.gateway.pipeline.PipelineSetup.install(database)
-        println("[Gateway] v1.191 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
-    }.onFailure { e -> System.err.println("[Gateway] v1.191 管道初始化失败: ${e.message}") }
+        println("[Gateway] v1.192 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
+    }.onFailure { e -> System.err.println("[Gateway] v1.192 管道初始化失败: ${e.message}") }
 
     // ★ v85 播种更新历史（首次启动写入，前端/QQ/微信/qtai-sj 可查）
     runCatching { database.migrateMultimodal() }
@@ -222,7 +222,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.191"))
+                put("version", JsonPrimitive("1.192"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -2228,6 +2228,8 @@ fun Application.moduleWeb(database: Database) {
                 quotaUsed = body["quotaUsed"]?.jsonPrimitive?.content?.toLongOrNull() ?: user.quotaUsed,
                 plan = body["plan"]?.jsonPrimitive?.content ?: user.plan,
                 planExpireAt = body["planExpireAt"]?.jsonPrimitive?.content?.toLongOrNull() ?: user.planExpireAt,
+                // ★ v1.192 佣金比例（0~1，管理员可改代理/用户的返佣/分成比例；默认0.1=10%）
+                commissionRate = body["commissionRate"]?.jsonPrimitive?.content?.toDoubleOrNull()?.takeIf { it in 0.0..1.0 } ?: user.commissionRate,
                 bindModels = body["bindModels"]?.let {
                     try { kotlinx.serialization.json.Json.decodeFromString<List<String>>(it.toString()) } catch (_: Exception) { user.bindModels }
                 } ?: user.bindModels,
@@ -2459,7 +2461,9 @@ fun Application.moduleWeb(database: Database) {
                 "inviteCount" to inviteCount,
                 "commissionRate" to (u.commissionRate * 100),
                 "balance" to u.balance,
-                "totalRecharge" to u.totalRecharge
+                "totalRecharge" to u.totalRecharge,
+                // ★ v1.192 累计佣金（充值返佣 + 消费返佣 + 模型归属分成）
+                "totalCommission" to database.getTotalCommission(u.id)
             ), "ok")
         }
         // ★ v1.166 佣金提现申请（从余额扣减，记流水；最低 10 元）
@@ -2534,8 +2538,11 @@ fun Application.moduleWeb(database: Database) {
                 "notifyEnabled" to u.notifyEnabled,
                 "balance" to u.balance,
                 "totalRecharge" to u.totalRecharge,
+                // ★ v1.192 累计佣金（充值/消费返佣 + 模型归属分成）
+                "totalCommission" to database.getTotalCommission(u.id),
                 "inviteCode" to inviteCode,
                 "createdAt" to u.createdAt,
+                "commissionRate" to u.commissionRate,
                 // ★ v1.166 个人中心套餐卡片字段
                 "plan" to u.plan,
                 "planExpireAt" to u.planExpireAt,
@@ -2623,7 +2630,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.191"))
+                put("version", JsonPrimitive("1.192"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3467,7 +3474,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.191"))
+                    put("version", JsonPrimitive("1.192"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

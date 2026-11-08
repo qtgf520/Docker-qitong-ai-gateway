@@ -1334,6 +1334,11 @@ class Database(private val dbPath: String) {
         return code
     }
 
+    /** ★ v1.192 累计佣金收益（balance_log 中 type=commission 的正向总和，充值/消费返佣+模型分成合计） */
+    fun getTotalCommission(userId: Long): Double =
+        query("SELECT COALESCE(SUM(amount),0) AS s FROM balance_log WHERE user_id=? AND type='commission' AND amount>0", userId)
+            .firstOrNull()?.get("s")?.let { (it as? Number)?.toDouble() ?: 0.0 } ?: 0.0
+
     fun addUser(username: String, passwordHash: String, role: String = "user", displayName: String = "", inviterId: Long = 0): Long {
         // 生成邀请码
         val code = "QT" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0')
@@ -1369,13 +1374,13 @@ fun updateUserLogin(id: Long) {
         stmt("DELETE FROM users WHERE id=?", id)
     }
 
-    /** 更新用户资料（昵称/角色/额度/绑定模型/权限） */
+    /** 更新用户资料（昵称/角色/额度/绑定模型/权限）★v1.192 增加佣金比例 */
     fun updateUser(user: User) {
         val bindModels = kotlinx.serialization.json.Json.encodeToString(user.bindModels)
         val permissions = kotlinx.serialization.json.Json.encodeToString(user.permissions)
         stmt(
-            "UPDATE users SET role=?, display_name=?, quota_limit=?, quota_used=?, bind_models=?, permissions=?, plan=?, plan_expire_at=? WHERE id=?",
-            user.role, user.displayName, user.quotaLimit, user.quotaUsed, bindModels, permissions, user.plan, user.planExpireAt, user.id
+            "UPDATE users SET role=?, display_name=?, quota_limit=?, quota_used=?, bind_models=?, permissions=?, plan=?, plan_expire_at=?, commission_rate=? WHERE id=?",
+            user.role, user.displayName, user.quotaLimit, user.quotaUsed, bindModels, permissions, user.plan, user.planExpireAt, user.commissionRate, user.id
         )
     }
 
@@ -1466,6 +1471,36 @@ fun updateUserLogin(id: Long) {
         val newBal = bal.subtract(amt)
         stmt("UPDATE users SET balance = ? WHERE id=?", newBal.toDouble(), userId)
         addBalanceLog(userId, "consume", -amount, remark)
+        return true
+    }
+
+    /** ★ v1.192 消费分佣①：下级消费后给上级（inviter_id）返佣。
+     *  在 deductBalance 成功后调用；按上级自己的 commissionRate 比例（默认10%）。
+     *  上级不存在/是自己/比例为0 → 不派佣。返回是否派佣成功。 */
+    fun payConsumeCommission(childId: Long, amount: Double, remark: String = ""): Boolean {
+        if (amount <= 0) return false
+        val child = getUserById(childId) ?: return false
+        val inviterId = child.inviterId
+        if (inviterId <= 0 || inviterId == childId) return false
+        val inviter = getUserById(inviterId) ?: return false
+        val rate = inviter.commissionRate.takeIf { it in 0.0..1.0 } ?: 0.1
+        val commission = amount * rate
+        if (commission <= 0) return false
+        stmt("UPDATE users SET balance = balance + ? WHERE id=?", commission, inviterId)
+        addBalanceLog(inviterId, "commission", commission, "下级 ${child.username} 消费返佣${if (remark.isBlank()) "" else "（$remark）"}")
+        return true
+    }
+
+    /** ★ v1.192 消费分佣②：别人用了某用户添加的模型（model.ownerId>0），给归属者分成。
+     *  只在实际消费用户 != 归属者时派佣；按归属者自己的 commissionRate 比例。 */
+    fun payModelOwnerShare(ownerId: Long, consumerId: Long, amount: Double, modelName: String): Boolean {
+        if (amount <= 0 || ownerId <= 0 || ownerId == consumerId) return false
+        val owner = getUserById(ownerId) ?: return false
+        val rate = owner.commissionRate.takeIf { it in 0.0..1.0 } ?: 0.1
+        val share = amount * rate
+        if (share <= 0) return false
+        stmt("UPDATE users SET balance = balance + ? WHERE id=?", share, ownerId)
+        addBalanceLog(ownerId, "commission", share, "模型归属分成·${modelName}")
         return true
     }
 
@@ -2170,7 +2205,8 @@ fun updateUserLogin(id: Long) {
         runCatching { stmt("CREATE TABLE IF NOT EXISTS model_hidden (user_id INTEGER NOT NULL, model_id INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, model_id))") }
     }
     fun seedUpdateLogsIfEmpty() {
-val logs = listOf(
+ val logs = listOf(
+Triple("v1.192", "价格表指定价格全局生效（0=免费公益）+ 消费分佣（下级返佣+模型归属分成）", "让模型定价真正全局可控、让代理真正能靠消费赚钱：①价格表指定模型价格全局生效——模型价格表里设置某个模型的输入价后，全平台所有用户调用该模型都按这个价计费；输入价填 0 = 该模型免费（公益），不再回落默认价；未设置价格的模型才按 模型单价 → 内置默认价 计费；免费模型不套计费规则、免费就是免费。②消费分佣双通道——①下级消费返上级：用户每次消费付费模型扣费成功后，他的邀请人（上级/代理）按自己的佣金比例自动获得返佣入账；②模型归属者分成：别人用了我添加的模型（私有模型 ownerId>0）时，模型添加者按自己的佣金比例自动获得分成入账。佣金实时进余额、记入 balance_log 返佣流水（个人中心余额账单可见，绿字+），个人中心展示累计佣金收益与佣金比例，管理员在用户管理里可编辑每个用户的佣金比例（默认10%）。③修复连带：余额不足的用户看可用模型时，价格表设为0的免费模型正确可见（原逻辑只看模型单价）。"),
 Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完成）", "让智能体真正做到说了就做、不做不标完成：①意图识别大扩展——QQ/微信首次无标签分支从只认5个词扩展到30+做事动作词（抓取/爬取/打开网站/查看/查找/搜索/查询/读取/浏览/检查/确认一下/看看/重新/试一下/访问/拉取/获取/执行/跑一下/需要查/查一下/看下/我看/我试/我查/来弄/搞定等），模型说「我重新抓取一下页面内容」这类做事意图也识别并引导输出真标签继续执行，不再直接break返回空话；②真执行才标完成——QQ/微信全部收尾路径（closeBody/清洗/非沙盒/最终返回）的 finish 条件统一改为 executedCalls 判断：真执行过工具才标✅任务完成，只说了没动手标⏹已结束（本轮未执行真实工具），后台沙盒不再出现空话还标完成的假完成；③沙盒状态如实反映执行进度。"),
                                                                                                                                                                         Triple("v1.190", "后台实时沙盒状态完善（模型回复/任务完成实时刷新）", "面板不再一直等待模型回复：①模型回复实时上报——QQ/微信每次模型回复到达（含首次+多轮工具循环内）后台实时刷新为模型已回复内容摘要；②任务完成实时收尾——QQ/微信 Agent 循环跑完（全部收尾路径 closeBody/清洗/普通返回）后台立即标记任务完成，不再一直 running；③面板展示——复用 currentAction/toolResult 字段，等模型回复→模型已回复→任务完成全程实时可见。"),
             Triple("v1.189", "双模式智能体规约（闲聊自然陪聊 + 任务自主Agent，无缝切换人格不变）", "让网关智能体能像真人一样该聊就聊、该干就干：①最高优先级规则注入——作为 System Prompt 最前段，长对话也不会被冲刷，每轮先自检闲聊还是任务；②模式A日常陪聊——聊天/倾诉/唠嗑/生活话题保持人格自然回应，绝不调工具不列功能清单；③模式B Agent自主执行——修bug/写代码/网关配置/查余额/部署/排查/运维等任务自动 ReAct 循环（拆解→调真实工具→评估→收尾），完成任务但人格底色不变（口语化有温度不机械冰冷）；④专属场景——查余额调 user_balance 拿真实数值，机器人对接排查输出适配网关的修复方案。"),

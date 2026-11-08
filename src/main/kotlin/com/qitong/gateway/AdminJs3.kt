@@ -359,8 +359,10 @@ loaders.profile = function(){
      '<div class="card"><h3>账户</h3>' +
       '<div class="form-row"><label>余额</label><div style="font-size:20px;font-weight:700;color:var(--green)">¥' + (p.balance || 0).toFixed(2) + '</div></div>' +
       '<div class="form-row"><label>累计充值</label><div style="font-size:16px;color:var(--cyan)">¥' + (p.totalRecharge || 0).toFixed(2) + '</div></div>' +
+      '<div class="form-row"><label>累计佣金收益</label><div style="font-size:16px;color:var(--amber, #f59e0b)">¥' + (p.totalCommission || 0).toFixed(2) + '</div></div>' +
+      '<div style="font-size:11px;color:var(--muted)">下级消费返佣 + 别人用你添加的模型分成（余额账单可查明细）</div>' +
       '</div>',
-    '<div class="card"><h3>邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag"></span></div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
+    '<div class="card"><h3>邀请</h3><div class="form-row"><label>我的邀请码</label><div class="addr-line" onclick="copyText(\'' + esc(p.inviteCode || '') + '\')"><b style="font-family:monospace">' + esc(p.inviteCode || '-') + '</b> <span class="copy-tag"></span></div></div><div class="form-row"><label>佣金比例</label><div style="color:var(--muted);font-size:13px">' + Math.round((p.commissionRate||0.1)*100) + '%（他人消费付费模型时按此比例返佣/分成）</div></div><div class="form-row"><label>注册时间</label><div style="color:var(--muted);font-size:13px">' + new Date(p.createdAt).toLocaleString('zh-CN', {hour12:false}) + '</div></div></div>',
    '</div>',
     '<div class="card"><h3>余额账单 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadBalanceLogs()">刷新</button></h3><div id="balLogBox" style="color:var(--muted);font-size:12px">加载中...</div></div>',
     '<div class="card"><h3>模型扣费记录 <button class="btn-ghost" style="padding:1px 8px;font-size:11px" onclick="loadUsageLogs()">刷新</button> <button class="btn-ghost" style="padding:1px 8px;font-size:11px;color:var(--red)" onclick="clearUsageLogs()">清空全部</button></h3><div id="usageLogBox" style="color:var(--muted);font-size:12px">加载中...</div></div>',
@@ -1060,6 +1062,7 @@ window.editUser = function(id){
     '<div class="form-row"><label>套餐</label><select id="euPlan" class="input"><option value="free"'+(u.plan==='free'?' selected':'')+'>免费版</option><option value="quota"'+(u.plan==='quota'?' selected':'')+'>额度版</option><option value="subscription"'+(u.plan==='subscription'?' selected':'')+'>订阅版</option><option value="agent"'+(u.plan==='agent'?' selected':'')+'>代理版</option><option value="business"'+(u.plan==='business'?' selected':'')+'>商业版</option></select></div>',
     '<div class="form-row"><label>额度上限（token，0=不限）</label><input id="euQuota" class="input" type="number" value="'+(u.quotaLimit||0)+'"></div>',
     '<div class="form-row"><label>已用额度（token）</label><input id="euUsed" class="input" type="number" value="'+(u.quotaUsed||0)+'"></div>',
+    '<div class="form-row"><label>佣金比例 %（返佣/分成比例，默认10）</label><input id="euComm" class="input" type="number" step="1" min="0" max="100" value="'+Math.round((u.commissionRate||0.1)*100)+'"><small style="color:var(--muted)">下级/别人消费付费模型时，按此比例给该用户返佣/分成</small></div>',
     '<div class="form-row"><label>绑定模型（Ctrl多选，留空=全部）</label><select id="euModels" class="input" multiple size="4">'+modelOpts+'</select></div>',
     '<div class="form-row"><label>系统权限（勾选=可管理该系统资源）</label><div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px">'+permCheck+'</div></div>',
     '<div class="form-row"><label>重置密码（留空不改）</label><input id="euPwd" class="input" type="password" placeholder="至少6个字符"></div>'
@@ -1067,7 +1070,7 @@ window.editUser = function(id){
    openModal('编辑用户 - ' + u.username, html, function(){
     var models = Array.from($('euModels').selectedOptions).map(function(o){ return o.value; });
     var perms = Array.from(document.querySelectorAll('.usPermCb')).filter(function(c){ return c.checked && !c.disabled; }).map(function(c){ return c.value; });
-    var body = { id: id, displayName: $('euName').value.trim(), role: $('euRole').value, quotaLimit: parseInt($('euQuota').value)||0, quotaUsed: parseInt($('euUsed').value)||0, bindModels: models, permissions: perms, plan: $('euPlan').value };
+    var body = { id: id, displayName: $('euName').value.trim(), role: $('euRole').value, quotaLimit: parseInt($('euQuota').value)||0, quotaUsed: parseInt($('euUsed').value)||0, bindModels: models, permissions: perms, plan: $('euPlan').value, commissionRate: (parseFloat($('euComm').value)||0)/100 };
     var pwd = $('euPwd').value;
     if(pwd){ if(pwd.length < 6){ toast('密码至少6个字符', false); return; } body.newPassword = pwd; }
     api('/api/users/update', { method:'POST', body: body }).then(function(rr){

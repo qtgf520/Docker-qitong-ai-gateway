@@ -52,11 +52,11 @@ object V155Ext1 {
             if (!isAdmin) return "⛔ 仅管理员可维护价格表"
             val mid = args["model_id"]?.trim().orEmpty()
             val input = args["input_price"]?.toDoubleOrNull()
-            if (mid.isBlank() || input == null || input < 0) "⚠️ 语法：price_set(model_id=模型ID, input_price=输入价, output_price=可选)"
+            if (mid.isBlank() || input == null || input < 0) "⚠️ 语法：price_set(model_id=模型ID, input_price=输入价, output_price=可选)；输入价填 0 = 该模型免费（公益）"
             else {
                 val output = args["output_price"]?.toDoubleOrNull() ?: (input * PricingTable.OUTPUT_MULTIPLIER)
                 db.saveModelPrice(mid, input, output)
-                "✅ 价格已保存：$mid 输入 ¥${fmt(input)} / 输出 ¥${fmt(output)}"
+                "✅ 价格已保存：$mid 输入 ¥${fmt(input)} / 输出 ¥${fmt(output)}${if (input <= 0) "（该模型已设为免费）" else ""}（全局生效）"
             }
         }
         "price_delete" -> {

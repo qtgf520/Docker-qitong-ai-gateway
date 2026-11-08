@@ -37,7 +37,7 @@ loaders.prices = function(){
    '<div class="action-bar" style="margin-bottom:12px">' +
     '<button class="btn" onclick="addPrice()">+ 添加自定义价格</button>' +
     '<button class="btn-ghost" style="color:var(--red)" onclick="clearAllPrices()">清空全部自定义</button>' +
-    '<span style="color:var(--muted);font-size:12px">自定义价格优先于内置价格与模型单价；计费时按：自定义表 → 模型单价 → 内置表</span>' +
+    '<span style="color:var(--muted);font-size:12px">自定义价格全局生效；输入价填 0 = 该模型免费（公益）；未设置才走模型单价/内置价格表</span>' +
    '</div>' : '';
   var html = adminBar +
    '<div class="grid grid-3" style="margin-bottom:14px">' +
@@ -48,7 +48,7 @@ loaders.prices = function(){
    '<div class="card"><h3>全部模型价格（按输入/输出计费）</h3><div class="table-wrap"><table><thead><tr><th>模型</th><th>输入价（元/百万token）</th><th>输出价（元/百万token）</th><th>状态</th>'+(isAdmin?'<th>操作</th>':'')+'</tr></thead><tbody>' +
     (rows || '<tr><td colspan="'+(isAdmin?'5':'4')+'" style="text-align:center;color:var(--muted)">价格表为空</td></tr>') +
    '</tbody></table></div>' +
-'<div style="font-size:11px;color:var(--muted);margin-top:8px">💰 价格单位：元 / 百万 Token（输入价）。模型可单独设置自定义单价（编辑模型时设置），自定义价格表优先于模型单价与默认价。未收录模型统一按默认价计费。</div></div>';
+'<div style="font-size:11px;color:var(--muted);margin-top:8px">💰 价格单位：元 / 百万 Token（输入价）。模型可单独设置自定义单价（编辑模型时设置）。<b style="color:var(--cyan)">自定义价格全局生效：填 0 = 该模型免费（公益），表内没设置的模型才按模型单价 → 内置默认价计费。</b>💸 消费分佣：下级/别人消费付费模型时，上级（邀请人）与模型归属者按佣金比例自动获得分成（余额账单可见）。</div></div>';
    box.innerHTML = html;
    // ★ v1.166 模型映射区（外部请求名 -> 内部模型有序列表，按序故障转移）
    if(isAdmin){
