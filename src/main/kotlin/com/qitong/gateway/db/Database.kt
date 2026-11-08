@@ -511,6 +511,65 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
+            // ★ v1.193 微信公众号（webhook 回调模式，多公众号管理，对齐 qq_bots/weixin_bots 风格）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS mp_bots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL DEFAULT '',
+                    appid TEXT NOT NULL DEFAULT '',
+                    app_secret TEXT NOT NULL DEFAULT '',
+                    token TEXT NOT NULL DEFAULT '',
+                    encoding_aes_key TEXT NOT NULL DEFAULT '',
+                    encrypt_mode TEXT NOT NULL DEFAULT 'plain',   -- plain / compatible / safe
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    ai_model TEXT NOT NULL DEFAULT 'qtai-sj',
+                    system_prompt TEXT NOT NULL DEFAULT '',
+                    welcome TEXT NOT NULL DEFAULT '',
+                    ai_enabled INTEGER NOT NULL DEFAULT 1,        -- 关键词未命中时是否走 AI 智能回答
+                    keyword_enabled INTEGER NOT NULL DEFAULT 1,   -- 关键词回答总开关
+                    default_reply TEXT NOT NULL DEFAULT '',
+                    bind_account_id INTEGER NOT NULL DEFAULT 0,   -- 绑定网关账号(公众号粉丝默认身份)
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            // ★ v1.193 公众号关键词规则（每公众号独立：触发词 -> 固定回复/AI，对齐 qq_commands 风格）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS mp_keywords (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL DEFAULT 0,
+                    trigger TEXT NOT NULL DEFAULT '',
+                    match_type TEXT NOT NULL DEFAULT 'contains',  -- exact/contains/regex
+                    action TEXT NOT NULL DEFAULT 'reply',         -- reply 固定回复 / ai 智能回答 / none 忽略
+                    content TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            // ★ v1.193 公众号粉丝 openid 绑定网关账号（对齐 weixin_user_bindings：权限/余额/用量）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS mp_fans (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL DEFAULT 0,
+                    openid TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    bound_user_id INTEGER NOT NULL DEFAULT 0,
+                    perm_level INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(bot_id, openid)
+                )"""
+            )
+            // ★ v1.193 公众号运行日志（对齐 weixin_logs）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS mp_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL DEFAULT 0,
+                    openid TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL DEFAULT '',
+                    latency_ms INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
             // QQ 群配置（按群 openid 隔离：AI开关/欢迎语/人格覆盖）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS qq_groups (
@@ -2206,6 +2265,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.193", "微信公众号接入（webhook 回调模式·多公众号·关键词回答+AI智能回答·步骤显示开关）", "新增公众号独立模块，与 QQ/微信机器人并行：①多公众号管理——mp_bots 表，每号独立 AppID/AppSecret/Token/EncodingAESKey/加密模式/AI模型/人设/欢迎语/默认回复/关键词开关；管理页「机器人→公众号」支持添加/编辑/删除/详情，列表直接展示每个号的 Webhook 回调地址（微信公众平台「服务器配置」填这个）。②关键词回答——mp_keywords 表每公众号独立规则：触发词（精确/包含/正则）→ 固定回复/AI智能回答/忽略，命中即 5 秒内被动回复秒回。③AI 智能回答——关键词未命中且 AI 开关开时走网关大模型（复用 qtai-sj 等，loopback 同 QQ/微信链路），每粉丝 openid 独立多轮上下文；先回「处理中」占位防 5s 超时，AI 结果通过客服消息异步推送（认证服务号；订阅号借用 48h 会话窗口）。④步骤显示开关——默认 quiet 不推过程，粉丝发「显示步骤」开启 verbose（AI 干活步骤实时推送），「隐藏步骤」关闭；开关按公众号绑定账号记忆。⑤粉丝 openid 可绑定网关账号（权限/余额/用量对齐 QQ/微信），公众号运行日志 mp_logs 全程记录。⑥URL 验签——GET /mp/webhook/{id} 用 sha1(token+ts+nonce) 完成公众平台配置校验。"),
 Triple("v1.192", "价格表指定价格全局生效（0=免费公益）+ 消费分佣（下级返佣+模型归属分成）", "让模型定价真正全局可控、让代理真正能靠消费赚钱：①价格表指定模型价格全局生效——模型价格表里设置某个模型的输入价后，全平台所有用户调用该模型都按这个价计费；输入价填 0 = 该模型免费（公益），不再回落默认价；未设置价格的模型才按 模型单价 → 内置默认价 计费；免费模型不套计费规则、免费就是免费。②消费分佣双通道——①下级消费返上级：用户每次消费付费模型扣费成功后，他的邀请人（上级/代理）按自己的佣金比例自动获得返佣入账；②模型归属者分成：别人用了我添加的模型（私有模型 ownerId>0）时，模型添加者按自己的佣金比例自动获得分成入账。佣金实时进余额、记入 balance_log 返佣流水（个人中心余额账单可见，绿字+），个人中心展示累计佣金收益与佣金比例，管理员在用户管理里可编辑每个用户的佣金比例（默认10%）。③修复连带：余额不足的用户看可用模型时，价格表设为0的免费模型正确可见（原逻辑只看模型单价）。"),
 Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完成）", "让智能体真正做到说了就做、不做不标完成：①意图识别大扩展——QQ/微信首次无标签分支从只认5个词扩展到30+做事动作词（抓取/爬取/打开网站/查看/查找/搜索/查询/读取/浏览/检查/确认一下/看看/重新/试一下/访问/拉取/获取/执行/跑一下/需要查/查一下/看下/我看/我试/我查/来弄/搞定等），模型说「我重新抓取一下页面内容」这类做事意图也识别并引导输出真标签继续执行，不再直接break返回空话；②真执行才标完成——QQ/微信全部收尾路径（closeBody/清洗/非沙盒/最终返回）的 finish 条件统一改为 executedCalls 判断：真执行过工具才标✅任务完成，只说了没动手标⏹已结束（本轮未执行真实工具），后台沙盒不再出现空话还标完成的假完成；③沙盒状态如实反映执行进度。"),
                                                                                                                                                                         Triple("v1.190", "后台实时沙盒状态完善（模型回复/任务完成实时刷新）", "面板不再一直等待模型回复：①模型回复实时上报——QQ/微信每次模型回复到达（含首次+多轮工具循环内）后台实时刷新为模型已回复内容摘要；②任务完成实时收尾——QQ/微信 Agent 循环跑完（全部收尾路径 closeBody/清洗/普通返回）后台立即标记任务完成，不再一直 running；③面板展示——复用 currentAction/toolResult 字段，等模型回复→模型已回复→任务完成全程实时可见。"),
@@ -3316,6 +3376,187 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
     }
 
     fun deleteWeixinBot(id: Long) { stmt("DELETE FROM weixin_bots WHERE id=?", id) }
+
+    // ============ ★ v1.193 微信公众号（webhook 回调模式） ============
+
+    /** 全部公众号 */
+    fun getMpBots(): List<Map<String, Any?>> =
+        query("SELECT * FROM mp_bots ORDER BY id").map { row ->
+            mapOf(
+                "id" to (row["id"] as Number).toLong(),
+                "name" to (row["name"] as? String ?: ""),
+                "appid" to (row["appid"] as? String ?: ""),
+                "appSecret" to (row["app_secret"] as? String ?: ""),
+                "token" to (row["token"] as? String ?: ""),
+                "encodingAesKey" to (row["encoding_aes_key"] as? String ?: ""),
+                "encryptMode" to (row["encrypt_mode"] as? String ?: "plain"),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() != 0),
+                "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
+                "systemPrompt" to (row["system_prompt"] as? String ?: ""),
+                "welcome" to (row["welcome"] as? String ?: ""),
+                "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() != 0),
+                "keywordEnabled" to ((row["keyword_enabled"] as? Number)?.toInt() != 0),
+                "defaultReply" to (row["default_reply"] as? String ?: ""),
+                "bindAccountId" to ((row["bind_account_id"] as? Number)?.toLong() ?: 0L),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    fun getMpBotById(id: Long): Map<String, Any?>? =
+        query("SELECT * FROM mp_bots WHERE id=?", id).firstOrNull()?.let { row ->
+            mapOf(
+                "id" to (row["id"] as Number).toLong(),
+                "name" to (row["name"] as? String ?: ""),
+                "appid" to (row["appid"] as? String ?: ""),
+                "appSecret" to (row["app_secret"] as? String ?: ""),
+                "token" to (row["token"] as? String ?: ""),
+                "encodingAesKey" to (row["encoding_aes_key"] as? String ?: ""),
+                "encryptMode" to (row["encrypt_mode"] as? String ?: "plain"),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() != 0),
+                "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
+                "systemPrompt" to (row["system_prompt"] as? String ?: ""),
+                "welcome" to (row["welcome"] as? String ?: ""),
+                "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() != 0),
+                "keywordEnabled" to ((row["keyword_enabled"] as? Number)?.toInt() != 0),
+                "defaultReply" to (row["default_reply"] as? String ?: ""),
+                "bindAccountId" to ((row["bind_account_id"] as? Number)?.toLong() ?: 0L),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    fun getMpBotByAppid(appid: String): Map<String, Any?>? =
+        query("SELECT * FROM mp_bots WHERE appid=?", appid).firstOrNull()?.let { row ->
+            mapOf(
+                "id" to (row["id"] as Number).toLong(),
+                "name" to (row["name"] as? String ?: ""),
+                "appid" to (row["appid"] as? String ?: ""),
+                "appSecret" to (row["app_secret"] as? String ?: ""),
+                "token" to (row["token"] as? String ?: ""),
+                "encodingAesKey" to (row["encoding_aes_key"] as? String ?: ""),
+                "encryptMode" to (row["encrypt_mode"] as? String ?: "plain"),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() != 0),
+                "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
+                "systemPrompt" to (row["system_prompt"] as? String ?: ""),
+                "welcome" to (row["welcome"] as? String ?: ""),
+                "aiEnabled" to ((row["ai_enabled"] as? Number)?.toInt() != 0),
+                "keywordEnabled" to ((row["keyword_enabled"] as? Number)?.toInt() != 0),
+                "defaultReply" to (row["default_reply"] as? String ?: ""),
+                "bindAccountId" to ((row["bind_account_id"] as? Number)?.toLong() ?: 0L),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    /** 保存公众号（id>0 更新；else 新建） */
+    fun saveMpBot(m: Map<String, Any?>): Long {
+        val id = (m["id"] as? Number)?.toLong() ?: 0L
+        if (id > 0) {
+            stmt(
+                "UPDATE mp_bots SET name=?, appid=?, app_secret=?, token=?, encoding_aes_key=?, encrypt_mode=?, enabled=?, ai_model=?, system_prompt=?, welcome=?, ai_enabled=?, keyword_enabled=?, default_reply=?, bind_account_id=? WHERE id=?",
+                m["name"] ?: "", m["appid"] ?: "", m["appSecret"] ?: "", m["token"] ?: "", m["encodingAesKey"] ?: "",
+                m["encryptMode"] ?: "plain", if ((m["enabled"] as? Boolean) ?: true) 1 else 0,
+                m["aiModel"] ?: "qtai-sj", m["systemPrompt"] ?: "", m["welcome"] ?: "",
+                if ((m["aiEnabled"] as? Boolean) ?: true) 1 else 0, if ((m["keywordEnabled"] as? Boolean) ?: true) 1 else 0,
+                m["defaultReply"] ?: "", (m["bindAccountId"] as? Number)?.toLong() ?: 0L, id
+            )
+            return id
+        } else {
+            stmt(
+                "INSERT INTO mp_bots (name,appid,app_secret,token,encoding_aes_key,encrypt_mode,enabled,ai_model,system_prompt,welcome,ai_enabled,keyword_enabled,default_reply,bind_account_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                m["name"] ?: "", m["appid"] ?: "", m["appSecret"] ?: "", m["token"] ?: "", m["encodingAesKey"] ?: "",
+                m["encryptMode"] ?: "plain", if ((m["enabled"] as? Boolean) ?: true) 1 else 0,
+                m["aiModel"] ?: "qtai-sj", m["systemPrompt"] ?: "", m["welcome"] ?: "",
+                if ((m["aiEnabled"] as? Boolean) ?: true) 1 else 0, if ((m["keywordEnabled"] as? Boolean) ?: true) 1 else 0,
+                m["defaultReply"] ?: "", (m["bindAccountId"] as? Number)?.toLong() ?: 0L, System.currentTimeMillis()
+            )
+            return lastInsertId()
+        }
+    }
+
+    fun deleteMpBot(id: Long) {
+        stmt("DELETE FROM mp_bots WHERE id=?", id)
+        stmt("DELETE FROM mp_keywords WHERE bot_id=?", id)
+        stmt("DELETE FROM mp_fans WHERE bot_id=?", id)
+    }
+
+    /** 公众号关键词规则 */
+    fun getMpKeywords(botId: Long): List<Map<String, Any?>> =
+        query("SELECT * FROM mp_keywords WHERE bot_id=? ORDER BY id", botId).map { row ->
+            mapOf(
+                "id" to (row["id"] as Number).toLong(),
+                "botId" to botId,
+                "trigger" to (row["trigger"] as? String ?: ""),
+                "matchType" to (row["match_type"] as? String ?: "contains"),
+                "action" to (row["action"] as? String ?: "reply"),
+                "content" to (row["content"] as? String ?: ""),
+                "enabled" to ((row["enabled"] as? Number)?.toInt() != 0),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    fun saveMpKeyword(k: Map<String, Any?>): Long {
+        val id = (k["id"] as? Number)?.toLong() ?: 0L
+        if (id > 0) {
+            stmt("UPDATE mp_keywords SET trigger=?, match_type=?, action=?, content=?, enabled=? WHERE id=?",
+                k["trigger"] ?: "", k["matchType"] ?: "contains", k["action"] ?: "reply", k["content"] ?: "",
+                if ((k["enabled"] as? Boolean) ?: true) 1 else 0, id)
+            return id
+        } else {
+            stmt("INSERT INTO mp_keywords (bot_id,trigger,match_type,action,content,enabled,created_at) VALUES (?,?,?,?,?,?,?)",
+                (k["botId"] as? Number)?.toLong() ?: 0L, k["trigger"] ?: "", k["matchType"] ?: "contains", k["action"] ?: "reply", k["content"] ?: "",
+                if ((k["enabled"] as? Boolean) ?: true) 1 else 0, System.currentTimeMillis())
+            return lastInsertId()
+        }
+    }
+
+    fun deleteMpKeyword(id: Long) { stmt("DELETE FROM mp_keywords WHERE id=?", id) }
+    fun deleteMpKeywordsByBot(botId: Long) { stmt("DELETE FROM mp_keywords WHERE bot_id=?", botId) }
+
+    /** 公众号粉丝（openid 绑定网关账号） */
+    fun getMpFans(botId: Long): List<Map<String, Any?>> =
+        query("SELECT * FROM mp_fans WHERE bot_id=? ORDER BY id DESC", botId).map { row ->
+            mapOf(
+                "id" to (row["id"] as Number).toLong(),
+                "botId" to botId,
+                "openid" to (row["openid"] as? String ?: ""),
+                "displayName" to (row["display_name"] as? String ?: ""),
+                "boundUserId" to ((row["bound_user_id"] as? Number)?.toLong() ?: 0L),
+                "permLevel" to ((row["perm_level"] as? Number)?.toInt() ?: 1),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    fun setMpFanBound(botId: Long, openid: String, userId: Long) {
+        val exists = queryOne("SELECT COUNT(*) FROM mp_fans WHERE bot_id=? AND openid=?", botId, openid) ?: 0
+        if (exists == 0L) stmt("INSERT INTO mp_fans (bot_id,openid,bound_user_id,created_at) VALUES (?,?,?,?)", botId, openid, userId, System.currentTimeMillis())
+        else stmt("UPDATE mp_fans SET bound_user_id=? WHERE bot_id=? AND openid=?", userId, botId, openid)
+    }
+
+    fun getMpFanBound(botId: Long, openid: String): Long =
+        (queryOne("SELECT bound_user_id FROM mp_fans WHERE bot_id=? AND openid=?", botId, openid) as? Number)?.toLong() ?: 0L
+
+    /** 公众号运行日志 */
+    fun addMpLog(botId: Long, openid: String, type: String, content: String, latencyMs: Long = 0) {
+        stmt("INSERT INTO mp_logs (bot_id,openid,type,content,latency_ms,created_at) VALUES (?,?,?,?,?,?)",
+            botId, openid, type, content, latencyMs, System.currentTimeMillis())
+        // 只保留最近 1000 条
+        runCatching { stmt("DELETE FROM mp_logs WHERE id NOT IN (SELECT id FROM mp_logs ORDER BY id DESC LIMIT 1000)") }
+    }
+
+    fun getMpLogs(botId: Long = 0, limit: Int = 50): List<Map<String, Any?>> = run {
+        val sql = if (botId > 0) "SELECT * FROM mp_logs WHERE bot_id=? ORDER BY id DESC LIMIT $limit" else "SELECT * FROM mp_logs ORDER BY id DESC LIMIT $limit"
+        val rows = if (botId > 0) query(sql, botId) else query(sql)
+        rows.map { row ->
+            mapOf(
+                "id" to (row["id"] as Number).toLong(),
+                "botId" to ((row["bot_id"] as? Number)?.toLong() ?: 0L),
+                "openid" to (row["openid"] as? String ?: ""),
+                "type" to (row["type"] as? String ?: ""),
+                "content" to (row["content"] as? String ?: ""),
+                "latencyMs" to ((row["latency_ms"] as? Number)?.toLong() ?: 0L),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+    }
     fun setWeixinUserBound(openid: String, userId: Long) {
         val exists = queryOne("SELECT COUNT(*) FROM weixin_user_bindings WHERE wx_openid=?", openid) ?: 0
         if (exists == 0L) stmt("INSERT INTO weixin_user_bindings (wx_openid,bound_user_id,created_at) VALUES (?,?,?)", openid, userId, System.currentTimeMillis())

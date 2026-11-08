@@ -107,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.192
+ * 綦桐AI网关 · Docker 服务器版 v1.193
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -119,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.192   ║
+        ║   綦桐AI网关 · Docker Server v1.193   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -130,8 +130,8 @@ fun main(args: Array<String>) {
     // ★ v1.178 统一消息管道 + 平台适配器：初始化注册（三渠道共用一套管道编排）
     runCatching {
         com.qitong.gateway.pipeline.PipelineSetup.install(database)
-        println("[Gateway] v1.192 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
-    }.onFailure { e -> System.err.println("[Gateway] v1.192 管道初始化失败: ${e.message}") }
+        println("[Gateway] v1.193 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
+    }.onFailure { e -> System.err.println("[Gateway] v1.193 管道初始化失败: ${e.message}") }
 
     // ★ v85 播种更新历史（首次启动写入，前端/QQ/微信/qtai-sj 可查）
     runCatching { database.migrateMultimodal() }
@@ -222,7 +222,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.192"))
+                put("version", JsonPrimitive("1.193"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1105,6 +1105,140 @@ fun Application.moduleWeb(database: Database) {
             val u = call.requireAuth(database) ?: return@delete
             if (AdminApi.deleteRule(database, id, u)) AdminApi.ok(call, null, "已删除")
             else AdminApi.fail(call, "无权限删除该规则", 403)
+        }
+
+        // ============ ★ v1.193 微信公众号（webhook 回调模式，仅管理员管理） ============
+        fun requireAdminMp(u: com.qitong.gateway.model.User): Boolean = u.role == "admin"
+
+        // ★ 公众号 webhook 接收：GET=URL验证，POST=消息
+        get("/mp/webhook/{id}") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@get
+            val bot = database.getMpBotById(id) ?: return@get
+            val token = (bot["token"] as? String) ?: ""
+            val signature = call.request.queryParameters["signature"] ?: ""
+            val timestamp = call.request.queryParameters["timestamp"] ?: ""
+            val nonce = call.request.queryParameters["nonce"] ?: ""
+            val echostr = call.request.queryParameters["echostr"] ?: ""
+            if (token.isBlank()) { call.respondText("fail"); return@get }
+            val echo = com.qitong.gateway.mpx.MpBotManager.handleVerify(token, signature, timestamp, nonce, echostr)
+            call.respondText(if (echo.isBlank()) "signature error" else echo)
+        }
+        post("/mp/webhook/{id}") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val bot = database.getMpBotById(id) ?: run { call.respondText(""); return@post }
+            // 微信服务器带 query 参数过来（安全模式还带 encrypt_type/msg_signature），body 是 XML
+            val xmlText = call.receiveText()
+            val isEncrypted = call.request.queryParameters["encrypt_type"] == "aes"
+            val reply = com.qitong.gateway.mpx.MpBotManager.handleMessage(
+                database, bot, xmlText, isEncrypted,
+                call.request.queryParameters["msg_signature"],
+                call.request.queryParameters["timestamp"] ?: "",
+                call.request.queryParameters["nonce"] ?: ""
+            )
+            call.respondText(reply, ContentType.Text.Xml.withCharset(Charsets.UTF_8))
+        }
+
+        // 公众号列表
+        get("/api/mp/bots") {
+            val u = call.requireAuth(database) ?: return@get
+            if (!requireAdminMp(u)) { AdminApi.fail(call, "仅管理员可管理公众号", 403); return@get }
+            AdminApi.ok(call, database.getMpBots(), "ok")
+        }
+        // 保存公众号（新增/编辑）
+        post("/api/mp/bots") {
+            val u = call.requireAuth(database) ?: return@post
+            if (!requireAdminMp(u)) { AdminApi.fail(call, "仅管理员可管理公众号", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            // 编辑时不留空覆盖：token/secret 未填则保留原值
+            val old = if (id > 0) database.getMpBotById(id) else null
+            val appid = body["appid"]?.jsonPrimitive?.content?.trim().orEmpty()
+            var appSecret = body["appSecret"]?.jsonPrimitive?.content?.trim().orEmpty()
+            var token = body["token"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (appSecret.isEmpty() && old != null) appSecret = (old["appSecret"] as? String).orEmpty()
+            if (token.isEmpty() && old != null) token = (old["token"] as? String).orEmpty()
+            if (appid.isEmpty() || (token.isEmpty() && appSecret.isEmpty())) {
+                AdminApi.fail(call, "AppID 不能为空，且 Token/AppSecret 至少填一个", 400)
+                return@post
+            }
+            val encodingAesKey = body["encodingAesKey"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val encryptMode = body["encryptMode"]?.jsonPrimitive?.content ?: "plain"
+            val botId = database.saveMpBot(mapOf(
+                "id" to id,
+                "name" to (body["name"]?.jsonPrimitive?.content?.trim().orEmpty().ifBlank { appid }),
+                "appid" to appid,
+                "appSecret" to appSecret,
+                "token" to token,
+                "encodingAesKey" to encodingAesKey,
+                "encryptMode" to encryptMode,
+                "enabled" to (body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true),
+                "aiModel" to (body["aiModel"]?.jsonPrimitive?.content?.trim()?.ifBlank { "qtai-sj" } ?: "qtai-sj"),
+                "systemPrompt" to (body["systemPrompt"]?.jsonPrimitive?.content ?: ""),
+                "welcome" to (body["welcome"]?.jsonPrimitive?.content ?: ""),
+                "aiEnabled" to (body["aiEnabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true),
+                "keywordEnabled" to (body["keywordEnabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true),
+                "defaultReply" to (body["defaultReply"]?.jsonPrimitive?.content ?: ""),
+                "bindAccountId" to (body["bindAccountId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L)
+            ))
+            database.addOpLog(u.id, u.username, "公众号", "保存公众号 ${appid}（id=$botId）", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("id" to botId), "公众号已保存")
+        }
+        // 删除公众号
+        delete("/api/mp/bots/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (!requireAdminMp(u)) { AdminApi.fail(call, "仅管理员可管理公众号", 403); return@delete }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            database.deleteMpBot(id)
+            database.addOpLog(u.id, u.username, "公众号", "删除公众号 id=$id", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "已删除")
+        }
+        // 公众号关键词规则列表
+        get("/api/mp/keywords") {
+            val u = call.requireAuth(database) ?: return@get
+            if (!requireAdminMp(u)) { AdminApi.fail(call, "仅管理员可管理公众号", 403); return@get }
+            val botId = call.queryParameters["botId"]?.toLongOrNull() ?: 0L
+            if (botId <= 0) { AdminApi.fail(call, "缺少 botId", 400); return@get }
+            AdminApi.ok(call, database.getMpKeywords(botId), "ok")
+        }
+        // 保存关键词规则
+        post("/api/mp/keywords") {
+            val u = call.requireAuth(database) ?: return@post
+            if (!requireAdminMp(u)) { AdminApi.fail(call, "仅管理员可管理公众号", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val id = body["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            val kid = database.saveMpKeyword(mapOf(
+                "id" to id,
+                "botId" to (body["botId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L),
+                "trigger" to (body["trigger"]?.jsonPrimitive?.content ?: ""),
+                "matchType" to (body["matchType"]?.jsonPrimitive?.content ?: "contains"),
+                "action" to (body["action"]?.jsonPrimitive?.content ?: "reply"),
+                "content" to (body["content"]?.jsonPrimitive?.content ?: ""),
+                "enabled" to (body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true)
+            ))
+            AdminApi.ok(call, mapOf("id" to kid), "关键词已保存")
+        }
+        // 删除关键词
+        delete("/api/mp/keywords/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            if (!requireAdminMp(u)) { AdminApi.fail(call, "仅管理员可管理公众号", 403); return@delete }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            database.deleteMpKeyword(id)
+            AdminApi.ok(call, null, "已删除")
+        }
+        // 公众号粉丝列表
+        get("/api/mp/fans") {
+            val u = call.requireAuth(database) ?: return@get
+            if (!requireAdminMp(u)) { AdminApi.fail(call, "仅管理员可管理公众号", 403); return@get }
+            val botId = call.queryParameters["botId"]?.toLongOrNull() ?: 0L
+            if (botId <= 0) { AdminApi.fail(call, "缺少 botId", 400); return@get }
+            AdminApi.ok(call, database.getMpFans(botId), "ok")
+        }
+        // 公众号日志
+        get("/api/mp/logs") {
+            val u = call.requireAuth(database) ?: return@get
+            if (!requireAdminMp(u)) { AdminApi.fail(call, "仅管理员可管理公众号", 403); return@get }
+            val botId = call.queryParameters["botId"]?.toLongOrNull() ?: 0L
+            AdminApi.ok(call, database.getMpLogs(botId, 50), "ok")
         }
 
         // ============ QQ 开放平台机器人（仅管理员） ============
@@ -2630,7 +2764,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.192"))
+                put("version", JsonPrimitive("1.193"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3474,7 +3608,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.192"))
+                    put("version", JsonPrimitive("1.193"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

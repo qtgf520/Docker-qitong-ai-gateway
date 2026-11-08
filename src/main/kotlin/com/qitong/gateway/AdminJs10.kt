@@ -355,5 +355,157 @@ window.restoreBackup = function(i){
   if(r.code===0) loadBackups();
  });
 };
+
+// ===== ★ v1.193 微信公众号管理页（多公众号 + 关键词 + webhook 地址 + 日志） =====
+var mpCurBot = 0;
+loaders.mp = function(){
+ var box = $('view-mp');
+ box.innerHTML = '<div class="card"><h3>📢 微信公众号 <span style="font-size:12px;color:var(--muted)">webhook 回调模式 · 多公众号管理 · 关键词回答 + AI 智能回答</span></h3>' +
+  '<div class="action-bar"><button class="btn" onclick="mpOpenEdit(0)">+ 添加公众号</button><span id="mpWebHint" style="font-size:12px;color:var(--muted)">加载中…</span></div>' +
+  '<div id="mpList" style="margin-top:12px"><div style="color:var(--muted);padding:16px">加载中…</div></div></div>' +
+  '<div class="card" id="mpDetail" style="display:none"><h3 id="mpDetailTitle">公众号详情</h3><div id="mpDetailBody"></div></div>';
+ api('/api/mp/bots').then(function(r){
+  var list = r.data || [];
+  var el = $('mpList'); if(!el) return;
+  if(!list.length){ el.innerHTML = '<div style="color:var(--muted)">暂无公众号。点击「+ 添加公众号」填写 AppID/AppSecret/Token，然后在微信公众平台「服务器配置」填入下方 URL 即完成对接。</div>'; return; }
+  var host = location.origin;
+  var rows = list.map(function(b){
+   var url = host + '/mp/webhook/' + b.id;
+   return '<tr>' +
+    '<td><b>'+esc(b.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(b.appid)+'</div></td>' +
+    '<td>'+(b.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td>' +
+    '<td>'+(b.keywordEnabled?'<span class="badge blue">关键词</span>':'<span class="badge gray">关</span>')+' '+(b.aiEnabled?'<span class="badge cyan">AI</span>':'<span class="badge gray">off</span>')+'</td>' +
+    '<td style="font-size:12px;color:var(--muted)">'+esc(b.aiModel||'qtai-sj')+'</td>' +
+    '<td style="font-size:11px" title="'+esc(url)+'"><code style="word-break:break-all">'+esc(url)+'</code></td>' +
+    '<td style="white-space:nowrap">' +
+     '<button class="btn-ghost btn-sm" onclick="mpShow('+b.id+',\''+esc(b.name)+'\')">详情</button> ' +
+     '<button class="btn-ghost btn-sm" onclick="mpOpenEdit('+b.id+')">编辑</button> ' +
+     '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="mpDel('+b.id+')">删</button></td></tr>';
+  }).join('');
+  el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>公众号</th><th>状态</th><th>能力</th><th>AI模型</th><th>Webhook 地址（微信公众平台填这个）</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+   '<div style="font-size:11px;color:var(--muted);margin-top:8px">📌 配置步骤：① 填好 AppID/AppSecret/Token → ② 复制 Webhook 地址到微信公众平台「设置→公众号设置→功能设置→服务器配置」→ ③ URL 填该地址、Token 填你上面填的、加密方式选「明文模式」（本期推荐）→ 提交即完成对接</div>';
+  $('#mpWebHint').textContent = '已配置 ' + list.length + ' 个公众号';
+ });
+ loaders.mpLogs(0);
+};
+// 公众号详情（关键词 / 粉丝 / 日志）
+window.mpShow = function(id, name){
+ mpCurBot = id;
+ var d = $('mpDetail'); if(d){ d.style.display = ''; }
+ var t = $('mpDetailTitle'); if(t) t.textContent = '📢 ' + name + ' 详情';
+ loadMpKeywords(id);
+ loaders.mpLogs(id);
+ api('/api/mp/fans?botId='+id).then(function(r){
+  var fans = (r.data||[]);
+  var fb = $('mpDetailBody');
+  if(!fb) return;
+  var fanRows = fans.map(function(f){
+   return '<tr><td style="font-size:12px;font-family:monospace">'+esc(f.openid)+'</td><td>'+esc(f.displayName||'-')+'</td><td>'+(f.boundUserId>0?'<span class="badge green">#'+f.boundUserId+'</span>':'<span class="badge gray">未绑定</span>')+'</td><td>'+f.permLevel+'</td></tr>';
+  }).join('');
+  var kwHtml = '<div class="card" style="margin-top:12px"><h3>🎯 关键词回答 <span style="font-size:12px;color:var(--muted)">触发词 → 固定回复 / AI / 忽略（每个公众号独立）</span></h3>' +
+   '<div class="action-bar"><button class="btn" onclick="mpOpenKw(0)">+ 添加关键词</button></div>' +
+   '<div id="mpKwList" style="margin-top:8px"><div style="color:var(--muted);padding:12px">加载中…</div></div></div>' +
+   '<div class="card" style="margin-top:12px"><h3>👥 粉丝（'+fans.length+'）</h3><div class="table-wrap" style="max-height:220px;overflow-y:auto"><table><thead><tr><th>openid</th><th>备注</th><th>绑定账号</th><th>权限</th></tr></thead><tbody>'+(fanRows||'<tr><td colspan="4" style="text-align:center;color:var(--muted)">暂无粉丝互动</td></tr>')+'</tbody></table></div></div>';
+  // 先展示关键词+粉丝，日志单独卡片
+  var logHtml = '<div class="card" style="margin-top:12px"><h3>📋 公众号日志</h3><div id="mpLogBox" style="color:var(--muted);font-size:12px">加载中…</div></div>';
+  fb.innerHTML = kwHtml + logHtml;
+  loadMpKeywords(id);
+  loaders.mpLogs(id);
+ });
+};
+// 关键词列表
+function loadMpKeywords(botId){
+ if(!botId) return;
+ api('/api/mp/keywords?botId='+botId).then(function(r){
+  var list = r.data || [];
+  var el = $('mpKwList'); if(!el) return;
+  var rows = list.map(function(k){
+   var mt = {exact:'精确',contains:'包含',regex:'正则'}[k.matchType] || k.matchType;
+   var act = {reply:'固定回复',ai:'AI回答',none:'忽略'}[k.action] || k.action;
+   return '<tr><td style="font-family:ui-monospace,monospace">'+esc(k.trigger)+'</td><td>'+mt+'</td><td>'+act+'</td><td style="font-size:12px">'+esc((k.content||'').take(30))+'</td><td>'+(k.enabled?'<span class="badge green">开</span>':'<span class="badge gray">关</span>')+'</td>' +
+    '<td><button class="btn-ghost btn-sm" onclick="mpOpenKw('+k.id+',\''+esc(k.trigger)+'\',\''+esc(k.matchType)+'\',\''+esc(k.action)+'\',\''+esc(k.content).replace(/'/g,"\\'")+'\')">编辑</button> <button class="btn-ghost btn-sm" style="color:var(--red)" onclick="mpDelKw('+k.id+')">删</button></td></tr>';
+  }).join('');
+  el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>触发词</th><th>匹配</th><th>动作</th><th>内容</th><th>状态</th><th>操作</th></tr></thead><tbody>' + (rows||'<tr><td colspan="6" style="text-align:center;color:var(--muted)">暂无关键词规则</td></tr>') + '</tbody></table></div>';
+ });
+}
+// 新增/编辑公众号
+window.mpOpenEdit = function(id){
+ api('/api/mp/bots').then(function(r){
+  var list = r.data || [];
+  var b = list.find(function(x){ return x.id===id; }) || {};
+  openModal((id?'编辑公众号':'添加公众号'),
+   '<div class="form-row"><label>名称</label><input id="mpName" class="input" value="'+esc(b.name||'')+'" placeholder="如：我的测试公众号"></div>' +
+   '<div class="form-row"><label>AppID（公众号唯一标识，公众号后台「基本配置」）</label><input id="mpAppid" class="input" value="'+esc(b.appid||'')+'" placeholder="wx1234567890abcdef"></div>' +
+   '<div class="form-row"><label>AppSecret（公众号后台「基本配置」，用于获取客服消息 access_token）</label><input id="mpSecret" class="input" type="password" value="'+esc(b.appSecret||'')+'" placeholder="留空=不修改（编辑时）"></div>' +
+   '<div class="form-row"><label>Token（服务器配置里的自定义 Token，用于 URL 验签）</label><input id="mpToken" class="input" type="password" value="'+esc(b.token||'')+'" placeholder="自己随意填一串英数字"></div>' +
+   '<div class="form-row"><label>EncodingAESKey（安全/兼容模式用，明文模式可留空）</label><input id="mpAes" class="input" value="'+esc(b.encodingAesKey||'')+'" placeholder="明文模式可留空"></div>' +
+   '<div class="form-row"><label>加密模式</label><select id="mpEncrypt" class="input"><option value="plain"'+(b.encryptMode==='plain'?' selected':'')+'>明文模式（推荐）</option><option value="compatible"'+(b.encryptMode==='compatible'?' selected':'')+'>兼容模式</option><option value="safe"'+(b.encryptMode==='safe'?' selected':'')+'>安全模式</option></select></div>' +
+   '<div class="form-row"><label>AI 模型（智能回答用）</label><input id="mpModel" class="input" value="'+esc(b.aiModel||'qtai-sj')+'" placeholder="默认 qtai-sj"></div>' +
+   '<div class="form-row"><label>欢迎语（新粉丝关注时）</label><input id="mpWelcome" class="input" value="'+esc(b.welcome||'')+'" placeholder="留空用默认"></div>' +
+   '<div class="form-row"><label>默认回复（关键词未命中且 AI 关闭时）</label><input id="mpDefault" class="input" value="'+esc(b.defaultReply||'')+'" placeholder="留空用默认提示"></div>' +
+   '<div class="form-row"><label>AI 系统人设</label><textarea id="mpPrompt" class="input" rows="3" placeholder="可选：设定公众号 AI 的人格/语气">'+esc(b.systemPrompt||'')+'</textarea></div>' +
+   '<div class="form-row"><label><input type="checkbox" id="mpEnabled"'+(b.enabled!==false?' checked':'')+'>启用</label> ' +
+   '<label style="margin-left:12px"><input type="checkbox" id="mpKeyword"'+(b.keywordEnabled!==false?' checked':'')+'>关键词回答</label> ' +
+   '<label style="margin-left:12px"><input type="checkbox" id="mpAi"'+(b.aiEnabled!==false?' checked':'')+'>AI 智能回答</label></div>',
+   function(){
+    var nm=$('mpName').value.trim(), appid=$('mpAppid').value.trim(), sec=$('mpSecret').value.trim(), tok=$('mpToken').value.trim();
+    var aes=$('mpAes').value.trim(), enc=$('mpEncrypt').value;
+    if(!appid){ toast('AppID 不能为空', false); return; }
+    if(!nm){ toast('请填写公众号名称', false); return; }
+    var body = { id: id, name: nm, appid: appid, appSecret: sec, token: tok, encodingAesKey: aes, encryptMode: enc,
+     aiModel: $('mpModel').value.trim()||'qtai-sj', welcome: $('mpWelcome').value.trim(), defaultReply: $('mpDefault').value.trim(),
+     systemPrompt: $('mpPrompt').value.trim(), enabled: $('mpEnabled').checked, keywordEnabled: $('mpKeyword').checked, aiEnabled: $('mpAi').checked };
+    api('/api/mp/bots', { method:'POST', body: body }).then(function(rr){
+     toast(rr.msg || '已保存', rr.code===0);
+     if(rr.code===0){ closeModal(); loaders.mp(); }
+    });
+   });
+ });
+};
+window.mpDel = function(id){
+ if(!confirm('确认删除该公众号及其关键词？')) return;
+ api('/api/mp/bots/'+id, { method:'DELETE' }).then(function(r){
+  toast(r.msg||'已删除', r.code===0);
+  if(r.code===0) loaders.mp();
+ });
+};
+// 关键词新增/编辑
+window.mpOpenKw = function(id, trig, mtype, act, content){
+ openModal((id?'编辑关键词':'添加关键词'),
+  '<div class="form-row"><label>触发词</label><input id="kwTrig" class="input" value="'+esc(trig||'')+'" placeholder="用户发这个词就命中（如：你好）"></div>' +
+  '<div class="form-row"><label>匹配方式</label><select id="kwType" class="input"><option value="contains"'+(mtype==='contains'?' selected':'')+'>包含</option><option value="exact"'+(mtype==='exact'?' selected':'')+'>完全相等</option><option value="regex"'+(mtype==='regex'?' selected':'')+'>正则</option></select></div>' +
+  '<div class="form-row"><label>动作</label><select id="kwAct" class="input"><option value="reply"'+(act==='reply'||!act?' selected':'')+'>固定回复</option><option value="ai"'+(act==='ai'?' selected':'')+'>AI 智能回答</option><option value="none"'+(act==='none'?' selected':'')+'>忽略（不回复）</option></select></div>' +
+  '<div class="form-row"><label>回复内容（固定回复时的文本）</label><textarea id="kwContent" class="input" rows="3">'+esc(content||'')+'</textarea></div>',
+  function(){
+   var trig2=$('kwTrig').value.trim();
+   if(!trig2){ toast('触发词不能为空', false); return; }
+   api('/api/mp/keywords', { method:'POST', body: { id: id, botId: mpCurBot, trigger: trig2, matchType: $('kwType').value, action: $('kwAct').value, content: $('kwContent').value, enabled: true } }).then(function(r){
+    toast(r.msg||'已保存', r.code===0);
+    if(r.code===0){ closeModal(); loadMpKeywords(mpCurBot); }
+   });
+  });
+};
+window.mpDelKw = function(id){
+ if(!confirm('确认删除该关键词？')) return;
+ api('/api/mp/keywords/'+id, { method:'DELETE' }).then(function(r){
+  toast(r.msg||'已删除', r.code===0);
+  if(r.code===0) loadMpKeywords(mpCurBot);
+ });
+};
+// 公众号日志
+loaders.mpLogs = function(botId){
+ api('/api/mp/logs?botId='+(botId||0)).then(function(r){
+  var list = r.data || [];
+  var el = $('mpLogBox'); if(!el) return;
+  if(!list.length){ el.innerHTML = '<div style="color:var(--muted);padding:8px">暂无日志</div>'; return; }
+  var rows = list.map(function(l){
+   var ts = new Date(l.createdAt);
+   var tstr = ts.getFullYear()+'-'+String(ts.getMonth()+1).padStart(2,'0')+'-'+String(ts.getDate()).padStart(2,'0')+' '+String(ts.getHours()).padStart(2,'0')+':'+String(ts.getMinutes()).padStart(2,'0')+':'+String(ts.getSeconds()).padStart(2,'0');
+   var typeColor = {receive:'blue',keyword:'cyan',ai_reply:'green',progress:'amber',event:'gray'}[l.type] || 'gray';
+   return '<tr><td style="font-size:11px;color:var(--muted)">'+tstr+'</td><td><span class="badge '+typeColor+'">'+esc(l.type)+'</span></td><td style="font-size:12px">'+esc(l.content)+'</td></tr>';
+  }).join('');
+  el.innerHTML = '<div class="table-wrap" style="max-height:240px;overflow-y:auto"><table><thead><tr><th>时间</th><th>类型</th><th>内容</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+ });
+};
 """
 }

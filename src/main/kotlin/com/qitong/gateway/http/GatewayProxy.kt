@@ -258,7 +258,7 @@ class GatewayProxy(private val database: Database) {
 
         var available = models.filter { it.isEnabled }
         // ★ 余额不足的用户：只保留免费模型，付费模型全过滤（避免免费模型故障转移跳到付费模型）
-        // ★ v1.192 免费判定对齐价格表：自定义表有记录 inputPrice<=0 → 免费；未收录才看模型单价+内置价是否<=0
+        // ★ v1.193 免费判定对齐价格表：自定义表有记录 inputPrice<=0 → 免费；未收录才看模型单价+内置价是否<=0
         if (userId > 0) {
             val owner = database.getUserById(userId)
             if (owner != null && owner.role != "admin" && owner.quotaLimit <= 0) {
@@ -642,12 +642,12 @@ class GatewayProxy(private val database: Database) {
             // 查找请求模型的真实价格（按 modelId 匹配任意 provider）★v1.109 未设自定义价也用价格表默认价，均视为付费
             val requestedModel = models.firstOrNull { it.modelId == modelId }
             // ★ v1.160 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表
-            // ★ v1.192 表内有记录即全局生效（设 0 = 免费模型，不检查余额）；未收录才回落模型单价/内置价
+            // ★ v1.193 表内有记录即全局生效（设 0 = 免费模型，不检查余额）；未收录才回落模型单价/内置价
             val dbPriceRec2 = runCatching { database.getModelPrice(modelId) }.getOrNull()
             val dbPrice2 = dbPriceRec2?.get("inputPrice") as? Double
             val requestedPrice = if (dbPriceRec2 != null) (dbPrice2 ?: 0.0)
                 else requestedModel?.let { if (it.price > 0) it.price else PricingTable.priceOf(it.modelId).takeIf { p -> p > 0 } ?: PricingTable.DEFAULT_PRICE } ?: 0.0
-            // ★ v1.160 表达式计费：命中规则覆盖价/倍率（★v1.192 免费模型不套计费规则）
+            // ★ v1.160 表达式计费：命中规则覆盖价/倍率（★v1.193 免费模型不套计费规则）
             val effRequestedPrice = if (dbPriceRec2 != null && requestedPrice <= 0) 0.0
                 else applyPricingRule(requestedPrice, modelId, ownerUser.role)
             val requestedPaid = effRequestedPrice > 0
@@ -1029,13 +1029,13 @@ class GatewayProxy(private val database: Database) {
             val estTokens = if (totalTokens > 0) totalTokens.toLong()
                 else ((downloadBytes + uploadBytes) / 4).coerceAtLeast(1)
             // ★ v1.109 成本计算：★v1.160 优先读数据库自定义价格表 → 模型自定义价 → 内置价格表
-            // ★ v1.192 自定义价格表【设 0 = 免费】（表内有记录即全局生效，0 代表公益免费，不再回落默认价；未收录才回落）
+            // ★ v1.193 自定义价格表【设 0 = 免费】（表内有记录即全局生效，0 代表公益免费，不再回落默认价；未收录才回落）
             val dbPriceRec = runCatching { database.getModelPrice(model.modelId) }.getOrNull()
             val dbPrice = dbPriceRec?.get("inputPrice") as? Double
             val price = if (dbPriceRec != null) (dbPrice ?: 0.0)
                 else if (model.price > 0) model.price
                 else PricingTable.priceOf(model.modelId).takeIf { it > 0 } ?: PricingTable.DEFAULT_PRICE
-            // ★ v1.160 表达式计费：命中规则覆盖价/倍率（★v1.192 明确免费模型不套计费规则，免费就是免费）
+            // ★ v1.160 表达式计费：命中规则覆盖价/倍率（★v1.193 明确免费模型不套计费规则，免费就是免费）
             val effPrice = if (dbPriceRec != null && price <= 0) 0.0
                 else applyPricingRule(price, model.modelId, ownerUser?.role ?: "user")
             val cost = estTokens / 1_000_000.0 * effPrice * PricingTable.OUTPUT_MULTIPLIER
@@ -1067,7 +1067,7 @@ class GatewayProxy(private val database: Database) {
                          )
                          return
                      }
-                     // ★ v1.192 消费分佣（扣费成功后才触发，双通道）：
+                     // ★ v1.193 消费分佣（扣费成功后才触发，双通道）：
                      //  ① 下级消费 → 上级（inviter_id）按佣金比例返佣
                      runCatching { database.payConsumeCommission(ownerUser.id, cost, "模型调用·${model.modelId}") }
                      //  ② 别人用了我添加的模型（model.ownerId>0）→ 归属者按佣金比例分成

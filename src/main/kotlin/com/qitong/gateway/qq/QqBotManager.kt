@@ -1252,7 +1252,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     }
 
     /** ★ v1.166 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废）
- *  ★ v1.192 扩展：模型表达做事意图（抓取/查看/查找/搜索/读取/检查/确认/重新/试一下 等）但没输出工具标签，
+ *  ★ v1.193 扩展：模型表达做事意图（抓取/查看/查找/搜索/读取/检查/确认/重新/试一下 等）但没输出工具标签，
  *    同样引导输出真标签继续干活，绝不"说了不做"就 break 放弃 */
     private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
         text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
@@ -1260,7 +1260,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         text.contains("再确认", true) || text.contains("继续处理", true) || text.contains("继续执行", true) ||
         text.contains("还有", true) || text.contains("进一步", true) || text.contains("接下来", true) ||
         text.contains("稍等", true) || text.contains("等我", true) ||
-        // ★ v1.192 做事意图动作词：说了要干活就必须真调用，不能光说
+        // ★ v1.193 做事意图动作词：说了要干活就必须真调用，不能光说
         text.contains("抓取", true) || text.contains("爬取", true) || text.contains("打开网站", true) ||
         text.contains("查看", true) || text.contains("查找", true) || text.contains("搜索", true) ||
         text.contains("查询", true) || text.contains("读取", true) || text.contains("浏览", true) ||
@@ -1783,7 +1783,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     //   同一 fn+参数已执行过 → 解析结果为空 → 循环正常收尾，不再执行第二遍
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
                     if (calls.isEmpty()) {
-                        // ★ v1.192 说要做但没输出标签 → 引导真调用（不止"正在调用"，抓取/查看/检查/重新/我来 等做事意图都引导）
+                        // ★ v1.193 说要做但没输出标签 → 引导真调用（不止"正在调用"，抓取/查看/检查/重新/我来 等做事意图都引导）
                         //   原来只认 5 个词，用户案例「我重新抓取一下页面内容」识别不出 → 直接 break 返回空话还标完成（说了不做）
                         val intented = content.contains("正在调用", true) || content.contains("调用沙盒", true) ||
                             content.contains("准备调用", true) || content.contains("我需要调用", true) || content.contains("我来调用", true) ||
@@ -2027,7 +2027,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         }
                         if (!closeContent.isNullOrBlank() && closeContent.length > 2) {
                             val closeCleaned = cleanFunctionTags(closeContent)
-                            // ★ v1.192 真执行过工具才标完成；否则标"已结束（未执行真实工具）"——不再空话还标✅
+                            // ★ v1.193 真执行过工具才标完成；否则标"已结束（未执行真实工具）"——不再空话还标✅
                             com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                                 if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                             // ★ v1.167 修复串台：只写最终回复进 hist（原连续写 cleaned+closeCleaned 两个
@@ -2051,7 +2051,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                         }
                     }
-                    // ★ v1.192 真执行过工具才标完成（否则标"未执行真实工具"）
+                    // ★ v1.193 真执行过工具才标完成（否则标"未执行真实工具"）
                     com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                         if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                     return cleaned
@@ -2066,7 +2066,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                         }
                     }
-                    // ★ v1.192 真执行过工具才标完成（否则标"未执行真实工具"）
+                    // ★ v1.193 真执行过工具才标完成（否则标"未执行真实工具"）
                     com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                         if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                     return cleaned
@@ -2112,7 +2112,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         runCatching { db.saveGroupBrainMemory(groupOpenid, userText.take(200)) }
                     }
                 }
-                // ★ v1.192 真执行过工具才标完成（否则标"未执行真实工具"）——不再空话还标✅
+                // ★ v1.193 真执行过工具才标完成（否则标"未执行真实工具"）——不再空话还标✅
                 com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                     if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                 content
