@@ -5,6 +5,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Base64
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * ★ v1.193 微信公众号（webhook 回调模式）管理器
@@ -19,6 +24,9 @@ import java.security.MessageDigest
  * 无外部依赖，只用 JDK 自带 crypto/XML 解析，避免引第三方库。
  */
 object MpBotManager {
+
+    /** ★ v1.193 超时兜底：AI 没在 5s 窗口内答完时缓存结果，用户下一条消息被动回复带回（未认证号也连续对话） */
+    private val pendingReplies = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     // ============ URL 验证（微信服务器首次配置时的 GET 校验） ============
     /** 校验微信签名：sha1(sort(token, timestamp, nonce)) == signature */
@@ -43,19 +51,44 @@ object MpBotManager {
         val botId = (bot["id"] as? Number)?.toLong() ?: 0L
         val appid = (bot["appid"] as? String) ?: ""
         try {
-            val xml = parseXml(xmlText)
+            // ★ v1.193 安全/兼容模式：收到的消息体是 <Encrypt>base64</Encrypt>，先解密成明文 XML 再解析
+            var effectiveXml = xmlText
+            if (isEncrypted) {
+                val encXml = parseXml(xmlText)
+                val encryptMsg = encXml["Encrypt"] ?: ""
+                val encodingAesKey = (bot["encodingAesKey"] as? String) ?: ""
+                // 解密（自动校验 msg_signature）
+                effectiveXml = decryptMsg(encodingAesKey, encryptMsg, appid, msgSignature ?: "", timestamp, nonce, (bot["token"] as? String) ?: "")
+                if (effectiveXml.isBlank()) {
+                    // 安全模式解密失败：静默返回空（微信会重试几次；日志记录原因）
+                    db.addMpLogSafe(botId, "", "error", "安全模式解密失败（EncodingAESKey/签名校验失败）")
+                    return ""
+                }
+            }
+            val xml = parseXml(effectiveXml)
             val msgType = xml["MsgType"] ?: "text"
             val fromUser = xml["FromUserName"] ?: ""
             val toUser = xml["ToUserName"] ?: ""
             val content = (xml["Content"] ?: "").trim()
             val event = xml["Event"] ?: ""
 
+            // ★ 统一被动回复出口：安全/兼容模式自动加密返回，明文模式原样
+            val encryptMode = (bot["encryptMode"] as? String) ?: "plain"
+            val encKey = (bot["encodingAesKey"] as? String) ?: ""
+            val mpToken = (bot["token"] as? String) ?: ""
+            fun replyText(replyContent: String): String {
+                val plain = makePassiveReply(toUser, fromUser, "text", replyContent)
+                return if (isEncrypted && encKey.isNotBlank() && encryptMode != "plain")
+                    encryptReplyMsg(encKey, plain, appid, timestamp, nonce, mpToken)
+                else plain
+            }
+
             // 事件消息（关注/取关/菜单等）
             if (msgType == "event") {
                 when (event) {
                     "subscribe" -> {
                         val welcome = (bot["welcome"] as? String)?.takeIf { it.isNotBlank() } ?: "感谢关注！🎉 回复关键词或直接发消息即可体验 AI 智能回答。"
-                        return makePassiveReply(toUser, fromUser, "text", welcome)
+                        return replyText(welcome)
                     }
                     "unsubscribe" -> { db.addMpLogSafe(botId, fromUser, "event", "取消关注") }
                 }
@@ -64,7 +97,7 @@ object MpBotManager {
 
             if (msgType != "text") {
                 // 非文本（图片/语音等）：提示用文字
-                return makePassiveReply(toUser, fromUser, "text", "👋 我目前只支持文字消息，请用文字向我提问～")
+                return replyText("👋 我目前只支持文字消息，请用文字向我提问～")
             }
 
             if (content.isBlank()) return ""
@@ -94,10 +127,10 @@ object MpBotManager {
                 if (kw != null) {
                     db.addMpLogSafe(botId, fromUser, "keyword", "[${kw["trigger"]}] → ${(kw["content"] as? String).orEmpty().take(100)}")
                     when (kw["action"] as? String ?: "reply") {
-                        "reply" -> return makePassiveReply(toUser, fromUser, "text", (kw["content"] as? String).orEmpty())
+                        "reply" -> return replyText((kw["content"] as? String).orEmpty())
                         "ai" -> { /* 关键词也走 AI：继续下方 AI 链路 */ }
                         "none" -> return ""
-                        else -> return makePassiveReply(toUser, fromUser, "text", (kw["content"] as? String).orEmpty())
+                        else -> return replyText((kw["content"] as? String).orEmpty())
                     }
                 }
             }
@@ -107,25 +140,53 @@ object MpBotManager {
             if (!aiEnabled) {
                 val dr = (bot["defaultReply"] as? String)?.takeIf { it.isNotBlank() }
                     ?: "🤖 收到！关键词未命中，且该公众号已关闭智能回答。"
-                return makePassiveReply(toUser, fromUser, "text", dr)
+                return replyText(dr)
             }
 
-            // AI 智能回答：先回「处理中」占位提示（防 5s 超时），异步跑 Agent → 客服消息推结果
+            // AI 智能回答：★ v1.193 三步策略——
+            //   ① 先进来先检查上一条超时的缓存结果，有则直接被动回复带回（未认证号连续对话）
+            //   ② 同步等最多 4.5s（微信 5s 窗口内压线）拿到本次 AI 结果则直接被动回复
+            //   ③ 仍超时：占位 + 异步继续等 AI → 结果缓存/客服消息（认证号直接推，未认证号下条带回）
+            val pendingKey = "$botId:$fromUser"
+            val cachedReply = pendingReplies.remove(pendingKey)
+            if (!cachedReply.isNullOrBlank()) {
+                db.addMpLogSafe(botId, fromUser, "ai_reply", "（上一条补发）$cachedReply".take(100))
+                return replyText(cachedReply)
+            }
             val aiModel = (bot["aiModel"] as? String) ?: "qtai-sj"
             val systemPrompt = (bot["systemPrompt"] as? String) ?: ""
             val bindId = ((bot["bindAccountId"] as? Number)?.toLong() ?: 0L)
-            // 处理中的占位被动回复（既是防超时，也是用户体验提示）
+            val aiFuture = java.util.concurrent.CompletableFuture.supplyAsync {
+                try {
+                    MpBrain.ask(db, bot, fromUser, content, aiModel, systemPrompt, boundUserId, bindId)
+                } catch (e: Exception) {
+                    "⚠️ AI 处理失败：${e.message}"
+                }
+            }
+            val aiReply: String? = try {
+                aiFuture.get(4, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: Exception) {
+                null  // 4s 超时：回占位，后台继续跑 AI
+            }
+            if (aiReply != null && aiReply.isNotBlank() && !aiReply.startsWith("⚠️ AI")) {
+                db.addMpLogSafe(botId, fromUser, "ai_reply", aiReply.take(100))
+                return replyText(aiReply)
+            }
+            // 超时：异步继续等 AI → 结果缓存（下条被动回复带回）+ 客服消息双推（认证号立即到，未认证号被 48001 拦但缓存兜底）
             kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
                 try {
-                    val reply = MpBrain.ask(db, bot, fromUser, content, aiModel, systemPrompt, boundUserId, bindId)
-                    MpPush.sendText(db, bot, fromUser, reply)
-                    db.addMpLogSafe(botId, fromUser, "ai_reply", reply.take(100))
+                    val reply = aiFuture.get(60, java.util.concurrent.TimeUnit.SECONDS)
+                    if (reply.isNotBlank() && !reply.startsWith("⚠️ AI")) {
+                        pendingReplies[pendingKey] = reply.take(600)
+                        MpPush.sendText(db, bot, fromUser, reply)
+                        db.addMpLogSafe(botId, fromUser, "ai_reply", reply.take(100))
+                    }
                 } catch (e: Exception) {
                     kotlinx.coroutines.GlobalScope.launch { MpPush.sendText(db, bot, fromUser, "⚠️ AI 处理失败：${e.message}") }
                 }
             }
-            val placeholder = (bot["defaultReply"] as? String)?.takeIf { it.isNotBlank() } ?: "🤖 收到，正在思考中…请稍候"
-            return makePassiveReply(toUser, fromUser, "text", placeholder)
+            val placeholder = (bot["defaultReply"] as? String)?.takeIf { it.isNotBlank() } ?: "🤖 收到，正在思考中…请稍候，稍后再发条消息即可获取结果"
+            return replyText(placeholder)
         } catch (e: Exception) {
             System.err.println("[MpBot] 处理消息异常: ${e.message}")
             return ""
@@ -187,11 +248,100 @@ object MpBotManager {
     fun webhookUrl(botId: Long, externalHost: String = ""): String =
         if (externalHost.isNotBlank()) "$externalHost/mp/webhook/$botId" else "/mp/webhook/$botId"
 
-    /** AES 加解密（安全/兼容模式时用，EncodingAESKey；本期先提供骨架，明文模式已可用） */
-    fun decryptMsg(encodingAesKey: String, encryptMsg: String): String {
-        // 对接标准：aesKey = Base64(EncodingAESKey + "=")；CBC PKCS7；iv = 前16字节；消息取后 20 位随机串 + 4 位网络序长度 + msg + appid
-        // 为控制本期复杂度：非明文模式先回退「无法解密」，提示用明文模式（刷新管理页可见提示）
-        return ""
+    // ============ 微信官方 AES 加解密（安全/兼容模式） ============
+    /**
+     * 解密微信加密消息（安全/兼容模式）。
+     * 微信格式：AES-256-CBC(PKCS7)，key = Base64Decode(EncodingAESKey + "=")，iv = key 前 16 字节
+     * 明文结构：<16字节随机串><4字节网络序消息长度><消息体XML><AppID>
+     * @return 解密后的明文 XML 文本；失败返回空串
+     */
+    fun decryptMsg(encodingAesKey: String, encryptMsg: String, appid: String, msgSignature: String, timestamp: String, nonce: String, token: String): String {
+        try {
+            if (encodingAesKey.isBlank() || encryptMsg.isBlank()) return ""
+            // 安全模式需校验 msg_signature = sha1(sort(token, timestamp, nonce, encryptMsg))
+            if (msgSignature.isNotBlank()) {
+                val expect = sha1(listOf(token, timestamp, nonce, encryptMsg).sorted().joinToString(""))
+                if (!expect.equals(msgSignature, ignoreCase = true)) {
+                    System.err.println("[MpBot] 安全模式 msg_signature 校验失败")
+                    return ""
+                }
+            }
+            val aesKey = Base64.getDecoder().decode(encodingAesKey + "=")
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            val iv = aesKey.copyOfRange(0, 16)
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, "AES"), IvParameterSpec(iv))
+            val decrypted = cipher.doFinal(Base64.getDecoder().decode(encryptMsg))
+
+            // 解包：前16字节随机串 + 4字节网络序长度 + 消息体 + appid
+            val msgLenBytes = decrypted.copyOfRange(16, 20)
+            val msgLen = ((msgLenBytes[0].toInt() and 0xFF) shl 24) or
+                ((msgLenBytes[1].toInt() and 0xFF) shl 16) or
+                ((msgLenBytes[2].toInt() and 0xFF) shl 8) or
+                (msgLenBytes[3].toInt() and 0xFF)
+            if (msgLen <= 0 || 20 + msgLen > decrypted.size) {
+                System.err.println("[MpBot] 解密消息体长度异常: $msgLen / ${decrypted.size}")
+                return ""
+            }
+            val msg = String(decrypted, 20, msgLen, Charsets.UTF_8)
+            // 校验尾部 appid 是否一致（防止加密串串号）
+            val tail = String(decrypted, 20 + msgLen, decrypted.size - 20 - msgLen, Charsets.UTF_8)
+            if (appid.isNotBlank() && tail != appid) {
+                System.err.println("[MpBot] 解密尾部 appid 不一致: 期望[$appid] 实际[$tail]")
+                return ""
+            }
+            return msg
+        } catch (e: Exception) {
+            System.err.println("[MpBot] 解密异常: ${e.message}")
+            return ""
+        }
+    }
+
+    /** 加密被动回复 XML（安全/兼容模式返回给微信用） */
+    fun encryptReplyMsg(encodingAesKey: String, replyXml: String, appid: String, timestamp: String, nonce: String, token: String): String {
+        try {
+            if (encodingAesKey.isBlank()) return ""
+            val aesKey = Base64.getDecoder().decode(encodingAesKey + "=")
+
+            // 16 字节随机串 + 4 字节网络序长度 + 消息体 + appid
+            val rand = ByteArray(16).also { SecureRandom().nextBytes(it) }
+            val msgBytes = replyXml.toByteArray(Charsets.UTF_8)
+            val lenBytes = byteArrayOf(
+                ((msgBytes.size shr 24) and 0xFF).toByte(),
+                ((msgBytes.size shr 16) and 0xFF).toByte(),
+                ((msgBytes.size shr 8) and 0xFF).toByte(),
+                (msgBytes.size and 0xFF).toByte()
+            )
+            val appidBytes = appid.toByteArray(Charsets.UTF_8)
+            val plain = ByteArray(rand.size + lenBytes.size + msgBytes.size + appidBytes.size)
+            System.arraycopy(rand, 0, plain, 0, rand.size)
+            System.arraycopy(lenBytes, 0, plain, 16, 4)
+            System.arraycopy(msgBytes, 0, plain, 20, msgBytes.size)
+            System.arraycopy(appidBytes, 0, plain, 20 + msgBytes.size, appidBytes.size)
+
+            // PKCS7 补位（PKCS5Padding 等价，块16）
+            val padded = ByteArray(plain.size + 16 - plain.size % 16)
+            System.arraycopy(plain, 0, padded, 0, plain.size)
+            val pad = (16 - plain.size % 16).toByte()
+            for (i in plain.size until padded.size) padded[i] = pad
+
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            val iv = aesKey.copyOfRange(0, 16)
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"), IvParameterSpec(iv))
+            val encrypted = cipher.doFinal(padded)
+            val encryptStr = Base64.getEncoder().encodeToString(encrypted)
+
+            // 组装 <xml><Encrypt>...</Encrypt><MsgSignature>sha1(sort(token,ts,nonce,encrypt))</MsgSignature><TimeStamp>...</TimeStamp><Nonce>...</Nonce></xml>
+            val sig = sha1(listOf(token, timestamp, nonce, encryptStr).sorted().joinToString(""))
+            return "<xml><Encrypt><![CDATA[$encryptStr]]></Encrypt><MsgSignature><![CDATA[$sig]]></MsgSignature><TimeStamp>$timestamp</TimeStamp><Nonce><![CDATA[$nonce]]></Nonce></xml>"
+        } catch (e: Exception) {
+            System.err.println("[MpBot] 加密回复异常: ${e.message}")
+            return ""
+        }
+    }
+
+    private fun sha1(input: String): String {
+        val digest = MessageDigest.getInstance("SHA-1").digest(input.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
     }
 }
 
