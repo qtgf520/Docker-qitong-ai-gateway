@@ -594,7 +594,7 @@ $KNOWLEDGE_JSON
                 "git_version" -> {
                     // ★ v1.116 查 Git 版本：当前版本 / 最新提交 / 最近 tag
                     try {
-                        val ver = db.getConfig("app_version", "1.116")
+                        val ver = db.getConfig("app_version", "1.192")
                         val sb = StringBuilder("🔖 【网关 Git 版本】\n")
                         sb.append("• 当前版本：v").append(ver).append("\n")
                         runCatching {
@@ -608,7 +608,7 @@ $KNOWLEDGE_JSON
                             if (out2.isNotBlank()) sb.append("• 最近标签：").append(out2.lines().joinToString("、")).append("\n")
                         }
                         sb.toString().trim()
-                    } catch (e: Exception) { "🔖 当前版本：v1.116（版本信息读取失败：${e.message}）" }
+                    } catch (e: Exception) { "🔖 当前版本：v1.192（版本信息读取失败：${e.message}）" }
                 }
                 "git_log" -> {
                     // ★ v1.116 查 Git 最近提交历史
