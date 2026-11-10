@@ -50,6 +50,7 @@ object SandboxEngine {
         "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
         "backup_list", "backup_create", "backup_restore",
         "kb_list", "kb_search",  // ★ v1.194 知识库
+        "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
         "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
         "ssh_list", "ssh_exec",
         "ticket_list", "ticket_create", "ticket_detail",
@@ -168,6 +169,8 @@ object SandboxEngine {
             .put(func("price_set", "保存/新增模型自定义价格（管理员；input_price输入价，output_price可选默认2倍）", "admin", "modify", listOf(param("model_id", true, "模型ID"), param("input_price", true, "输入价(元/百万token)"), param("output_price", false, "输出价默认为输入2倍")), "保存结果"))
             .put(func("price_delete", "删除模型自定义价格（管理员）", "admin", "modify", listOf(param("model_id", true, "模型ID")), "删除结果"))
             .put(func("price_clear", "清空全部自定义价格恢复默认表（管理员）", "admin", "modify", emptyList(), "清空条数"))
+            .put(func("subagent_run", "派发子Agent执行独立任务（可后台并行；task=任务描述, model=模型可空, wait=是否等待结果）", "user", "modify", listOf(param("task", true, "子任务描述（给子Agent的指令）"), param("model", false, "子Agent模型默认qtai-sj"), param("wait", false, "wait=1前台等待结果 or 后台")), "子任务ID/结果"))
+            .put(func("subagent_result", "查询子Agent任务结果（只读；id=子任务ID）", "user", "read", listOf(param("id", true, "子任务ID")), "子任务状态/结果"))
             .put(func("kb_list", "查看知识库列表（只读；含各库文档/分块数）", "user", "read", emptyList(), "知识库名称/描述/文档数"))
             .put(func("kb_search", "检索知识库内容（只读；kb_ids 知识库ID逗号分隔，query 检索词）", "user", "read", listOf(param("query", true, "检索词"), param("kb_ids", false, "知识库ID逗号分隔，空=全部可见库")), "命中的知识片段"))
             .put(func("usage_recent", "查看最近用量记录（只读；管理员全部，用户看自己）", "user", "read", listOf(param("limit", false, "条数默认20")), "模型/Token/费用/时间"))
@@ -539,6 +542,50 @@ $KNOWLEDGE_JSON
      */
     fun execute(fn: String, args: Map<String, String>, isAdmin: Boolean, userId: Long, db: Database, channel: String = "qq"): String = runBlocking { executeSuspend(fn, args, isAdmin, userId, db, channel) }
 
+    // ============ ★ v1.195 子 Agent 辅助（ensureHist 独立上下文 + askLite 轻量调模型） ============
+    private val subHist = java.util.concurrent.ConcurrentHashMap<String, MutableList<Pair<String, String>>>()
+
+    /** 初始化子 Agent 独立历史（幂等） */
+    fun ensureHist(key: String) {
+        subHist.getOrPut(key) { mutableListOf() }
+    }
+
+    /** 子 Agent 轻量调模型（独立上下文 + 仅保留 10 条 + 非流式） */
+    fun askLite(db: Database, systemPrompt: String, userContent: String, model: String, histKey: String): String {
+        val hist = subHist.getOrPut(histKey) { mutableListOf() }
+        hist.add("user" to userContent)
+        while (hist.size > 10) hist.removeAt(0)
+        return try {
+            val msgs = org.json.JSONArray()
+            msgs.put(org.json.JSONObject().put("role", "system").put("content", systemPrompt))
+            hist.forEach { (r, c) -> msgs.put(org.json.JSONObject().put("role", r).put("content", c)) }
+            val body = org.json.JSONObject()
+                .put("model", model)
+                .put("messages", msgs)
+                .put("stream", false)
+                .put("max_tokens", 2048)
+                .toString()
+            val req = okhttp3.Request.Builder()
+                .url("http://127.0.0.1:18889/v1/chat/completions")
+                .addHeader("Content-Type", "application/json")
+                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+            val resp = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                .build().newCall(req).execute()
+            resp.use { r ->
+                if (r.isSuccessful) {
+                    org.json.JSONObject(r.body?.string().orEmpty())
+                        .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                        ?.optString("content").orEmpty()
+                } else ""
+            }
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
     /** suspend 版本（SkillExecutor.execute 是 suspend） */
     suspend fun executeSuspend(fn: String, args: Map<String, String>, isAdmin: Boolean, userId: Long, db: Database, channel: String = "qq"): String {
         // 权限表：函数 -> (最低权限, 风险)
@@ -565,6 +612,7 @@ $KNOWLEDGE_JSON
             // v1.166 新增：普通用户只读/自助
             "price_get", "plan_list", "conversation_list", "usage_recent", "usage_stats", "overall_stats",
             "kb_list", "kb_search",  // ★ v1.194 知识库检索（只读）
+            "subagent_result",  // ★ v1.195 子Agent结果查询（只读）
             "ticket_list", "ticket_create", "card_redeem", "memory_add",
             "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool" -> "user" to "read"
             // v1.166 新增：管理员只读
@@ -598,7 +646,7 @@ $KNOWLEDGE_JSON
                 "git_version" -> {
                     // ★ v1.116 查 Git 版本：当前版本 / 最新提交 / 最近 tag
                     try {
-                        val ver = db.getConfig("app_version", "1.194")
+                        val ver = db.getConfig("app_version", "1.195")
                         val sb = StringBuilder("🔖 【网关 Git 版本】\n")
                         sb.append("• 当前版本：v").append(ver).append("\n")
                         runCatching {
@@ -612,7 +660,7 @@ $KNOWLEDGE_JSON
                             if (out2.isNotBlank()) sb.append("• 最近标签：").append(out2.lines().joinToString("、")).append("\n")
                         }
                         sb.toString().trim()
-                    } catch (e: Exception) { "🔖 当前版本：v1.194（版本信息读取失败：${e.message}）" }
+                    } catch (e: Exception) { "🔖 当前版本：v1.195（版本信息读取失败：${e.message}）" }
                 }
                 "git_log" -> {
                     // ★ v1.116 查 Git 最近提交历史
@@ -1600,6 +1648,7 @@ $KNOWLEDGE_JSON
                 // ===== v1.166 网关全接口补齐（实现见 V155Ext1/2） =====
                 "price_list", "price_get", "price_set", "price_delete", "price_clear",
                 "kb_list", "kb_search",  // ★ v1.194 知识库检索
+                "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
                 "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
                 "backup_list", "backup_create", "backup_restore",
                 "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",

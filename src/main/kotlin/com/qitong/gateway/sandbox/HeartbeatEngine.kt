@@ -134,6 +134,28 @@ object HeartbeatEngine {
                     if (parts.size < 3) "⚠️ mail 语法：mail:收件人|主题|内容"
                     else com.qitong.gateway.notify.NotificationManager.sendMail(db, parts[0].trim(), parts[1].trim(), parts[2].trim())
                 }
+                // ★ v1.195 ai:前缀 → 调 AI 智能体执行任务（真沙盒工具 vs 轻量对话，选聪明模式）
+                content.startsWith("ai:") -> {
+                    val task = content.removePrefix("ai:").trim()
+                    if (task.isBlank()) null
+                    else {
+                        val exec = java.util.concurrent.CompletableFuture.supplyAsync {
+                            try {
+                                // 用子 Agent 引擎跑（真工具调度, 有完成结论）
+                                com.qitong.gateway.sandbox.SubAgentEngine.dispatch(
+                                    db, 0L, "scheduled", "", task, "qtai-sj", 60_000L
+                                )
+                                val result = db.getSubagentTasks(0L, null, 3).firstOrNull()
+                                if (result != null && (result["status"] as? String) == "done")
+                                    (result["result"] as? String ?: "(无结果)").take(400)
+                                else "（AI执行结果暂未返回）"
+                            } catch (e: Exception) {
+                                "❌ AI执行异常：${e.message}"
+                            }
+                        }
+                        "🤖 AI执行：$task\n${exec.get(70, java.util.concurrent.TimeUnit.SECONDS)}"
+                    }
+                }
                 else -> null
             }
         } catch (e: Exception) {

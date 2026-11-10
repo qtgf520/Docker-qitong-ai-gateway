@@ -3,7 +3,7 @@ package com.qitong.gateway.kb
 import com.qitong.gateway.db.Database
 
 /**
- * ★ v1.194 知识库引擎（RAG 核心，纯 Kotlin 自研，无外部依赖）
+ * ★ v1.195 知识库引擎（RAG 核心，纯 Kotlin 自研，无外部依赖）
  *
  * 设计：知识库 = 文档分块 + BM25 稀疏检索 + 结果注入 Prompt
  * - 递归字符分块：按段落/句子层级递归切分，块间重叠

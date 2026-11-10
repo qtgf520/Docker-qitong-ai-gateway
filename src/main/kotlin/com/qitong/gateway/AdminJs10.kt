@@ -356,7 +356,7 @@ window.restoreBackup = function(i){
  });
 };
 
-// ===== ★ v1.194 微信公众号管理页（多公众号 + 关键词 + webhook 地址 + 日志） =====
+// ===== ★ v1.195 微信公众号管理页（多公众号 + 关键词 + webhook 地址 + 日志） =====
 var mpCurBot = 0;
 loaders.mp = function(){
  var box = $('view-mp');
@@ -621,6 +621,52 @@ window.kbTestSearch = function(id){
   el.innerHTML = list.map(function(x){
    return '<div style="border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin:4px 0"><b>'+esc(x.docTitle||'')+'</b> <span style="color:var(--muted)">得分 '+x.score+'</span><br><span style="font-size:12px">'+esc((x.content||'').take(200))+'</span></div>';
   }).join('');
+ });
+};
+// ===== ★ v1.195 多子 Agent 调度任务查看页 =====
+loaders.subagent = function(){
+ var box = $('view-subagent');
+ box.innerHTML = '<div class="card"><h3>🤖 子Agent 任务 <span style="font-size:12px;color:var(--muted)">主 Agent 派生的后台子任务 · 独立上下文 · 真工具调度</span></h3>' +
+  '<div class="action-bar"><button class="btn-ghost" onclick="loadSubagentTasks()">🔄 刷新</button><span id="subAgentHint" style="font-size:12px;color:var(--muted)">加载中…</span></div>' +
+  '<div id="subAgentList" style="margin-top:12px"><div style="color:var(--muted);padding:16px">加载中…</div></div></div>';
+ loadSubagentTasks();
+};
+function loadSubagentTasks(){
+ api('/api/subagent/tasks').then(function(r){
+  var list = r.data || [];
+  var el = $('subAgentList'); if(!el) return;
+  $('#subAgentHint').textContent = '共 ' + list.length + ' 个任务';
+  if(!list.length){ el.innerHTML = '<div style="color:var(--muted)">暂无子任务。主 Agent（智能体）在处理复杂任务时会派发子 Agent 后台并行执行，这里可查看结果。</div>'; return; }
+  var rows = list.map(function(t){
+   var stBadge = t.status==='done' ? '<span class="badge green">完成</span>' : (t.status==='failed' ? '<span class="badge red">失败</span>' : '<span class="badge cyan">运行中</span>');
+   var ts = new Date(t.createdAt);
+   var tstr = ts.getFullYear()+'-'+String(ts.getMonth()+1).padStart(2,'0')+'-'+String(ts.getDate()).padStart(2,'0')+' '+String(ts.getHours()).padStart(2,'0')+':'+String(ts.getMinutes()).padStart(2,'0');
+   return '<tr>' +
+    '<td>#'+t.id+'</td>' +
+    '<td>'+esc((t.taskDesc||'').take(50))+'</td>' +
+    '<td>'+stBadge+'</td>' +
+    '<td style="font-size:12px;color:var(--muted)">'+tstr+'</td>' +
+    '<td class="sa-result-cell" style="max-width:320px;font-size:12px;color:var(--muted)">'+esc((t.result||t.error||'').take(120))+'</td>' +
+    '<td><button class="btn-ghost btn-sm" onclick="saExpand('+t.id+')">详情</button> <button class="btn-ghost btn-sm" style="color:var(--red)" onclick="saDel('+t.id+')">删</button></td></tr>';
+  }).join('');
+  el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>ID</th><th>任务</th><th>状态</th><th>时间</th><th>结果</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  window._saTaskStore = list;
+ });
+}
+window.saExpand = function(id){
+ var t = (window._saTaskStore||[]).find(function(x){ return x.id===id; });
+ if(!t) return;
+ openModal('子Agent #'+id+' 详情',
+  '<div class="form-row"><label>任务描述</label><div style="font-size:13px;padding:8px;background:var(--inset);border-radius:6px">'+esc(t.taskDesc||'')+'</div></div>' +
+  '<div class="form-row"><label>状态</label><div>'+t.status+'</div></div>' +
+  '<div class="form-row"><label>结果</label><div style="font-size:12px;padding:8px;background:var(--inset);border-radius:6px;white-space:pre-wrap;max-height:240px;overflow-y:auto">'+esc(t.result||'')+'</div></div>' +
+  (t.error ? '<div class="form-row"><label style="color:var(--red)">错误</label><div style="font-size:12px;padding:8px;background:var(--inset);border-radius:6px">'+esc(t.error)+'</div></div>' : ''), null, {hideFooter:true});
+};
+window.saDel = function(id){
+ if(!confirm('确认删除子任务 #'+id+'？')) return;
+ api('/api/subagent/tasks/'+id, {method:'DELETE'}).then(function(r){
+  toast(r.msg||'已删除', r.code===0);
+  if(r.code===0) loadSubagentTasks();
  });
 };
 """

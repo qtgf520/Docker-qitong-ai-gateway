@@ -6,7 +6,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * ★ v1.194 公众号消息推送器
+ * ★ v1.195 公众号消息推送器
  * - 客服消息 API：POST https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=XXX
  *   认证服务号可用；订阅号借用「48 小时会话窗口」，用户发消息后 48h 内可主动下发
  * - access_token 管理：内存缓存 7000 秒（官方 7200s 过期，留 200s 余量），自动刷新

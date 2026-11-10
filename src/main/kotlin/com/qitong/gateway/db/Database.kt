@@ -551,7 +551,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.194 微信公众号（webhook 回调模式，多公众号管理，对齐 qq_bots/weixin_bots 风格）
+            // ★ v1.195 微信公众号（webhook 回调模式，多公众号管理，对齐 qq_bots/weixin_bots 风格）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_bots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -572,7 +572,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.194 公众号关键词规则（每公众号独立：触发词 -> 固定回复/AI，对齐 qq_commands 风格）
+            // ★ v1.195 公众号关键词规则（每公众号独立：触发词 -> 固定回复/AI，对齐 qq_commands 风格）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_keywords (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -585,7 +585,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.194 公众号粉丝 openid 绑定网关账号（对齐 weixin_user_bindings：权限/余额/用量）
+            // ★ v1.195 公众号粉丝 openid 绑定网关账号（对齐 weixin_user_bindings：权限/余额/用量）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_fans (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -598,7 +598,7 @@ class Database(private val dbPath: String) {
                     UNIQUE(bot_id, openid)
                 )"""
             )
-            // ★ v1.194 公众号运行日志（对齐 weixin_logs）
+            // ★ v1.195 公众号运行日志（对齐 weixin_logs）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -764,6 +764,24 @@ class Database(private val dbPath: String) {
                 )"""
             )
             try { st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_gateway_logs_time ON gateway_logs(created_at DESC)") } catch (_: Exception) {}
+            // ★ v1.195 多子 Agent 调度表（主 Agent 派生子任务后台并行跑，结果可查可回填）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS subagent_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    parent_user_id INTEGER NOT NULL DEFAULT 0,     -- 派发者（主 Agent 用户）
+                    parent_channel TEXT NOT NULL DEFAULT 'chat',   -- 来源渠道 chat/qq/weixin/mp
+                    parent_session TEXT NOT NULL DEFAULT '',       -- 来源会话标识（openid/会话id）
+                    agent_name TEXT NOT NULL DEFAULT 'subagent',   -- 子 Agent 名称
+                    task_desc TEXT NOT NULL DEFAULT '',            -- 子任务描述（给子 Agent 的指令）
+                    model TEXT NOT NULL DEFAULT 'qtai-sj',         -- 子 Agent 用的模型
+                    status TEXT NOT NULL DEFAULT 'running',        -- running/done/failed
+                    result TEXT NOT NULL DEFAULT '',               -- 执行结果
+                    error TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    finished_at INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
+            st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_subagent_parent ON subagent_tasks(parent_user_id, status)")
             // ★ v1.187 节点域名表：自定义接入域名（首页优先显示节点、隐藏IP；首次安装引导添加）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS node_domains (
@@ -1892,6 +1910,73 @@ fun updateUserLogin(id: Long) {
         return results.sortedByDescending { it["score"] as? Double ?: 0.0 }
     }
 
+    // ============ ★ v1.195 多子 Agent 任务（subagent_tasks） ============
+
+    /** 新增子任务（返回任务ID） */
+    fun addSubagentTask(parentUserId: Long, parentChannel: String, parentSession: String, agentName: String, taskDesc: String, model: String = "qtai-sj"): Long {
+        stmt(
+            "INSERT INTO subagent_tasks (parent_user_id,parent_channel,parent_session,agent_name,task_desc,model,status,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            parentUserId, parentChannel, parentSession, agentName, taskDesc, model, "running", System.currentTimeMillis()
+        )
+        return lastInsertId()
+    }
+
+    /** 完成子任务（成功/失败） */
+    fun finishSubagentTask(id: Long, success: Boolean, result: String = "", error: String = "") {
+        stmt(
+            "UPDATE subagent_tasks SET status=?, result=?, error=?, finished_at=? WHERE id=?",
+            if (success) "done" else "failed", result, error, System.currentTimeMillis(), id
+        )
+    }
+
+    /** 查子任务（按父用户/状态过滤） */
+    fun getSubagentTasks(parentUserId: Long = 0L, status: String? = null, limit: Int = 20): List<Map<String, Any?>> {
+        val conds = mutableListOf<String>()
+        val args = mutableListOf<Any>()
+        if (parentUserId > 0) { conds.add("parent_user_id=?"); args.add(parentUserId) }
+        if (status != null) { conds.add("status=?"); args.add(status) }
+        val where = if (conds.isEmpty()) "" else " WHERE " + conds.joinToString(" AND ")
+        val rows = query("SELECT * FROM subagent_tasks$where ORDER BY id DESC LIMIT $limit", *args.toTypedArray())
+        return rows.map { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "parentUserId" to ((row["parent_user_id"] as? Number)?.toLong() ?: 0L),
+                "parentChannel" to (row["parent_channel"] as? String ?: ""),
+                "parentSession" to (row["parent_session"] as? String ?: ""),
+                "agentName" to (row["agent_name"] as? String ?: "subagent"),
+                "taskDesc" to (row["task_desc"] as? String ?: ""),
+                "model" to (row["model"] as? String ?: "qtai-sj"),
+                "status" to (row["status"] as? String ?: "running"),
+                "result" to (row["result"] as? String ?: ""),
+                "error" to (row["error"] as? String ?: ""),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L),
+                "finishedAt" to ((row["finished_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+    }
+
+    /** 查单个子任务 */
+    fun getSubagentTaskById(id: Long): Map<String, Any?>? =
+        query("SELECT * FROM subagent_tasks WHERE id=?", id).firstOrNull()?.let { row ->
+            mapOf(
+                "id" to ((row["id"] as Number).toLong()),
+                "parentUserId" to ((row["parent_user_id"] as? Number)?.toLong() ?: 0L),
+                "parentChannel" to (row["parent_channel"] as? String ?: ""),
+                "parentSession" to (row["parent_session"] as? String ?: ""),
+                "agentName" to (row["agent_name"] as? String ?: "subagent"),
+                "taskDesc" to (row["task_desc"] as? String ?: ""),
+                "model" to (row["model"] as? String ?: "qtai-sj"),
+                "status" to (row["status"] as? String ?: "running"),
+                "result" to (row["result"] as? String ?: ""),
+                "error" to (row["error"] as? String ?: ""),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L),
+                "finishedAt" to ((row["finished_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    /** 删除子任务（清理） */
+    fun deleteSubagentTask(id: Long) { stmt("DELETE FROM subagent_tasks WHERE id=?", id) }
+
     // ============ 大脑记忆（按用户隔离） ============
 
     /** ★ v1.166 统计用户记忆条数（滚动摘要触发用，不触发 accessCount） */
@@ -2461,6 +2546,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.195", "多子Agent调度 + Cron定时AI Agent（subagent_run/subagent_result + ai:前缀）", "让智能体拥有分身干活能力，对标一流智能体平台多Agent架构：①多子Agent调度——沙盒新增 subagent_run（派发子任务：task=描述, model=模型, wait=1前台等结果 or 后台）/ subagent_result（查询结果）；子Agent独立上下文、最多8轮、可自主调沙盒工具真执行、线程池并发上限8个，干完出结论；结果存 subagent_tasks 表。②后台任务管理——管理页智能体→子Agent 查看所有子任务（状态/结果/删除，普通用户看自己的），API /api/subagent/tasks。③Cron定时AI Agent——计划任务内容新增 ai: 前缀（如 ai:查一下今天服务商健康并汇报），到点由心跳引擎调子Agent引擎真执行（配合已有 cron 表达式定时主动干活），扩展现有 cmd:/wf:/mail: 前缀。④心跳引擎 executeDueAction 扩展支持 AI 智能体执行。"),
 Triple("v1.194", "知识库（RAG 检索增强：多库管理 + 文档分块 + BM25 检索 + 三渠道自动注入）", "上传文档让 AI 基于资料精准回答：①多知识库管理——后台「知识库」菜单可新建/编辑/删除多个知识库（公开/私有，owner 隔离），每库独立文档；②文档自动分块——粘贴 txt/md 内容自动按段落/句子边界递归分块（500字/块、80字重叠，中英混合识别），kb_docs/kb_chunks 表入库；③BM25 稀疏检索——自研词频+逆文档频率打分（无需 embedding 离线可用），searchKbAcross 支持多库跨库检索；④三渠道自动注入——内置聊天/QQ/微信用户提问时自动检索知识库（公开库+绑定账号自己的库），命中结果注入 System Prompt 让 AI 优先参考文档回答（kb_list/kb_search 沙盒工具可自主调用）；⑤管理页检索测试——知识库详情可直接输入检索词验证命中效果。"),
 Triple("v1.193", "微信公众号接入（webhook 回调模式·多公众号·关键词回答+AI智能回答·步骤显示开关）", "新增公众号独立模块，与 QQ/微信机器人并行：①多公众号管理——mp_bots 表，每号独立 AppID/AppSecret/Token/EncodingAESKey/加密模式/AI模型/人设/欢迎语/默认回复/关键词开关；管理页「机器人→公众号」支持添加/编辑/删除/详情，列表直接展示每个号的 Webhook 回调地址（微信公众平台「服务器配置」填这个）。②关键词回答——mp_keywords 表每公众号独立规则：触发词（精确/包含/正则）→ 固定回复/AI智能回答/忽略，命中即 5 秒内被动回复秒回。③AI 智能回答——关键词未命中且 AI 开关开时走网关大模型（复用 qtai-sj 等，loopback 同 QQ/微信链路），每粉丝 openid 独立多轮上下文；先回「处理中」占位防 5s 超时，AI 结果通过客服消息异步推送（认证服务号；订阅号借用 48h 会话窗口）。④步骤显示开关——默认 quiet 不推过程，粉丝发「显示步骤」开启 verbose（AI 干活步骤实时推送），「隐藏步骤」关闭；开关按公众号绑定账号记忆。⑤粉丝 openid 可绑定网关账号（权限/余额/用量对齐 QQ/微信），公众号运行日志 mp_logs 全程记录。⑥URL 验签——GET /mp/webhook/{id} 用 sha1(token+ts+nonce) 完成公众平台配置校验。"),
 Triple("v1.192", "价格表指定价格全局生效（0=免费公益）+ 消费分佣（下级返佣+模型归属分成）", "让模型定价真正全局可控、让代理真正能靠消费赚钱：①价格表指定模型价格全局生效——模型价格表里设置某个模型的输入价后，全平台所有用户调用该模型都按这个价计费；输入价填 0 = 该模型免费（公益），不再回落默认价；未设置价格的模型才按 模型单价 → 内置默认价 计费；免费模型不套计费规则、免费就是免费。②消费分佣双通道——①下级消费返上级：用户每次消费付费模型扣费成功后，他的邀请人（上级/代理）按自己的佣金比例自动获得返佣入账；②模型归属者分成：别人用了我添加的模型（私有模型 ownerId>0）时，模型添加者按自己的佣金比例自动获得分成入账。佣金实时进余额、记入 balance_log 返佣流水（个人中心余额账单可见，绿字+），个人中心展示累计佣金收益与佣金比例，管理员在用户管理里可编辑每个用户的佣金比例（默认10%）。③修复连带：余额不足的用户看可用模型时，价格表设为0的免费模型正确可见（原逻辑只看模型单价）。"),
@@ -3574,7 +3660,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
 
     fun deleteWeixinBot(id: Long) { stmt("DELETE FROM weixin_bots WHERE id=?", id) }
 
-    // ============ ★ v1.194 微信公众号（webhook 回调模式） ============
+    // ============ ★ v1.195 微信公众号（webhook 回调模式） ============
 
     /** 全部公众号 */
     fun getMpBots(): List<Map<String, Any?>> =

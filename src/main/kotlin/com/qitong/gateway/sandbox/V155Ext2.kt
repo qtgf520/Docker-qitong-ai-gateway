@@ -8,6 +8,46 @@ import com.qitong.gateway.db.Database
  */
 object V155Ext2 {
     suspend fun execute(fn: String, args: Map<String, String>, isAdmin: Boolean, userId: Long, db: Database, channel: String = "qq"): String? = when (fn) {
+        // ★ v1.195 多子 Agent 调度：派发/查询
+        "subagent_run" -> {
+            val task = (args["task"] ?: "").trim()
+            if (task.isBlank()) "⚠️ 语法：subagent_run(task=子任务描述, model=模型可空, wait=1前台等待 or 后台)"
+            else {
+                val model = (args["model"] ?: "").trim().ifBlank { "qtai-sj" }
+                val wait = (args["wait"] ?: "").trim() == "1"
+                val session = args["session"] ?: ""
+                val taskId = com.qitong.gateway.sandbox.SubAgentEngine.dispatch(
+                    db, userId, channel, session, task, model, if (wait) 45_000L else 0L
+                )
+                when {
+                    taskId == -1L -> "⛔ 子Agent并发已满（最多8个），请稍后再试"
+                    taskId == 0L -> "⚠️ 子任务描述不能为空"
+                    wait -> {
+                        val t = db.getSubagentTaskById(taskId)
+                        val status = (t?.get("status") as? String) ?: "running"
+                        if (status == "done") "✅ 子Agent[$taskId]完成：\n${t?.get("result") as? String ?: "(无结果)"}"
+                        else "⏳ 子Agent[$taskId] 处理中（$status）…可用 subagent_result(id=$taskId) 查询"
+                    }
+                    else -> "🤖 子Agent任务 #$taskId 已派发后台执行（$task）\n完成后可用 subagent_result(id=$taskId) 查结果"
+                }
+            }
+        }
+        "subagent_result" -> {
+            val id = args["id"]?.trim()?.toLongOrNull()
+            if (id == null) "⚠️ 语法：subagent_result(id=子任务ID)"
+            else {
+                val t = db.getSubagentTaskById(id)
+                if (t == null) "❌ 子任务 #$id 不存在"
+                else {
+                    val st = (t["status"] as? String) ?: "running"
+                    when (st) {
+                        "done" -> "✅ 子Agent #$id 完成：\n${t["result"]}"
+                        "failed" -> "❌ 子Agent #$id 失败：${t["error"]}"
+                        else -> "⏳ 子Agent #$id 执行中…（任务：${(t["taskDesc"] as? String ?: "").take(60)}）"
+                    }
+                }
+            }
+        }
         "ticket_list" -> {
             val rows = db.getTickets(if (isAdmin) null else userId, isAdmin, 50)
             if (rows.isEmpty()) "📭 暂无工单"
