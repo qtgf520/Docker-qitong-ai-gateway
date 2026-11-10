@@ -12,7 +12,7 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * ★ v1.193 微信公众号（webhook 回调模式）管理器
+ * ★ v1.194 微信公众号（webhook 回调模式）管理器
  *
  * 与 QQ（WebSocket）、微信 ilink（长轮询）完全不同：公众号是微信服务器 → 我们的服务器「推消息」模式。
  * - URL 验证：公众平台配置 URL 时 GET 过来带 signature/timestamp/nonce，用 sha1(token+ts+nonce) 比对
@@ -25,7 +25,7 @@ import javax.crypto.spec.SecretKeySpec
  */
 object MpBotManager {
 
-    /** ★ v1.193 超时兜底：AI 没在 5s 窗口内答完时缓存结果，用户下一条消息被动回复带回（未认证号也连续对话） */
+    /** ★ v1.194 超时兜底：AI 没在 5s 窗口内答完时缓存结果，用户下一条消息被动回复带回（未认证号也连续对话） */
     private val pendingReplies = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     // ============ URL 验证（微信服务器首次配置时的 GET 校验） ============
@@ -51,7 +51,7 @@ object MpBotManager {
         val botId = (bot["id"] as? Number)?.toLong() ?: 0L
         val appid = (bot["appid"] as? String) ?: ""
         try {
-            // ★ v1.193 安全/兼容模式：收到的消息体是 <Encrypt>base64</Encrypt>，先解密成明文 XML 再解析
+            // ★ v1.194 安全/兼容模式：收到的消息体是 <Encrypt>base64</Encrypt>，先解密成明文 XML 再解析
             var effectiveXml = xmlText
             if (isEncrypted) {
                 val encXml = parseXml(xmlText)
@@ -143,7 +143,7 @@ object MpBotManager {
                 return replyText(dr)
             }
 
-            // AI 智能回答：★ v1.193 三步策略——
+            // AI 智能回答：★ v1.194 三步策略——
             //   ① 先进来先检查上一条超时的缓存结果，有则直接被动回复带回（未认证号连续对话）
             //   ② 同步等最多 4.5s（微信 5s 窗口内压线）拿到本次 AI 结果则直接被动回复
             //   ③ 仍超时：占位 + 异步继续等 AI → 结果缓存/客服消息（认证号直接推，未认证号下条带回）

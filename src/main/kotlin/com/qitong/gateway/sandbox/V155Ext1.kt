@@ -9,6 +9,34 @@ import com.qitong.gateway.http.PricingTable
  */
 object V155Ext1 {
     suspend fun execute(fn: String, args: Map<String, String>, isAdmin: Boolean, userId: Long, db: Database, channel: String = "qq"): String? = when (fn) {
+        // ★ v1.194 知识库：列表 / 检索（普通用户只读可见库）
+        "kb_list" -> {
+            val bases = db.getKbBases(if (isAdmin) 0L else userId)
+            if (bases.isEmpty()) "📚 暂无知识库。管理员可在后台「知识库」页创建并上传文档。"
+            else "📚 【知识库列表】\n" + bases.joinToString("\n") { b ->
+                "• [${b["id"]}] ${b["name"]}｜${b["description"]}｜文档${b["docCount"]} 分块${b["chunkCount"]}${if ((b["isPublic"] as? Boolean) == true) "（公开）" else ""}"
+            }.take(1600)
+        }
+        "kb_search" -> {
+            val query = (args["query"] ?: "").trim()
+            if (query.isBlank()) "⚠️ 语法：kb_search(query=检索词, kb_ids=知识库ID逗号分隔可空)"
+            else {
+                val allBases = db.getKbBases(if (isAdmin) 0L else userId)
+                val idsStr = (args["kb_ids"] ?: "").trim()
+                val kbIds = if (idsStr.isNotBlank()) {
+                    idsStr.split(",").mapNotNull { it.trim().toLongOrNull() }
+                        .filter { id -> allBases.any { (it["id"] as? Number)?.toLong() == id } }
+                } else allBases.mapNotNull { (it["id"] as? Number)?.toLong() }
+                if (kbIds.isEmpty()) "📚 没有可检索的知识库（管理员先在后台创建并上传文档）"
+                else {
+                    val results = db.searchKbAcross(kbIds, query, 3)
+                    if (results.isEmpty()) "🔍 未在 ${kbIds.size} 个知识库中找到与「$query」相关的内容"
+                    else "🔍 【知识库检索：$query】\n" + results.take(9).joinToString("\n") { r ->
+                        "• ${r["kbName"]}｜${r["docTitle"]}\n  ${(r["content"] as? String ?: "").take(150)}"
+                    }.take(1800)
+                }
+            }
+        }
         "price_list" -> {
             val builtin = PricingTable.table()
             val custom = db.getAllModelPrices()

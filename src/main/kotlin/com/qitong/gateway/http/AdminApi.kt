@@ -1031,6 +1031,28 @@ private fun providerToMap(p: Provider) = mapOf(
                 }
             }
         }
+        // ★ v1.194 知识库 RAG 自动检索：用户提问时按当前消息检索知识库（公开库+用户自己的库），命中则注入上下文
+        runCatching {
+            val kbBases = database.getKbBases(if (user?.role == "admin") 0L else userId)
+                .filter { (it["docCount"] as? Number)?.toInt() ?: 0 > 0 }
+            if (kbBases.isNotEmpty() && userContent.trim().length >= 2) {
+                val kbIds = kbBases.mapNotNull { (it["id"] as? Number)?.toLong() }
+                val results = database.searchKbAcross(kbIds, userContent, 3)
+                if (results.isNotEmpty()) {
+                    val kbPrompt = StringBuilder("\n\n## 📚 知识库检索结果（基于你的文档资料，回答时优先参考）\n")
+                    results.take(6).forEachIndexed { i, r ->
+                        val content = (r["content"] as? String ?: "").trim()
+                        if (content.isNotBlank()) {
+                            kbPrompt.append("[${i + 1}·${r["kbName"]}·${r["docTitle"]}] ").append(content.take(400)).append("\n")
+                        }
+                    }
+                    messages.add(buildJsonObject {
+                        put("role", JsonPrimitive("system"))
+                        put("content", JsonPrimitive(kbPrompt.toString()))
+                    })
+                }
+            }
+        }
         val requestBody = buildJsonObject {
             put("model", JsonPrimitive(effectiveModel))
             put("messages", JsonArray(messages))

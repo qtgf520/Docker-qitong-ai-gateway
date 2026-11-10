@@ -407,6 +407,46 @@ class Database(private val dbPath: String) {
                     updated_at INTEGER NOT NULL
                 )"""
             )
+            // ★ v1.194 知识库（RAG：多库管理 + 文档分块 + BM25 检索 + Agent 注入）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS kb_bases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    owner_id INTEGER NOT NULL DEFAULT 0,     -- 0=全局(管理员)，>0=用户私有
+                    is_public INTEGER NOT NULL DEFAULT 0,     -- 公开=所有用户可见可用
+                    doc_count INTEGER NOT NULL DEFAULT 0,
+                    chunk_count INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )"""
+            )
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS kb_docs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kb_id INTEGER NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    file_name TEXT NOT NULL DEFAULT '',
+                    file_size INTEGER NOT NULL DEFAULT 0,
+                    chunk_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'ok',       -- ok/failed
+                    error TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS kb_chunks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kb_id INTEGER NOT NULL,
+                    doc_id INTEGER NOT NULL DEFAULT 0,
+                    chunk_index INTEGER NOT NULL DEFAULT 0,
+                    content TEXT NOT NULL,
+                    tokens INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )"""
+            )
+            st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_kb_chunks_kb ON kb_chunks(kb_id)")
+            st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_kb_docs_kb ON kb_docs(kb_id)")
             // 工单（用户可提交，管理员可反馈，聊天式）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS tickets (
@@ -511,7 +551,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.193 微信公众号（webhook 回调模式，多公众号管理，对齐 qq_bots/weixin_bots 风格）
+            // ★ v1.194 微信公众号（webhook 回调模式，多公众号管理，对齐 qq_bots/weixin_bots 风格）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_bots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -532,7 +572,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.193 公众号关键词规则（每公众号独立：触发词 -> 固定回复/AI，对齐 qq_commands 风格）
+            // ★ v1.194 公众号关键词规则（每公众号独立：触发词 -> 固定回复/AI，对齐 qq_commands 风格）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_keywords (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -545,7 +585,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.193 公众号粉丝 openid 绑定网关账号（对齐 weixin_user_bindings：权限/余额/用量）
+            // ★ v1.194 公众号粉丝 openid 绑定网关账号（对齐 weixin_user_bindings：权限/余额/用量）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_fans (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -558,7 +598,7 @@ class Database(private val dbPath: String) {
                     UNIQUE(bot_id, openid)
                 )"""
             )
-            // ★ v1.193 公众号运行日志（对齐 weixin_logs）
+            // ★ v1.194 公众号运行日志（对齐 weixin_logs）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1696,6 +1736,162 @@ fun updateUserLogin(id: Long) {
         }
     }
 
+    // ============ ★ v1.194 知识库（RAG：多库/文档/分块） ============
+
+    /** 全部知识库（按 owner 可见：管理员全部；普通用户=带授权逻辑的） */
+    fun getKbBases(ownerId: Long = 0L, includeHidden: Boolean = true): List<Map<String, Any?>> {
+        val rows = if (ownerId > 0)
+            query("SELECT * FROM kb_bases WHERE owner_id=0 OR owner_id=? OR is_public=1 ORDER BY id", ownerId)
+        else query("SELECT * FROM kb_bases ORDER BY id")
+        return rows.map { row ->
+            val kbId = (row["id"] as Number).toLong()
+            mapOf(
+                "id" to kbId,
+                "name" to (row["name"] as? String ?: ""),
+                "description" to (row["description"] as? String ?: ""),
+                "ownerId" to ((row["owner_id"] as? Number)?.toLong() ?: 0L),
+                "isPublic" to ((row["is_public"] as? Number)?.toInt() == 1),
+                "docCount" to ((row["doc_count"] as? Number)?.toInt() ?: 0),
+                "chunkCount" to ((row["chunk_count"] as? Number)?.toInt() ?: 0),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L),
+                "updatedAt" to ((row["updated_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+    }
+
+    fun getKbBaseById(id: Long): Map<String, Any?>? =
+        query("SELECT * FROM kb_bases WHERE id=?", id).firstOrNull()?.let { row ->
+            mapOf(
+                "id" to (row["id"] as Number).toLong(),
+                "name" to (row["name"] as? String ?: ""),
+                "description" to (row["description"] as? String ?: ""),
+                "ownerId" to ((row["owner_id"] as? Number)?.toLong() ?: 0L),
+                "isPublic" to ((row["is_public"] as? Number)?.toInt() == 1),
+                "docCount" to ((row["doc_count"] as? Number)?.toInt() ?: 0),
+                "chunkCount" to ((row["chunk_count"] as? Number)?.toInt() ?: 0),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    /** 新建知识库，返回 id */
+    fun createKbBase(name: String, description: String, ownerId: Long, isPublic: Boolean): Long {
+        val now = System.currentTimeMillis()
+        stmt(
+            "INSERT INTO kb_bases (name,description,owner_id,is_public,created_at,updated_at) VALUES (?,?,?,?,?,?)",
+            name, description, ownerId, if (isPublic) 1 else 0, now, now
+        )
+        return lastInsertId()
+    }
+
+    /** 更新知识库元信息，返回是否成功 */
+    fun updateKbBase(id: Long, name: String, description: String, isPublic: Boolean): Boolean {
+        val exists = queryOne("SELECT COUNT(*) FROM kb_bases WHERE id=?", id) ?: 0
+        if (exists == 0L) return false
+        stmt("UPDATE kb_bases SET name=?, description=?, is_public=?, updated_at=? WHERE id=?",
+            name, description, if (isPublic) 1 else 0, System.currentTimeMillis(), id)
+        return true
+    }
+
+    /** 删除知识库（连带删文档和分块） */
+    fun deleteKbBase(id: Long) {
+        stmt("DELETE FROM kb_chunks WHERE kb_id=?", id)
+        stmt("DELETE FROM kb_docs WHERE kb_id=?", id)
+        stmt("DELETE FROM kb_bases WHERE id=?", id)
+    }
+
+    /** 知识库内文档列表 */
+    fun getKbDocs(kbId: Long): List<Map<String, Any?>> =
+        query("SELECT * FROM kb_docs WHERE kb_id=? ORDER BY id DESC", kbId).map { row ->
+            mapOf(
+                "id" to (row["id"] as Number).toLong(),
+                "kbId" to kbId,
+                "title" to (row["title"] as? String ?: ""),
+                "fileName" to (row["file_name"] as? String ?: ""),
+                "fileSize" to ((row["file_size"] as? Number)?.toLong() ?: 0L),
+                "chunkCount" to ((row["chunk_count"] as? Number)?.toInt() ?: 0),
+                "status" to (row["status"] as? String ?: "ok"),
+                "error" to (row["error"] as? String ?: ""),
+                "createdAt" to ((row["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+
+    /** 新增文档（返回 docId） */
+    fun addKbDoc(kbId: Long, title: String, fileName: String, fileSize: Long): Long {
+        stmt(
+            "INSERT INTO kb_docs (kb_id,title,file_name,file_size,status,created_at) VALUES (?,?,?,?,'ok',?)",
+            kbId, title, fileName, fileSize, System.currentTimeMillis()
+        )
+        return lastInsertId()
+    }
+
+    /** 写入文档分块（批量），并更新文档/知识库统计 */
+    fun addKbChunks(kbId: Long, docId: Long, chunks: List<String>, chunkSize: Int = 500) {
+        chunks.forEachIndexed { i, c ->
+            if (c.isNotBlank()) {
+                stmt("INSERT INTO kb_chunks (kb_id,doc_id,chunk_index,content,tokens,created_at) VALUES (?,?,?,?,?,?)",
+                    kbId, docId, i, c.take(chunkSize * 3), com.qitong.gateway.kb.KBEngine.estimateTokens(c), System.currentTimeMillis())
+            }
+        }
+        // 更新统计
+        val ck = queryOne("SELECT COUNT(*) FROM kb_chunks WHERE doc_id=?", docId) ?: 0
+        val ckAll = queryOne("SELECT COUNT(*) FROM kb_chunks WHERE kb_id=?", kbId) ?: 0
+        val dc = queryOne("SELECT COUNT(*) FROM kb_docs WHERE kb_id=?", kbId) ?: 0
+        stmt("UPDATE kb_docs SET chunk_count=? WHERE id=?", ck, docId)
+        stmt("UPDATE kb_bases SET doc_count=?, chunk_count=?, updated_at=? WHERE id=?", dc, ckAll, System.currentTimeMillis(), kbId)
+    }
+
+    /** 删除单个文档（连带分块 + 更新统计） */
+    fun deleteKbDoc(docId: Long, kbId: Long) {
+        stmt("DELETE FROM kb_chunks WHERE doc_id=?", docId)
+        stmt("DELETE FROM kb_docs WHERE id=?", docId)
+        val ckAll = queryOne("SELECT COUNT(*) FROM kb_chunks WHERE kb_id=?", kbId) ?: 0
+        val dc = queryOne("SELECT COUNT(*) FROM kb_docs WHERE kb_id=?", kbId) ?: 0
+        stmt("UPDATE kb_bases SET doc_count=?, chunk_count=?, updated_at=? WHERE id=?", dc, ckAll, System.currentTimeMillis(), kbId)
+    }
+
+    /** 清空文档（重建用） */
+    fun clearKbDocs(kbId: Long) {
+        stmt("DELETE FROM kb_chunks WHERE kb_id=?", kbId)
+        stmt("DELETE FROM kb_docs WHERE kb_id=?", kbId)
+        stmt("UPDATE kb_bases SET doc_count=0, chunk_count=0, updated_at=? WHERE id=?", System.currentTimeMillis(), kbId)
+    }
+
+    /** 获取知识库全部分块（检索用；带 docTitle 便于展示出处） */
+    fun getKbChunks(kbId: Long, limit: Int = 2000): List<Map<String, Any?>> =
+        query("SELECT c.*, d.title AS doc_title FROM kb_chunks c LEFT JOIN kb_docs d ON c.doc_id=d.id WHERE c.kb_id=? ORDER BY c.chunk_index LIMIT $limit", kbId).map { row ->
+            mapOf(
+                "id" to (row["id"] as Number).toLong(),
+                "kbId" to kbId,
+                "docId" to ((row["doc_id"] as? Number)?.toLong() ?: 0L),
+                "chunkIndex" to ((row["chunk_index"] as? Number)?.toInt() ?: 0),
+                "content" to (row["content"] as? String ?: ""),
+                "tokens" to ((row["tokens"] as? Number)?.toInt() ?: 0),
+                "docTitle" to (row["doc_title"] as? String ?: "")
+            )
+        }
+
+    /** 跨库检索（沙盒 kb_search 支持多个 kb 逗号分隔） */
+    fun searchKbAcross(kbIds: List<Long>, query: String, topKPerKb: Int = 3): List<Map<String, Any?>> {
+        if (kbIds.isEmpty()) return emptyList()
+        val results = mutableListOf<Map<String, Any?>>()
+        for (kid in kbIds) {
+            runCatching {
+                val r = com.qitong.gateway.kb.KBEngine.search(this, kid, query, topKPerKb)
+                val kbName = getKbBaseById(kid)?.get("name") as? String ?: "库$kid"
+                r.forEach { res ->
+                    results.add(mapOf(
+                        "kbId" to kid,
+                        "kbName" to kbName,
+                        "content" to (res["content"] as? String ?: ""),
+                        "docTitle" to (res["docTitle"] as? String ?: ""),
+                        "score" to (res["score"] as? Double ?: 0.0)
+                    ))
+                }
+            }
+        }
+        return results.sortedByDescending { it["score"] as? Double ?: 0.0 }
+    }
+
     // ============ 大脑记忆（按用户隔离） ============
 
     /** ★ v1.166 统计用户记忆条数（滚动摘要触发用，不触发 accessCount） */
@@ -2265,6 +2461,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.194", "知识库（RAG 检索增强：多库管理 + 文档分块 + BM25 检索 + 三渠道自动注入）", "上传文档让 AI 基于资料精准回答：①多知识库管理——后台「知识库」菜单可新建/编辑/删除多个知识库（公开/私有，owner 隔离），每库独立文档；②文档自动分块——粘贴 txt/md 内容自动按段落/句子边界递归分块（500字/块、80字重叠，中英混合识别），kb_docs/kb_chunks 表入库；③BM25 稀疏检索——自研词频+逆文档频率打分（无需 embedding 离线可用），searchKbAcross 支持多库跨库检索；④三渠道自动注入——内置聊天/QQ/微信用户提问时自动检索知识库（公开库+绑定账号自己的库），命中结果注入 System Prompt 让 AI 优先参考文档回答（kb_list/kb_search 沙盒工具可自主调用）；⑤管理页检索测试——知识库详情可直接输入检索词验证命中效果。"),
 Triple("v1.193", "微信公众号接入（webhook 回调模式·多公众号·关键词回答+AI智能回答·步骤显示开关）", "新增公众号独立模块，与 QQ/微信机器人并行：①多公众号管理——mp_bots 表，每号独立 AppID/AppSecret/Token/EncodingAESKey/加密模式/AI模型/人设/欢迎语/默认回复/关键词开关；管理页「机器人→公众号」支持添加/编辑/删除/详情，列表直接展示每个号的 Webhook 回调地址（微信公众平台「服务器配置」填这个）。②关键词回答——mp_keywords 表每公众号独立规则：触发词（精确/包含/正则）→ 固定回复/AI智能回答/忽略，命中即 5 秒内被动回复秒回。③AI 智能回答——关键词未命中且 AI 开关开时走网关大模型（复用 qtai-sj 等，loopback 同 QQ/微信链路），每粉丝 openid 独立多轮上下文；先回「处理中」占位防 5s 超时，AI 结果通过客服消息异步推送（认证服务号；订阅号借用 48h 会话窗口）。④步骤显示开关——默认 quiet 不推过程，粉丝发「显示步骤」开启 verbose（AI 干活步骤实时推送），「隐藏步骤」关闭；开关按公众号绑定账号记忆。⑤粉丝 openid 可绑定网关账号（权限/余额/用量对齐 QQ/微信），公众号运行日志 mp_logs 全程记录。⑥URL 验签——GET /mp/webhook/{id} 用 sha1(token+ts+nonce) 完成公众平台配置校验。"),
 Triple("v1.192", "价格表指定价格全局生效（0=免费公益）+ 消费分佣（下级返佣+模型归属分成）", "让模型定价真正全局可控、让代理真正能靠消费赚钱：①价格表指定模型价格全局生效——模型价格表里设置某个模型的输入价后，全平台所有用户调用该模型都按这个价计费；输入价填 0 = 该模型免费（公益），不再回落默认价；未设置价格的模型才按 模型单价 → 内置默认价 计费；免费模型不套计费规则、免费就是免费。②消费分佣双通道——①下级消费返上级：用户每次消费付费模型扣费成功后，他的邀请人（上级/代理）按自己的佣金比例自动获得返佣入账；②模型归属者分成：别人用了我添加的模型（私有模型 ownerId>0）时，模型添加者按自己的佣金比例自动获得分成入账。佣金实时进余额、记入 balance_log 返佣流水（个人中心余额账单可见，绿字+），个人中心展示累计佣金收益与佣金比例，管理员在用户管理里可编辑每个用户的佣金比例（默认10%）。③修复连带：余额不足的用户看可用模型时，价格表设为0的免费模型正确可见（原逻辑只看模型单价）。"),
 Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完成）", "让智能体真正做到说了就做、不做不标完成：①意图识别大扩展——QQ/微信首次无标签分支从只认5个词扩展到30+做事动作词（抓取/爬取/打开网站/查看/查找/搜索/查询/读取/浏览/检查/确认一下/看看/重新/试一下/访问/拉取/获取/执行/跑一下/需要查/查一下/看下/我看/我试/我查/来弄/搞定等），模型说「我重新抓取一下页面内容」这类做事意图也识别并引导输出真标签继续执行，不再直接break返回空话；②真执行才标完成——QQ/微信全部收尾路径（closeBody/清洗/非沙盒/最终返回）的 finish 条件统一改为 executedCalls 判断：真执行过工具才标✅任务完成，只说了没动手标⏹已结束（本轮未执行真实工具），后台沙盒不再出现空话还标完成的假完成；③沙盒状态如实反映执行进度。"),
@@ -3377,7 +3574,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
 
     fun deleteWeixinBot(id: Long) { stmt("DELETE FROM weixin_bots WHERE id=?", id) }
 
-    // ============ ★ v1.193 微信公众号（webhook 回调模式） ============
+    // ============ ★ v1.194 微信公众号（webhook 回调模式） ============
 
     /** 全部公众号 */
     fun getMpBots(): List<Map<String, Any?>> =

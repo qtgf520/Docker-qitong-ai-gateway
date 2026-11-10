@@ -1252,7 +1252,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     }
 
     /** ★ v1.166 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废）
- *  ★ v1.193 扩展：模型表达做事意图（抓取/查看/查找/搜索/读取/检查/确认/重新/试一下 等）但没输出工具标签，
+ *  ★ v1.194 扩展：模型表达做事意图（抓取/查看/查找/搜索/读取/检查/确认/重新/试一下 等）但没输出工具标签，
  *    同样引导输出真标签继续干活，绝不"说了不做"就 break 放弃 */
     private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
         text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
@@ -1260,7 +1260,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         text.contains("再确认", true) || text.contains("继续处理", true) || text.contains("继续执行", true) ||
         text.contains("还有", true) || text.contains("进一步", true) || text.contains("接下来", true) ||
         text.contains("稍等", true) || text.contains("等我", true) ||
-        // ★ v1.193 做事意图动作词：说了要干活就必须真调用，不能光说
+        // ★ v1.194 做事意图动作词：说了要干活就必须真调用，不能光说
         text.contains("抓取", true) || text.contains("爬取", true) || text.contains("打开网站", true) ||
         text.contains("查看", true) || text.contains("查找", true) || text.contains("搜索", true) ||
         text.contains("查询", true) || text.contains("读取", true) || text.contains("浏览", true) ||
@@ -1692,7 +1692,25 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             "3. 【有来有回】对方说啥你接啥，顺着话头聊；不知道就大方说不知道，能问一句就自然问一句，像朋友聊天，别每句都一本正经回答。\n" +
             "4. 【长度跟着场景走】闲聊回一两句短话，任务才给完整结果。别把简单问候回成长篇大论，也别把正经任务回成嗯嗯哈哈。\n" +
             "5. 【记住身份】以上风格只影响说话方式，不影响上面的铁律——涉及真实查询/操作/数据，依然必须真调用工具、不编造、不假调用。"
-        val sysFull = baseSys + chatStyle + memSection
+        // ★ v1.194 知识库 RAG：QQ 用户提问按当前消息自动检索知识库（公开库+绑定账号自己的库），命中则注入系统提示
+        var kbSection = ""
+        runCatching {
+            val kbBases = db.getKbBases(if (effIsAdmin) 0L else effUserId)
+                .filter { (it["docCount"] as? Number)?.toInt() ?: 0 > 0 }
+            if (kbBases.isNotEmpty() && userText.trim().length >= 2) {
+                val kbIds = kbBases.mapNotNull { (it["id"] as? Number)?.toLong() }
+                val kbRes = db.searchKbAcross(kbIds, userText, 3)
+                if (kbRes.isNotEmpty()) {
+                    val kbSb = StringBuilder("\n\n## 📚 知识库检索结果（基于你的文档资料，回答时优先参考）\n")
+                    kbRes.take(6).forEachIndexed { i, r ->
+                        val c = (r["content"] as? String ?: "").trim()
+                        if (c.isNotBlank()) kbSb.append("[${i + 1}·${r["kbName"]}·${r["docTitle"]}] ").append(c.take(400)).append("\n")
+                    }
+                    kbSection = kbSb.toString()
+                }
+            }
+        }
+        val sysFull = baseSys + chatStyle + memSection + kbSection
         if (sysFull.isNotBlank()) msgs.put(JSONObject().put("role", "system").put("content", sysFull))
         // ★ v1.167 修复串台：历史严格按 user→assistant 交替，工具过程数据绝不入_hist。
         //   1) 先清掉尾部残留 user（前一轮模型失败/异常返回 null 时留下的脏数据，防 user→user）
@@ -1783,7 +1801,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     //   同一 fn+参数已执行过 → 解析结果为空 → 循环正常收尾，不再执行第二遍
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
                     if (calls.isEmpty()) {
-                        // ★ v1.193 说要做但没输出标签 → 引导真调用（不止"正在调用"，抓取/查看/检查/重新/我来 等做事意图都引导）
+                        // ★ v1.194 说要做但没输出标签 → 引导真调用（不止"正在调用"，抓取/查看/检查/重新/我来 等做事意图都引导）
                         //   原来只认 5 个词，用户案例「我重新抓取一下页面内容」识别不出 → 直接 break 返回空话还标完成（说了不做）
                         val intented = content.contains("正在调用", true) || content.contains("调用沙盒", true) ||
                             content.contains("准备调用", true) || content.contains("我需要调用", true) || content.contains("我来调用", true) ||
@@ -2027,7 +2045,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         }
                         if (!closeContent.isNullOrBlank() && closeContent.length > 2) {
                             val closeCleaned = cleanFunctionTags(closeContent)
-                            // ★ v1.193 真执行过工具才标完成；否则标"已结束（未执行真实工具）"——不再空话还标✅
+                            // ★ v1.194 真执行过工具才标完成；否则标"已结束（未执行真实工具）"——不再空话还标✅
                             com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                                 if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                             // ★ v1.167 修复串台：只写最终回复进 hist（原连续写 cleaned+closeCleaned 两个
@@ -2051,7 +2069,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                         }
                     }
-                    // ★ v1.193 真执行过工具才标完成（否则标"未执行真实工具"）
+                    // ★ v1.194 真执行过工具才标完成（否则标"未执行真实工具"）
                     com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                         if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                     return cleaned
@@ -2066,7 +2084,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                         }
                     }
-                    // ★ v1.193 真执行过工具才标完成（否则标"未执行真实工具"）
+                    // ★ v1.194 真执行过工具才标完成（否则标"未执行真实工具"）
                     com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                         if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                     return cleaned
@@ -2112,7 +2130,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         runCatching { db.saveGroupBrainMemory(groupOpenid, userText.take(200)) }
                     }
                 }
-                // ★ v1.193 真执行过工具才标完成（否则标"未执行真实工具"）——不再空话还标✅
+                // ★ v1.194 真执行过工具才标完成（否则标"未执行真实工具"）——不再空话还标✅
                 com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                     if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                 content

@@ -107,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.193
+ * 綦桐AI网关 · Docker 服务器版 v1.194
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -119,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.193   ║
+        ║   綦桐AI网关 · Docker Server v1.194   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -130,8 +130,8 @@ fun main(args: Array<String>) {
     // ★ v1.178 统一消息管道 + 平台适配器：初始化注册（三渠道共用一套管道编排）
     runCatching {
         com.qitong.gateway.pipeline.PipelineSetup.install(database)
-        println("[Gateway] v1.193 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
-    }.onFailure { e -> System.err.println("[Gateway] v1.193 管道初始化失败: ${e.message}") }
+        println("[Gateway] v1.194 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
+    }.onFailure { e -> System.err.println("[Gateway] v1.194 管道初始化失败: ${e.message}") }
 
     // ★ v85 播种更新历史（首次启动写入，前端/QQ/微信/qtai-sj 可查）
     runCatching { database.migrateMultimodal() }
@@ -222,7 +222,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.193"))
+                put("version", JsonPrimitive("1.194"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1239,6 +1239,103 @@ fun Application.moduleWeb(database: Database) {
             if (!requireAdminMp(u)) { AdminApi.fail(call, "仅管理员可管理公众号", 403); return@get }
             val botId = call.queryParameters["botId"]?.toLongOrNull() ?: 0L
             AdminApi.ok(call, database.getMpLogs(botId, 50), "ok")
+        }
+
+        // ============ ★ v1.194 知识库（RAG：多库/文档上传分块/检索） ============
+        // 知识库列表（管理员全部；普通用户=全局+自己的+公开）
+        get("/api/kb/bases") {
+            val u = call.requireAuth(database) ?: return@get
+            val isAdmin = u.role == "admin"
+            AdminApi.ok(call, database.getKbBases(if (isAdmin) 0L else u.id), "ok")
+        }
+        // 新建知识库
+        post("/api/kb/bases") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (name.isBlank()) { AdminApi.fail(call, "知识库名称不能为空", 400); return@post }
+            val description = body["description"]?.jsonPrimitive?.content ?: ""
+            val isPublic = body["isPublic"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+            val id = database.createKbBase(name, description, if (u.role == "admin") 0L else u.id, isPublic)
+            database.addOpLog(u.id, u.username, "知识库", "创建知识库 $name", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("id" to id), "知识库「$name」已创建")
+        }
+        // 更新知识库
+        post("/api/kb/bases/{id}") {
+            val u = call.requireAuth(database) ?: return@post
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val kb = database.getKbBaseById(id) ?: run { AdminApi.fail(call, "知识库不存在", 404); return@post }
+            // 权限：管理员或 owner
+            if (u.role != "admin" && (kb["ownerId"] as? Long) != u.id) { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (name.isBlank()) { AdminApi.fail(call, "名称不能为空", 400); return@post }
+            val description = body["description"]?.jsonPrimitive?.content ?: ""
+            val isPublic = body["isPublic"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+            database.updateKbBase(id, name, description, isPublic)
+            AdminApi.ok(call, null, "已更新")
+        }
+        // 删除知识库
+        delete("/api/kb/bases/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            val kb = database.getKbBaseById(id) ?: run { AdminApi.fail(call, "知识库不存在", 404); return@delete }
+            if (u.role != "admin" && (kb["ownerId"] as? Long) != u.id) { AdminApi.fail(call, "无权限", 403); return@delete }
+            database.deleteKbBase(id)
+            database.addOpLog(u.id, u.username, "知识库", "删除知识库 ${kb["name"]}", call.request.local.remoteHost)
+            AdminApi.ok(call, null, "已删除")
+        }
+        // 知识库文档列表
+        get("/api/kb/docs") {
+            val u = call.requireAuth(database) ?: return@get
+            val kbId = call.queryParameters["kbId"]?.toLongOrNull() ?: 0L
+            if (kbId <= 0) { AdminApi.fail(call, "缺少 kbId", 400); return@get }
+            AdminApi.ok(call, database.getKbDocs(kbId), "ok")
+        }
+        // 上传文档到知识库（文本内容直接入库分块；接收 JSON {kbId, title, content}）
+        post("/api/kb/docs") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val kbId = body["kbId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            if (kbId <= 0) { AdminApi.fail(call, "缺少 kbId", 400); return@post }
+            val title = body["title"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val content = body["content"]?.jsonPrimitive?.content ?: ""
+            val kb = database.getKbBaseById(kbId) ?: run { AdminApi.fail(call, "知识库不存在", 404); return@post }
+            if (u.role != "admin" && (kb["ownerId"] as? Long) != u.id) { AdminApi.fail(call, "无权限", 403); return@post }
+            if (content.isBlank()) { AdminApi.fail(call, "文档内容不能为空", 400); return@post }
+            val docName = title.ifBlank { "文档${System.currentTimeMillis() % 100000}" }
+            val docId = database.addKbDoc(kbId, docName, "$docName.txt", content.length.toLong())
+            val chunks = com.qitong.gateway.kb.KBEngine.chunkText(content)
+            database.addKbChunks(kbId, docId, chunks)
+            database.addOpLog(u.id, u.username, "知识库", "上传文档 $docName（${chunks.size} 分块）", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("docId" to docId, "chunks" to chunks.size), "已上传并分块 ${chunks.size} 段")
+        }
+        // 删除文档
+        delete("/api/kb/docs/{id}") {
+            val u = call.requireAuth(database) ?: return@delete
+            val docId = call.parameters["id"]?.toLongOrNull() ?: return@delete
+            val kbId = call.queryParameters["kbId"]?.toLongOrNull() ?: 0L
+            database.deleteKbDoc(docId, kbId)
+            AdminApi.ok(call, null, "文档已删除")
+        }
+        // 清空知识库文档
+        post("/api/kb/bases/{id}/clear") {
+            val u = call.requireAuth(database) ?: return@post
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@post
+            val kb = database.getKbBaseById(id) ?: run { AdminApi.fail(call, "知识库不存在", 404); return@post }
+            if (u.role != "admin" && (kb["ownerId"] as? Long) != u.id) { AdminApi.fail(call, "无权限", 403); return@post }
+            database.clearKbDocs(id)
+            AdminApi.ok(call, null, "知识库已清空")
+        }
+        // 知识库检索测试（管理页/调试用）
+        get("/api/kb/search") {
+            val u = call.requireAuth(database) ?: return@get
+            val kbId = call.queryParameters["kbId"]?.toLongOrNull() ?: 0L
+            val query = call.queryParameters["query"] ?: ""
+            if (kbId <= 0 || query.isBlank()) { AdminApi.fail(call, "需要 kbId + query", 400); return@get }
+            val kb = database.getKbBaseById(kbId) ?: run { AdminApi.fail(call, "知识库不存在", 404); return@get }
+            if (u.role != "admin" && (kb["ownerId"] as? Long) != u.id && (kb["isPublic"] as? Boolean) != true) { AdminApi.fail(call, "无权限", 403); return@get }
+            AdminApi.ok(call, com.qitong.gateway.kb.KBEngine.search(database, kbId, query, 5), "ok")
         }
 
         // ============ QQ 开放平台机器人（仅管理员） ============
@@ -2764,7 +2861,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.193"))
+                put("version", JsonPrimitive("1.194"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3608,7 +3705,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.193"))
+                    put("version", JsonPrimitive("1.194"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

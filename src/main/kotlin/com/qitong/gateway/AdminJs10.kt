@@ -356,7 +356,7 @@ window.restoreBackup = function(i){
  });
 };
 
-// ===== ★ v1.193 微信公众号管理页（多公众号 + 关键词 + webhook 地址 + 日志） =====
+// ===== ★ v1.194 微信公众号管理页（多公众号 + 关键词 + webhook 地址 + 日志） =====
 var mpCurBot = 0;
 loaders.mp = function(){
  var box = $('view-mp');
@@ -505,6 +505,122 @@ loaders.mpLogs = function(botId){
    return '<tr><td style="font-size:11px;color:var(--muted)">'+tstr+'</td><td><span class="badge '+typeColor+'">'+esc(l.type)+'</span></td><td style="font-size:12px">'+esc(l.content)+'</td></tr>';
   }).join('');
   el.innerHTML = '<div class="table-wrap" style="max-height:240px;overflow-y:auto"><table><thead><tr><th>时间</th><th>类型</th><th>内容</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+ });
+};
+
+// ===== ★ v1.194 知识库（RAG：多库管理 + 文档上传分块 + BM25 检索） =====
+var kbCur = 0;
+loaders.kb = function(){
+ var box = $('view-kb');
+ box.innerHTML = '<div class="card"><h3>📚 知识库 <span style="font-size:12px;color:var(--muted)">上传文档 → 自动分块 → AI 基于文档回答（RAG 检索增强）</span></h3>' +
+  '<div class="action-bar"><button class="btn" onclick="kbOpenEdit(0)">+ 新建知识库</button><span id="kbHint" style="font-size:12px;color:var(--muted)">加载中…</span></div>' +
+  '<div id="kbList" style="margin-top:12px"><div style="color:var(--muted);padding:16px">加载中…</div></div></div>' +
+  '<div class="card" id="kbDetail" style="display:none"><h3 id="kbDetailTitle">知识库详情</h3><div id="kbDetailBody"></div></div>';
+ api('/api/kb/bases').then(function(r){
+  var list = r.data || [];
+  var el = $('kbList'); if(!el) return;
+  if(!list.length){ el.innerHTML = '<div style="color:var(--muted)">暂无知识库。点击「+ 新建知识库」创建，然后在详情里上传文档（txt/md 内容），AI 将能基于你的资料智能回答。</div>'; $('#kbHint').textContent='未创建'; return; }
+  var rows = list.map(function(b){
+   return '<tr>' +
+    '<td><b>'+esc(b.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(b.description||'')+'</div></td>' +
+    '<td>'+(b.isPublic?'<span class="badge green">公开</span>':'<span class="badge gray">私有</span>')+'</td>' +
+    '<td>'+b.docCount+' 篇</td><td>'+b.chunkCount+' 块</td>' +
+    '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="kbShow('+b.id+',\''+esc(b.name)+'\')">详情</button> ' +
+    '<button class="btn-ghost btn-sm" onclick="kbOpenEdit('+b.id+',\''+esc(b.name)+'\',\''+esc(b.description)+'\','+(b.isPublic?'true':'false')+')">编辑</button> ' +
+    '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="kbDel('+b.id+')">删</button></td></tr>';
+  }).join('');
+  el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>知识库</th><th>可见性</th><th>文档</th><th>分块</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>' +
+   '<div style="font-size:11px;color:var(--muted);margin-top:8px">💡 使用：上传你的资料（如产品说明/操作手册/业务规范）→ 在 QQ/微信/公众号/内置聊天里问相关问题时，智能体会自动检索知识库回答，基于文档内容精准回复。</div>';
+  $('#kbHint').textContent = '共 ' + list.length + ' 个知识库';
+ });
+};
+window.kbShow = function(id, name){
+ kbCur = id;
+ var d = $('kbDetail'); if(d) d.style.display = '';
+ var t = $('kbDetailTitle'); if(t) t.textContent = '📚 ' + name;
+ var fb = $('kbDetailBody');
+ fb.innerHTML = '<div class="action-bar">' +
+  '<button class="btn" onclick="kbOpenDoc(0)">+ 上传文档</button> ' +
+  '<button class="btn-ghost" style="color:var(--red)" onclick="kbClear('+id+')">清空全部</button> ' +
+  '<span style="font-size:12px;color:var(--muted)">检索测试：</span><input id="kbTestQuery" class="input" style="width:220px;display:inline-block" placeholder="输入检索词…"> <button class="btn-ghost" onclick="kbTestSearch('+id+')">检索</button></div>' +
+  '<div id="kbSearchResult" style="margin:10px 0;font-size:12px;color:var(--muted)"></div>' +
+  '<div class="card"><h3>📄 文档列表</h3><div class="table-wrap"><table><thead><tr><th>文档</th><th>大小</th><th>分块</th><th>状态</th><th>操作</th></tr></thead><tbody id="kbDocList"><tr><td colspan="5" style="text-align:center;color:var(--muted)">加载中…</td></tr></tbody></table></div></div>';
+ loadKbDocs(id);
+};
+function loadKbDocs(id){
+ api('/api/kb/docs?kbId='+id).then(function(r){
+  var list = r.data || [];
+  var tb = $('kbDocList'); if(!tb) return;
+  if(!list.length){ tb.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted)">暂无文档，点击「+ 上传文档」添加内容</td></tr>'; return; }
+  tb.innerHTML = list.map(function(d){
+   var size = d.fileSize>1048576 ? (d.fileSize/1048576).toFixed(1)+'MB' : (d.fileSize>1024 ? (d.fileSize/1024).toFixed(1)+'KB' : d.fileSize+'B');
+   return '<tr><td>'+esc(d.title)+'</td><td>'+size+'</td><td>'+d.chunkCount+' 块</td><td>'+(d.status==='ok'?'<span class="badge green">ok</span>':'<span class="badge red">'+esc(d.error)+'</span>')+'</td>' +
+    '<td><button class="btn-ghost btn-sm" style="color:var(--red)" onclick="kbDelDoc('+d.id+','+id+')">删</button></td></tr>';
+  }).join('');
+ });
+}
+window.kbOpenEdit = function(id, name, desc, isPublic){
+ openModal((id?'编辑知识库':'新建知识库'),
+  '<div class="form-row"><label>名称 *</label><input id="kbName" class="input" value="'+esc(name||'')+'" placeholder="如：产品手册"></div>' +
+  '<div class="form-row"><label>描述</label><input id="kbDesc" class="input" value="'+esc(desc||'')+'" placeholder="这个知识库存什么"></div>' +
+  '<div class="form-row"><label><input type="checkbox" id="kbPublic"'+(isPublic?' checked':'')+'>公开（所有人可用此知识库检索）</label></div>',
+  function(){
+   var nm=$('kbName').value.trim();
+   if(!nm){ toast('名称不能为空', false); return; }
+   api('/api/kb/bases'+(id?'/'+id:''), { method:'POST', body: { name: nm, description: $('kbDesc').value.trim(), isPublic: $('kbPublic').checked } }).then(function(r){
+    toast(r.msg||'已保存', r.code===0);
+    if(r.code===0){ closeModal(); loaders.kb(); }
+   });
+  });
+};
+window.kbOpenDoc = function(){
+ openModal('上传文档到知识库',
+  '<div class="form-row"><label>文档标题</label><input id="kbDocTitle" class="input" placeholder="如：API接入指南"></div>' +
+  '<div class="form-row"><label>文档内容（支持换行/段落，自动分块）</label><textarea id="kbDocContent" class="input" rows="10" placeholder="粘贴文档内容…"></textarea></div>' +
+  '<div style="font-size:11px;color:var(--muted)">提交后自动按 500 字/块切分并入库，AI 提问时按相关性检索。</div>',
+  function(){
+   var title=$('kbDocTitle').value.trim();
+   var content=$('kbDocContent').value;
+   if(!content.trim()){ toast('文档内容不能为空', false); return; }
+   if(!title) title = '文档' + Date.now()%100000;
+   api('/api/kb/docs', { method:'POST', body: { kbId: kbCur, title: title, content: content } }).then(function(r){
+    toast(r.msg||'已上传', r.code===0);
+    if(r.code===0){ closeModal(); loadKbDocs(kbCur); }
+   });
+  });
+};
+window.kbDel = function(id){
+ if(!confirm('确认删除该知识库及全部文档？')) return;
+ api('/api/kb/bases/'+id, { method:'DELETE' }).then(function(r){
+  toast(r.msg||'已删除', r.code===0);
+  if(r.code===0) loaders.kb();
+ });
+};
+window.kbDelDoc = function(docId, kbId){
+ if(!confirm('确认删除该文档？')) return;
+ api('/api/kb/docs/'+docId+'?kbId='+kbId, { method:'DELETE' }).then(function(r){
+  toast(r.msg||'已删除', r.code===0);
+  if(r.code===0) loadKbDocs(kbId);
+ });
+};
+window.kbClear = function(id){
+ if(!confirm('确认清空该知识库全部文档？')) return;
+ api('/api/kb/bases/'+id+'/clear', { method:'POST' }).then(function(r){
+  toast(r.msg||'已清空', r.code===0);
+  if(r.code===0) loadKbDocs(id);
+ });
+};
+window.kbTestSearch = function(id){
+ var q = ($('kbTestQuery')?$('kbTestQuery').value:'').trim();
+ var el = $('kbSearchResult'); if(!el) return;
+ if(!q){ el.innerHTML = '<span style="color:var(--red)">请输入检索词</span>'; return; }
+ el.innerHTML = '🔍 检索中…';
+ api('/api/kb/search?kbId='+id+'&query='+encodeURIComponent(q)).then(function(r){
+  var list = r.data || [];
+  if(!list.length){ el.innerHTML = '<span>未找到相关内容</span>'; return; }
+  el.innerHTML = list.map(function(x){
+   return '<div style="border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin:4px 0"><b>'+esc(x.docTitle||'')+'</b> <span style="color:var(--muted)">得分 '+x.score+'</span><br><span style="font-size:12px">'+esc((x.content||'').take(200))+'</span></div>';
+  }).join('');
  });
 };
 """

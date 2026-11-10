@@ -49,6 +49,7 @@ object SandboxEngine {
         "price_list", "price_get", "price_set", "price_delete", "price_clear",
         "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
         "backup_list", "backup_create", "backup_restore",
+        "kb_list", "kb_search",  // ★ v1.194 知识库
         "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
         "ssh_list", "ssh_exec",
         "ticket_list", "ticket_create", "ticket_detail",
@@ -167,6 +168,8 @@ object SandboxEngine {
             .put(func("price_set", "保存/新增模型自定义价格（管理员；input_price输入价，output_price可选默认2倍）", "admin", "modify", listOf(param("model_id", true, "模型ID"), param("input_price", true, "输入价(元/百万token)"), param("output_price", false, "输出价默认为输入2倍")), "保存结果"))
             .put(func("price_delete", "删除模型自定义价格（管理员）", "admin", "modify", listOf(param("model_id", true, "模型ID")), "删除结果"))
             .put(func("price_clear", "清空全部自定义价格恢复默认表（管理员）", "admin", "modify", emptyList(), "清空条数"))
+            .put(func("kb_list", "查看知识库列表（只读；含各库文档/分块数）", "user", "read", emptyList(), "知识库名称/描述/文档数"))
+            .put(func("kb_search", "检索知识库内容（只读；kb_ids 知识库ID逗号分隔，query 检索词）", "user", "read", listOf(param("query", true, "检索词"), param("kb_ids", false, "知识库ID逗号分隔，空=全部可见库")), "命中的知识片段"))
             .put(func("usage_recent", "查看最近用量记录（只读；管理员全部，用户看自己）", "user", "read", listOf(param("limit", false, "条数默认20")), "模型/Token/费用/时间"))
             .put(func("usage_stats", "用量统计汇总（只读；管理员总览，用户看自己）", "user", "read", emptyList(), "模型/Token/费用/流量"))
             .put(func("overall_stats", "网关总览统计（只读）：用户/服务商/模型数/流量/运行状态", "user", "read", emptyList(), "统计摘要"))
@@ -561,6 +564,7 @@ $KNOWLEDGE_JSON
             "config_set", "announcement_add", "announcement_delete", "ticket_reply", "ticket_close" -> "admin" to "modify"
             // v1.166 新增：普通用户只读/自助
             "price_get", "plan_list", "conversation_list", "usage_recent", "usage_stats", "overall_stats",
+            "kb_list", "kb_search",  // ★ v1.194 知识库检索（只读）
             "ticket_list", "ticket_create", "card_redeem", "memory_add",
             "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool" -> "user" to "read"
             // v1.166 新增：管理员只读
@@ -594,7 +598,7 @@ $KNOWLEDGE_JSON
                 "git_version" -> {
                     // ★ v1.116 查 Git 版本：当前版本 / 最新提交 / 最近 tag
                     try {
-                        val ver = db.getConfig("app_version", "1.193")
+                        val ver = db.getConfig("app_version", "1.194")
                         val sb = StringBuilder("🔖 【网关 Git 版本】\n")
                         sb.append("• 当前版本：v").append(ver).append("\n")
                         runCatching {
@@ -608,7 +612,7 @@ $KNOWLEDGE_JSON
                             if (out2.isNotBlank()) sb.append("• 最近标签：").append(out2.lines().joinToString("、")).append("\n")
                         }
                         sb.toString().trim()
-                    } catch (e: Exception) { "🔖 当前版本：v1.193（版本信息读取失败：${e.message}）" }
+                    } catch (e: Exception) { "🔖 当前版本：v1.194（版本信息读取失败：${e.message}）" }
                 }
                 "git_log" -> {
                     // ★ v1.116 查 Git 最近提交历史
@@ -1595,6 +1599,7 @@ $KNOWLEDGE_JSON
                 }
                 // ===== v1.166 网关全接口补齐（实现见 V155Ext1/2） =====
                 "price_list", "price_get", "price_set", "price_delete", "price_clear",
+                "kb_list", "kb_search",  // ★ v1.194 知识库检索
                 "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
                 "backup_list", "backup_create", "backup_restore",
                 "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
