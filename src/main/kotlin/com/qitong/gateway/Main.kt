@@ -107,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.200
+ * 綦桐AI网关 · Docker 服务器版 v1.201
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -119,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.200   ║
+        ║   綦桐AI网关 · Docker Server v1.201   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -130,8 +130,8 @@ fun main(args: Array<String>) {
     // ★ v1.178 统一消息管道 + 平台适配器：初始化注册（三渠道共用一套管道编排）
     runCatching {
         com.qitong.gateway.pipeline.PipelineSetup.install(database)
-        println("[Gateway] v1.200 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
-    }.onFailure { e -> System.err.println("[Gateway] v1.200 管道初始化失败: ${e.message}") }
+        println("[Gateway] v1.201 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
+    }.onFailure { e -> System.err.println("[Gateway] v1.201 管道初始化失败: ${e.message}") }
 
     // ★ v85 播种更新历史（首次启动写入，前端/QQ/微信/qtai-sj 可查）
     runCatching { database.migrateMultimodal() }
@@ -222,7 +222,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.200"))
+                put("version", JsonPrimitive("1.201"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1678,7 +1678,7 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, "日志已清空")
         }
 
-        // ===== ★ v1.200 平台设置（QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
+        // ===== ★ v1.201 平台设置（QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
         get("/api/platform/settings") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
@@ -1698,6 +1698,12 @@ fun Application.moduleWeb(database: Database) {
             body["proactiveEnabled"]?.jsonPrimitive?.content?.let { updates["proactiveEnabled"] = it.toBoolean() }
             body["groupJoin"]?.jsonPrimitive?.content?.let { updates["groupJoin"] = it.toBoolean() }
             body["groupJoinProb"]?.jsonPrimitive?.content?.toIntOrNull()?.let { updates["groupJoinProb"] = it }
+            body["atReply"]?.jsonPrimitive?.content?.let { updates["atReply"] = it.toBoolean() }
+            body["wakePrefix"]?.jsonPrimitive?.content?.let { updates["wakePrefix"] = it }
+            body["ignoreAtAll"]?.jsonPrimitive?.content?.let { updates["ignoreAtAll"] = it.toBoolean() }
+            body["ignoreSelf"]?.jsonPrimitive?.content?.let { updates["ignoreSelf"] = it.toBoolean() }
+            body["c2cAuto"]?.jsonPrimitive?.content?.let { updates["c2cAuto"] = it.toBoolean() }
+            body["noPermReply"]?.jsonPrimitive?.content?.let { updates["noPermReply"] = it.toBoolean() }
             body["welcome"]?.jsonPrimitive?.content?.let { updates["welcome"] = it }
             body["aiModel"]?.jsonPrimitive?.content?.let { updates["aiModel"] = it }
             body["systemPrompt"]?.jsonPrimitive?.content?.let { updates["systemPrompt"] = it }
@@ -1705,7 +1711,7 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, database.getPlatformSettings(channel), "设置已保存")
         }
 
-        // ===== ★ v1.200 统一消息记录中心（QQ/微信/公众号 三渠道收发记录查询/清空） =====
+        // ===== ★ v1.201 统一消息记录中心（QQ/微信/公众号 三渠道收发记录查询/清空） =====
         get("/api/platform/messages") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
@@ -2921,7 +2927,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.200"))
+                put("version", JsonPrimitive("1.201"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3765,7 +3771,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.200"))
+                    put("version", JsonPrimitive("1.201"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
