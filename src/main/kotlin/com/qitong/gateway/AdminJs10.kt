@@ -670,7 +670,7 @@ window.saDel = function(id){
  });
 };
 
-// ★ v1.203 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
+// ★ v1.204 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
 //   解决列表/详情页网络挂起时“加载中”永远显示（配合 api() 15s 超时，双重兜底）
 (function(){
  var guardTimer = null;
@@ -707,7 +707,7 @@ window.saDel = function(id){
  setInterval(scanLoading, 8000);  // 常驻兜底
 })();
 
-// ===== ★ v1.203 机器人设置（QQ/微信/公众号 三渠道平台设置面板：AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
+// ===== ★ v1.204 机器人设置（QQ/微信/公众号 三渠道平台设置面板：AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
 loaders.botsettings = function(){
  var box = $('view-botsettings');
  if(!box) return;
@@ -737,7 +737,7 @@ loaders.botsettings = function(){
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_ai" '+(aiOn?'checked':'')+'> AI 智能回答</label></div>'+
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_rec" '+(recOn?'checked':'')+'> 消息记录</label></div>'+
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_pro" '+(proOn?'checked':'')+'> 主动问候</label></div>'+
-     // ★ v1.203 唤醒/回话设置
+     // ★ v1.204 唤醒/回话设置
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_at" '+(ps.atReply!==false?'checked':'')+'> @机器人必回（默认开）</label></div>'+
      '<div class="form-row"><label>唤醒前缀（消息以它开头即触发，无需@；如「小桐」）</label><input class="input" id="bs_'+ch+'_wake" value="'+esc(ps.wakePrefix||'')+'" placeholder="留空=不启用"></div>'+
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_c2c" '+(ps.c2cAuto!==false?'checked':'')+'> 私聊自动回复</label></div>'+
@@ -765,7 +765,7 @@ function saveBotSettings(ch){
  if(aiEl) body.aiEnabled = aiEl.checked ? 'true':'false';
  if(recEl) body.msgRecord = recEl.checked ? 'true':'false';
  if(proEl) body.proactiveEnabled = proEl.checked ? 'true':'false';
- // ★ v1.203 唤醒/回话字段
+ // ★ v1.204 唤醒/回话字段
  var atEl=$('bs_'+ch+'_at'); if(atEl) body.atReply = atEl.checked ? 'true':'false';
  var wakeEl=$('bs_'+ch+'_wake'); if(wakeEl && wakeEl.value.trim()) body.wakePrefix = wakeEl.value.trim();
  var c2cEl=$('bs_'+ch+'_c2c'); if(c2cEl) body.c2cAuto = c2cEl.checked ? 'true':'false';
@@ -782,7 +782,7 @@ var cdEl=$('bs_qq_cd'); if(cdEl && cdEl.value.trim()!=='') body.joinCooldownSec 
  api('/api/platform/settings',{method:'POST',body:body}).then(function(r){ toast(r.msg||'', r.code===0); });
 }
 
-// ===== ★ v1.203 统一消息记录中心（QQ/微信/公众号 收发记录查询/筛选/清空） =====
+// ===== ★ v1.204 统一消息记录中心（QQ/微信/公众号 收发记录查询/筛选/清空） =====
 var msgCenterCh = '';
 function loadMsgCenter(){
  var box = $('view-msgcenter');
@@ -815,5 +815,25 @@ function clearMsgCenter(){
  });
 }
 loaders.msgcenter = function(){ msgCenterCh=''; loadMsgCenter(); };
+
+// ===== ★ v1.204 插件管理页（列表/热重载/启停/卸载/市场预留） =====
+loaders.plugins = function(){
+ var box = $('view-plugins');
+ if(!box) return;
+ box.innerHTML = '<div class="card"><h3>📦 插件管理</h3><div style="color:var(--muted);padding:10px">加载中…</div></div>';
+ api('/api/plugins').then(function(r){
+  if(r.code!==0){ box.innerHTML='<div class="card"><h3>📦 插件管理</h3><div style="color:var(--red);padding:10px">加载失败</div></div>'; return; }
+  var list=(r.data&&r.data.plugins)||[];
+  var html='<div class="action-bar"><button class="btn-ghost" onclick="reloadPlugins()">🔄 热重载</button><span style="font-size:12px;color:var(--muted)">把插件目录放进服务器 /app/plugins/ 后点热重载即可生效，无需重启！</span></div>';
+  if(!list.length) html+='<div style="color:var(--muted);padding:18px">暂无插件。在服务器 /app/plugins/ 下建 插件名/plugin.json 即可（参考：{"name":"示例","version":"1.0.0","triggers":["关键词"],"action":"reply","content":"回复内容"}）</div>';
+  else html+='<div class="table-wrap"><table class="tb"><thead><tr><th>名称</th><th>版本</th><th>触发词</th><th>动作</th><th>状态</th><th>操作</th></tr></thead><tbody>'+list.map(function(p){
+   return '<tr><td><b>'+esc(p.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(p.id||'')+(p.desc?' · '+esc(p.desc):'')+'</div></td><td>'+esc(p.version)+'</td><td style="font-size:11px">'+esc((p.triggers||[]).join(', '))+ '</td><td>'+esc(p.action)+'</td><td>'+(p.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td><td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="togglePlugin(\''+esc(p.id)+'\','+(p.enabled?'false':'true')+')">'+(p.enabled?'停用':'启用')+'</button> <button class="btn-ghost btn-sm danger" onclick="removePlugin(\''+esc(p.id)+'\')">卸载</button></td></tr>';
+  }).join('')+'</tbody></table></div>';
+  box.innerHTML='<div class="card"><h3>📦 插件管理</h3><div style="color:var(--muted);padding:2px 0 8px;font-size:12px">插件系统：目录扫描 + manifest 热重载 + on_message 钩子（触发词命中即回复/忽略）。</div>'+html+'</div>';
+ });
+}
+function reloadPlugins(){ api('/api/plugins/reload',{method:'POST'}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.plugins(); }); }
+function togglePlugin(id,en){ api('/api/plugins/toggle',{method:'POST',body:{id:id,enabled:en?'true':'false'}}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.plugins(); }); }
+function removePlugin(id){ if(!confirm('确认卸载插件 '+id+'？')) return; api('/api/plugins/remove',{method:'POST',body:{id:id}}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.plugins(); }); }
 """
 }

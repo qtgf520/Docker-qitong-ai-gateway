@@ -610,7 +610,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.203 统一消息记录中心（QQ/微信/公众号 三渠道收发全量留存，后台可查；消息历史思路自研）
+            // ★ v1.204 统一消息记录中心（QQ/微信/公众号 三渠道收发全量留存，后台可查；消息历史思路自研）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS platform_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2560,7 +2560,7 @@ fun updateUserLogin(id: Long) {
         runCatching { stmt("CREATE TABLE IF NOT EXISTS model_hidden (user_id INTEGER NOT NULL, model_id INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, model_id))") }
     }
     fun seedUpdateLogsIfEmpty() {
-val logs = listOf(
+Triple("v1.204", "Telegram 平台适配器（多平台架构第一站）+ 消息管道钩子", "P1-3 多平台适配器 Telegram 先行（对齐主流智能体平台多平台架构，自研实现）：①TgBotManager——Bot Token 长轮询收消息（getUpdates timeout=50s 长轮询，update_id 游标续传防重复）→ 调网关 AI（loopback /v1/chat/completions）→ sendMessage 回复；②后台配置——POST /api/tg/bot 保存 botToken（存 gateway_config tg_bots，逗号分隔多号），GET /api/tg/status 查运行状态；③启动——Main.kt 启动时 startAll 自动拉起已配置的号（无配置不启动，安全默认）；④插件钩子——Telegram 消息也走 PluginManager.onMessage（命中插件直接回复）；⑤消息记录——收发都写 platform_messages（channel=tg）；⑥多平台架构验证——新增平台=写一个适配器+后台配 token，主逻辑不动（QQ/微信/公众号/TG 四通道）。"),
 Triple("v1.203", "插件系统（目录扫描·manifest·热重载·on_message钩子·市场预留）", "P0-3 Star 插件框架轻量移植（自研实现）：①插件目录规范——plugins/{插件名}/plugin.json（name/version/desc/author/enabled/triggers/action/content），PluginManager 启动时扫描加载；②热重载——改 plugin.json 后 POST /api/plugins/reload 立即生效无需重启进程；③on_message 钩子——命中 triggers 关键词时按 action 处理：reply=固定回复/ignore=忽略（\u0000IGNORE\u0000 标记上层不回复）/ai=放行走 AI，QQ 群消息入口已接入（命中插件直接回复秒回，插件日志入 qq_logs type=plugin）；④启用/停用开关——POST /api/plugins/toggle 持久化写回 manifest；⑤卸载——POST /api/plugins/remove 删除目录；⑥插件市场——POST /api/plugins/market 接口预留（在线仓库对接后续）；⑦API 全套——GET /api/plugins 列表、reload/toggle/remove/market；⑧启动日志输出「插件系统就绪：扫描 N 个插件」。插件管理模式：后台直接放 plugins/ 目录即可，无需编译。"),
 Triple("v1.202", "设置体系补全3项（引用回复开关·黑白名单·冷却参数化）+ QQ 群过滤", "P0-2 剩余设置补齐（对齐一流智能体平台）：①引用回复开关 quoteReply——默认开=被引用/回复时触发；关=引用不触发；②黑白名单——blacklist 逗号分隔（关键词或 openid 命中直接忽略不回复）、whitelist 逗号分隔（非空时仅白名单成员/关键词可触发），QQ 群消息入口真实拦截；③冷却参数化 joinCooldownSec——群聊插话冷却秒数从写死 20 秒改为后台可配（0-600），replyFreqLimit 预留每分钟回复上限；④四层全打通——DB platform_settings 加 5 字段、API POST 全解析、沙盒 platform_settings_get 展示/platform_settings_set 支持 blacklist/whitelist/joinCooldownSec/replyFreqLimit 遥控（智能体一句话「把广告加进黑名单」）、后台机器人设置页新增引用回复开关+黑白名单输入框+插话冷却输入；⑤QQ handleGroup 接入黑白名单过滤 + 冷却参数化，安全默认：黑名单空/白名单空/冷却 20 秒。"),
 Triple("v1.201", "唤醒/回话设置体系（@必回开关·唤醒前缀·私聊开关·忽略自己）+ 对接全平台设置", "补齐机器人唤醒/回话完整设置体系（对齐一流智能体平台唤醒配置，自研实现）：①@回话开关——atReply 默认开=群聊@机器人必回；关=@也走插话决策，后台可配；②唤醒前缀——wakePrefix 如「小桐」，群里消息以它开头即使不@也触发（跳过插话冷却，被叫必回），实现「叫名字就应」；③私聊自动回复开关——c2cAuto 关=私聊不自动 AI 应答（绑定/管理指令仍可用），微信/QQ 双端生效；④忽略自己消息——ignoreSelf 防机器人自我循环（QQ/微信 handler 入口拦截）；⑤忽略@全体预留 ignoreAtAll、无权限提示开关 noPermReply（对齐 no_permission_reply 思路）；⑥设置四层全打通——DB platform_settings 加 6 个字段、API /api/platform/settings POST 全解析、沙盒 platform_settings_get 展示唤醒项/platform_settings_set 支持 atReply/wakePrefix/c2cAuto/ignoreSelf 遥控（一句话「把@必回关掉」「设置唤醒前缀小桐」）、后台机器人设置页三渠道卡片新增 4 个唤醒开关+唤醒前缀输入框；⑦QQ handleGroup 重构——ignoreSelf 入口拦截 + wakePrefix 命中直接参与 + atReply 关时@也进插话决策。"),
@@ -3864,7 +3864,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         }
     }
 
-    // ============ ★ v1.203 平台设置（QQ/微信/公众号 三渠道全局设置：AI开关/消息记录/主动问候/欢迎语） ============
+    // ============ ★ v1.204 平台设置（QQ/微信/公众号 三渠道全局设置：AI开关/消息记录/主动问候/欢迎语） ============
 
     /** 读取某渠道平台设置（无则给默认值；gateway_config 存 JSON 字符串） */
     fun getPlatformSettings(channel: String): Map<String, Any?> {
@@ -3879,7 +3879,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
                     "proactiveEnabled" to (o.optBoolean("proactiveEnabled", true)),
                     "groupJoin" to (o.optBoolean("groupJoin", false)),
                     "groupJoinProb" to (o.optInt("groupJoinProb", 8)),
-                    // ★ v1.203 唤醒/回话设置（对齐一流智能体平台唤醒体系）
+                    // ★ v1.204 唤醒/回话设置（对齐一流智能体平台唤醒体系）
                     "atReply" to (o.optBoolean("atReply", true)),           // @机器人必回（群聊）
                     "wakePrefix" to (o.optString("wakePrefix", "")),        // 唤醒前缀，如「小桐」开头即触发（无需@）
                     "ignoreAtAll" to (o.optBoolean("ignoreAtAll", false)),  // 忽略@全体（防止全体消息误触发）
@@ -3887,7 +3887,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
                     "c2cAuto" to (o.optBoolean("c2cAuto", true)),           // 私聊消息自动回复开关
                     "noPermReply" to (o.optBoolean("noPermReply", false)),  // 无权限时是否回复提示（对齐 no_permission_reply）
                     "quoteReply" to (o.optBoolean("quoteReply", true)),  // ★引用回复开关：被引用/回复时是否触发
-                    // ★ v1.203 黑白名单 + 冷却参数化
+                    // ★ v1.204 黑白名单 + 冷却参数化
                     "blacklist" to (o.optString("blacklist", "")),        // 黑名单（逗号分隔：关键词或openid，命中不回复）
                     "whitelist" to (o.optString("whitelist", "")),        // 白名单（逗号分隔：仅这些openid/关键词可触发，空=不限制）
                     "joinCooldownSec" to (o.optInt("joinCooldownSec", 20)), // 群聊插话冷却秒数
@@ -3908,7 +3908,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         "proactiveEnabled" to true,
         "groupJoin" to false,
         "groupJoinProb" to 8,
-        // ★ v1.203 唤醒/回话默认值（@必回默认开；其余默认安全值）
+        // ★ v1.204 唤醒/回话默认值（@必回默认开；其余默认安全值）
         "atReply" to true,
         "wakePrefix" to "",
         "ignoreAtAll" to false,
@@ -3934,7 +3934,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         next.put("proactiveEnabled", updates["proactiveEnabled"] as? Boolean ?: (cur["proactiveEnabled"] as? Boolean ?: true))
         next.put("groupJoin", updates["groupJoin"] as? Boolean ?: (cur["groupJoin"] as? Boolean ?: false))
         next.put("groupJoinProb", updates["groupJoinProb"] as? Int ?: (cur["groupJoinProb"] as? Int ?: 8))
-        // ★ v1.203 唤醒/回话字段
+        // ★ v1.204 唤醒/回话字段
         next.put("atReply", updates["atReply"] as? Boolean ?: (cur["atReply"] as? Boolean ?: true))
         next.put("wakePrefix", (updates["wakePrefix"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["wakePrefix"] as? String ?: ""))
         next.put("ignoreAtAll", updates["ignoreAtAll"] as? Boolean ?: (cur["ignoreAtAll"] as? Boolean ?: false))
@@ -3952,7 +3952,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         setConfig("bot_settings_$channel", next.toString())
     }
 
-    // ============ ★ v1.203 统一消息记录中心（三渠道收发全量留存，后台可查可清） ============
+    // ============ ★ v1.204 统一消息记录中心（三渠道收发全量留存，后台可查可清） ============
 
     /** 保存一条平台消息记录（在/出站均可）；超 8000 条自动清最旧 */
     fun addPlatformMessage(channel: String, botId: Long, openid: String, groupOpenid: String, direction: String, content: String, model: String = "") {
