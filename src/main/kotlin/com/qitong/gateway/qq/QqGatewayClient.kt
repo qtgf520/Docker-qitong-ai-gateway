@@ -172,7 +172,25 @@ class QqGatewayClient(
                                 msgId = d.optString("id"),
                                 groupOpenid = d.optString("group_openid"),
                                 content = d.optString("content"),
-                                memberOpenid = d.optJSONObject("author")?.optString("member_openid") ?: ""
+                                memberOpenid = d.optJSONObject("author")?.optString("member_openid") ?: "",
+                                isAt = true,
+                                memberName = d.optJSONObject("author")?.optString("member_name") ?: ""
+                            )
+                        )
+                    }
+                    // ★ v1.199 群全量消息（不@也推送）：需机器人在开放平台开启「接收所有消息」权限后才会收到
+                    "GROUP_MESSAGE_CREATE" -> {
+                        lastDispatchAtMs = System.currentTimeMillis()
+                        val d = obj.optJSONObject("d") ?: return
+                        // 全量消息里也可能夹带@机器人的内容（author 是发言者而非@者，这里 content 若去除@后为空也照常推）
+                        onGroupMessage(
+                            QqGroupMessage(
+                                msgId = d.optString("id"),
+                                groupOpenid = d.optString("group_openid"),
+                                content = d.optString("content"),
+                                memberOpenid = d.optJSONObject("author")?.optString("member_openid") ?: "",
+                                isAt = false,
+                                memberName = d.optJSONObject("author")?.optString("member_name") ?: ""
                             )
                         )
                     }

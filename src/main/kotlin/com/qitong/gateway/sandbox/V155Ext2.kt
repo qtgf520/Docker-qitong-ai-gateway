@@ -48,7 +48,7 @@ object V155Ext2 {
                 }
             }
         }
-        // ★ v1.198 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
+        // ★ v1.199 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
         // 支持三渠道：QQ（group:群号 或 user:openid）/ 微信（openid）/ 公众号（粉丝openid）
         "send_message_to_user" -> {
             val text = (args["text"] ?: "").trim()
@@ -368,7 +368,7 @@ object V155Ext2 {
                 "• [${c.id}] ${c.title}"
             }.take(1400)
         }
-        // ★ v1.198 平台设置遥控（智能体可自主读取/修改 QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候）
+        // ★ v1.199 平台设置遥控（智能体可自主读取/修改 QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候）
         "platform_settings_get" -> {
             val channel = (args["channel"] ?: "").trim().lowercase()
             if (channel !in listOf("qq", "weixin", "mp")) "⚠️ 语法：platform_settings_get(channel=qq/weixin/mp)"
@@ -378,6 +378,7 @@ object V155Ext2 {
                     "• AI智能回答：${if (ps["aiEnabled"] == true) "✅开" else "⛔关"}\n" +
                     "• 消息记录：${if (ps["msgRecord"] == true) "✅开" else "⛔关"}\n" +
                     "• 主动问候：${if (ps["proactiveEnabled"] == true) "✅开" else "⛔关"}\n" +
+                    "• 群聊自动参与：${if (ps["groupJoin"] == true) "✅开" else "⛔关"}${if (channel == "qq") "（参与概率 ${ps["groupJoinProb"] ?: 8}%）" else ""}\n" +
                     "• 默认欢迎语：${(ps["welcome"] as? String)?.takeIf { it.isNotBlank() } ?: "(未设置)"}\n" +
                     "• 模型：${(ps["aiModel"] as? String)?.takeIf { it.isNotBlank() } ?: "(用各机器人默认)"}\n" +
                     "• 人设：${(ps["systemPrompt"] as? String)?.takeIf { it.isNotBlank() }?.take(60) ?: "(未设置)"}"
@@ -386,12 +387,14 @@ object V155Ext2 {
         "platform_settings_set" -> {
             if (!isAdmin) return "⛔ 仅管理员可修改平台设置"
             val channel = (args["channel"] ?: "").trim().lowercase()
-            if (channel !in listOf("qq", "weixin", "mp")) "⚠️ 语法：platform_settings_set(channel=qq/weixin/mp, aiEnabled=on/off, msgRecord=on/off, proactiveEnabled=on/off, welcome=欢迎语, aiModel=模型, systemPrompt=人设)"
+            if (channel !in listOf("qq", "weixin", "mp")) "⚠️ 语法：platform_settings_set(channel=qq/weixin/mp, aiEnabled=on/off, msgRecord=on/off, proactiveEnabled=on/off, groupJoin=on/off, groupJoinProb=0-100, welcome=欢迎语, aiModel=模型, systemPrompt=人设)"
             else {
                 val upd = mutableMapOf<String, Any?>()
                 (args["aiEnabled"] ?: "").let { if (it.isNotBlank()) upd["aiEnabled"] = it in listOf("on", "true", "1", "开", "启用") }
                 (args["msgRecord"] ?: "").let { if (it.isNotBlank()) upd["msgRecord"] = it in listOf("on", "true", "1", "开", "启用") }
                 (args["proactiveEnabled"] ?: "").let { if (it.isNotBlank()) upd["proactiveEnabled"] = it in listOf("on", "true", "1", "开", "启用") }
+                (args["groupJoin"] ?: "").let { if (it.isNotBlank()) upd["groupJoin"] = it in listOf("on", "true", "1", "开", "启用") }
+                (args["groupJoinProb"] ?: "").toIntOrNull()?.let { upd["groupJoinProb"] = it.coerceIn(0, 100) }
                 (args["welcome"] ?: "").let { if (it.isNotBlank()) upd["welcome"] = it }
                 (args["aiModel"] ?: "").let { if (it.isNotBlank()) upd["aiModel"] = it }
                 (args["systemPrompt"] ?: "").let { if (it.isNotBlank()) upd["systemPrompt"] = it }

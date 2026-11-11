@@ -610,7 +610,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.198 统一消息记录中心（QQ/微信/公众号 三渠道收发全量留存，后台可查；消息历史思路自研）
+            // ★ v1.199 统一消息记录中心（QQ/微信/公众号 三渠道收发全量留存，后台可查；消息历史思路自研）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS platform_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2561,8 +2561,9 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.199", "QQ群聊自由插话（不@也接话，官方全量群消息通道）", "让 QQ 机器人在群里像真人一样自动参与讨论（自主式群聊参与能力）：①底层通道——QQ 官方机器人 API 支持 GROUP_MESSAGE_CREATE 全量群消息事件（机器人在开放平台开启「接收所有消息」后，群里每条消息不@也推送），QqGatewayClient 新增解析该事件，QqGroupMessage 数据类加 isAt 标志（@消息 vs 全量消息）与 memberName 昵称；②参与决策 shouldJoinGroupChat——非@消息按三级策略决定是否插话：提到机器人名字（小桐/綦桐/机器人/助手/AI 等）必回应；求助/提问意图（帮我/查一下/谁知道/怎么/如何/有没有/推荐/分析等 25+ 关键词）高概率参与；否则按概率（默认 8%）偶尔参与闲聊避免刷屏；③开关与配置——后台「机器人→机器人设置」QQ 卡片新增「群聊自动参与」开关 + 参与概率输入（1-100%），默认关（避免未开全量权限的机器人收到未知事件）；平台设置数据层/API/沙盒四件套同步加 groupJoin/groupJoinProb 字段，智能体可一句话「把QQ群聊自动参与打开」遥控；④@消息（GROUP_AT_MESSAGE_CREATE）必回不受影响，新群欢迎语仅@消息触发避免全量刷屏，消息记录中心照常留存全量消息；⑤参与插话时走完整沙盒 Agent 循环（自主调工具干活），并受平台 AI 开关与群级 ai_enabled 双重控制。"),
 Triple("v1.198", "机器人说了就干（承诺闭环根治：「我帮你看一下」不再断链）", "根治机器人在群里说「我帮你看一下」「我这就去查」后没下文的断链问题：①根因——模型输出承诺话术（我帮你/我看一下/帮你查/稍等一下等）但没输出沙盒工具调用标签时，原逻辑引导2次失败后直接 break 把空承诺原样发给用户=任务根本没执行；②修复——QQ/微信 askModel 三处断链点全部接入承诺兜底：引导失败时检测到继续意图/承诺话术即派子Agent真执行用户原话（新增 SubAgentEngine.runSync 同步执行器 45s 必出结果），循环全走完仍未真执行且是纯承诺话术同样兜底，绝不放行空承诺当答案；③新增 isPromiseOnly 承诺话术检测（我帮你/我看一下/我这就去/帮你查/稍等/等我一下等20+前缀，排除含结果数字/链接/✅的真回复）+ promiseFallback 兜底（先推「我这就去处理」→派子Agent真执行→✅任务完成+完整结论必达）；④三处断链点覆盖：首次引导失败、二次引导失败、循环结束仍未执行工具。"),
-Triple("v1.198", "机器人平台设置（QQ/微信/公众号三渠道 AI开关·消息记录·主动问候·欢迎语·模型·人设）+ 统一消息记录中心 + 智能体遥控", "把机器人平台配置体系拉到一流智能体平台水平（自研实现）：①机器人设置页——后台「机器人→机器人设置」新增三渠道独立设置面板：AI智能回答开关（关=机器人不 AI 应答，管理指令仍可用；QQ/微信/公众号三处消息入口全部真实生效）、消息记录开关、主动问候开关（关=心跳智能体不再对该渠道主动冒泡）、默认欢迎语/默认模型/默认人设（供后续按渠道兜底）。②统一消息记录中心——新增 platform_messages 表存 QQ/微信/公众号三渠道收发全量消息（方向 in/out、渠道、目标、模型），后台「消息记录」页可筛选渠道/查看内容/清空，超 8000 条自动滚动；QQ 群/QQ私聊/微信/公众号四处收发入口全部埋点。③智能体遥控——沙盒新增 platform_settings_get（查平台设置）/platform_settings_set（改开关，管理员）/platform_messages（查消息记录），一句话「把QQ的AI开关关掉」「查下微信最近消息」即可代改代查。④网关全接口远程可控原则再延伸：平台级配置同样纳入智能体按身份操作范围。"),
+Triple("v1.197", "机器人平台设置（QQ/微信/公众号三渠道 AI开关·消息记录·主动问候·欢迎语·模型·人设）+ 统一消息记录中心 + 智能体遥控", "把机器人平台配置体系拉到一流智能体平台水平（自研实现）：①机器人设置页——后台「机器人→机器人设置」新增三渠道独立设置面板：AI智能回答开关（关=机器人不 AI 应答，管理指令仍可用；QQ/微信/公众号三处消息入口全部真实生效）、消息记录开关、主动问候开关（关=心跳智能体不再对该渠道主动冒泡）、默认欢迎语/默认模型/默认人设（供后续按渠道兜底）。②统一消息记录中心——新增 platform_messages 表存 QQ/微信/公众号三渠道收发全量消息（方向 in/out、渠道、目标、模型），后台「消息记录」页可筛选渠道/查看内容/清空，超 8000 条自动滚动；QQ 群/QQ私聊/微信/公众号四处收发入口全部埋点。③智能体遥控——沙盒新增 platform_settings_get（查平台设置）/platform_settings_set（改开关，管理员）/platform_messages（查消息记录），一句话「把QQ的AI开关关掉」「查下微信最近消息」即可代改代查。④网关全接口远程可控原则再延伸：平台级配置同样纳入智能体按身份操作范围。"),
 Triple("v1.196", "加载中永不消失根治 + 主动发消息工具（send_message_to_user）", "让后台/前端永不再卡「加载中」，让智能体能主动找用户说话：①加载态根治三连——api() 加 15 秒 fetch 超时（AbortController）并返回 timeout 标志，请求挂起不再让 promise 永不 resolve，「加载中」占位不再永远不消失；新增统一请求函数 apiL()（带加载态控制：请求中显示⏳ 加载中…、失败显示红色错误+重试按钮）；AdminJs10.kt 注入全局「加载中」守护（12 秒未响应自动替换为⚠️ 加载超时+刷新按钮，兜底所有页面）。②主动发消息沙盒工具 send_message_to_user——智能体可自主给用户/群主动推送消息（对标一流智能体平台 proactive message，自研实现）：参数 text=内容/target=目标/image=图片/file=文件；QQ 渠道支持 group:群号 与 user:openid 私聊（新增 QqBotManager.sendToUserC2C）；微信渠道调用 sendActiveGreet；公众号渠道调 MpPush 客服消息；权限 user/modify（用户只能发自己会话）。③全量外部项目名残留清零：历史注释里的外部开源项目名全部改写为自研描述（界面零外部来源名）。"),
 Triple("v1.195", "多子Agent调度 + Cron定时AI Agent（subagent_run/subagent_result + ai:前缀）", "让智能体拥有分身干活能力，对标一流智能体平台多Agent架构：①多子Agent调度——沙盒新增 subagent_run（派发子任务：task=描述, model=模型, wait=1前台等结果 or 后台）/ subagent_result（查询结果）；子Agent独立上下文、最多8轮、可自主调沙盒工具真执行、线程池并发上限8个，干完出结论；结果存 subagent_tasks 表。②后台任务管理——管理页智能体→子Agent 查看所有子任务（状态/结果/删除，普通用户看自己的），API /api/subagent/tasks。③Cron定时AI Agent——计划任务内容新增 ai: 前缀（如 ai:查一下今天服务商健康并汇报），到点由心跳引擎调子Agent引擎真执行（配合已有 cron 表达式定时主动干活），扩展现有 cmd:/wf:/mail: 前缀。④心跳引擎 executeDueAction 扩展支持 AI 智能体执行。"),
 Triple("v1.194", "知识库（RAG 检索增强：多库管理 + 文档分块 + BM25 检索 + 三渠道自动注入）", "上传文档让 AI 基于资料精准回答：①多知识库管理——后台「知识库」菜单可新建/编辑/删除多个知识库（公开/私有，owner 隔离），每库独立文档；②文档自动分块——粘贴 txt/md 内容自动按段落/句子边界递归分块（500字/块、80字重叠，中英混合识别），kb_docs/kb_chunks 表入库；③BM25 稀疏检索——自研词频+逆文档频率打分（无需 embedding 离线可用），searchKbAcross 支持多库跨库检索；④三渠道自动注入——内置聊天/QQ/微信用户提问时自动检索知识库（公开库+绑定账号自己的库），命中结果注入 System Prompt 让 AI 优先参考文档回答（kb_list/kb_search 沙盒工具可自主调用）；⑤管理页检索测试——知识库详情可直接输入检索词验证命中效果。"),
@@ -3859,7 +3860,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         }
     }
 
-    // ============ ★ v1.198 平台设置（QQ/微信/公众号 三渠道全局设置：AI开关/消息记录/主动问候/欢迎语） ============
+    // ============ ★ v1.199 平台设置（QQ/微信/公众号 三渠道全局设置：AI开关/消息记录/主动问候/欢迎语） ============
 
     /** 读取某渠道平台设置（无则给默认值；gateway_config 存 JSON 字符串） */
     fun getPlatformSettings(channel: String): Map<String, Any?> {
@@ -3872,6 +3873,8 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
                     "aiEnabled" to (o.optBoolean("aiEnabled", true)),
                     "msgRecord" to (o.optBoolean("msgRecord", true)),
                     "proactiveEnabled" to (o.optBoolean("proactiveEnabled", true)),
+                    "groupJoin" to (o.optBoolean("groupJoin", false)),
+                    "groupJoinProb" to (o.optInt("groupJoinProb", 8)),
                     "welcome" to (o.optString("welcome", "")),
                     "aiModel" to (o.optString("aiModel", "")),
                     "systemPrompt" to (o.optString("systemPrompt", ""))
@@ -3886,6 +3889,8 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         "aiEnabled" to true,
         "msgRecord" to true,
         "proactiveEnabled" to true,
+        "groupJoin" to false,
+        "groupJoinProb" to 8,
         "welcome" to "",
         "aiModel" to "",
         "systemPrompt" to ""
@@ -3898,13 +3903,15 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         next.put("aiEnabled", updates["aiEnabled"] as? Boolean ?: (cur["aiEnabled"] as? Boolean ?: true))
         next.put("msgRecord", updates["msgRecord"] as? Boolean ?: (cur["msgRecord"] as? Boolean ?: true))
         next.put("proactiveEnabled", updates["proactiveEnabled"] as? Boolean ?: (cur["proactiveEnabled"] as? Boolean ?: true))
+        next.put("groupJoin", updates["groupJoin"] as? Boolean ?: (cur["groupJoin"] as? Boolean ?: false))
+        next.put("groupJoinProb", updates["groupJoinProb"] as? Int ?: (cur["groupJoinProb"] as? Int ?: 8))
         next.put("welcome", (updates["welcome"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["welcome"] as? String ?: ""))
         next.put("aiModel", (updates["aiModel"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["aiModel"] as? String ?: ""))
         next.put("systemPrompt", (updates["systemPrompt"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["systemPrompt"] as? String ?: ""))
         setConfig("bot_settings_$channel", next.toString())
     }
 
-    // ============ ★ v1.198 统一消息记录中心（三渠道收发全量留存，后台可查可清） ============
+    // ============ ★ v1.199 统一消息记录中心（三渠道收发全量留存，后台可查可清） ============
 
     /** 保存一条平台消息记录（在/出站均可）；超 8000 条自动清最旧 */
     fun addPlatformMessage(channel: String, botId: Long, openid: String, groupOpenid: String, direction: String, content: String, model: String = "") {

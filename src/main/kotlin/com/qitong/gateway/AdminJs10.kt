@@ -670,7 +670,7 @@ window.saDel = function(id){
  });
 };
 
-// ★ v1.198 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
+// ★ v1.199 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
 //   解决列表/详情页网络挂起时“加载中”永远显示（配合 api() 15s 超时，双重兜底）
 (function(){
  var guardTimer = null;
@@ -707,7 +707,7 @@ window.saDel = function(id){
  setInterval(scanLoading, 8000);  // 常驻兜底
 })();
 
-// ===== ★ v1.198 机器人设置（QQ/微信/公众号 三渠道平台设置面板：AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
+// ===== ★ v1.199 机器人设置（QQ/微信/公众号 三渠道平台设置面板：AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
 loaders.botsettings = function(){
  var box = $('view-botsettings');
  if(!box) return;
@@ -737,6 +737,9 @@ loaders.botsettings = function(){
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_ai" '+(aiOn?'checked':'')+'> AI 智能回答</label></div>'+
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_rec" '+(recOn?'checked':'')+'> 消息记录</label></div>'+
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_pro" '+(proOn?'checked':'')+'> 主动问候</label></div>'+
+     (ch==='qq' ? '<div class="form-row"><label><input type="checkbox" id="bs_qq_join" '+(ps.groupJoin?'checked':'')+'> 群聊自动参与（不@也接话）</label></div>'+
+     '<div class="form-row"><label>群聊参与概率（1-100%，默认8%）</label><input class="input" type="number" min="0" max="100" id="bs_qq_prob" value="'+(ps.groupJoinProb||8)+'"></div>'+
+     '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">💡 需在 QQ 开放平台为该机器人开启「接收所有消息」权限，群里不@也能收到消息并自动参与讨论。</div>' : '')+
      '<div class="form-row"><label>默认欢迎语</label><input class="input" id="bs_'+ch+'_wel" value="'+esc(ps.welcome||'')+'" placeholder="留空=用机器人各自设置"></div>'+
      '<div class="form-row"><label>默认模型（留空=各机器人自己的）</label><input class="input" id="bs_'+ch+'_model" value="'+esc(ps.aiModel||'')+'" placeholder="如 qtai-sj"></div>'+
      '<div class="form-row"><label>默认人设（留空=各机器人自己的）</label><textarea class="input" id="bs_'+ch+'_sp" rows="2">'+esc(ps.systemPrompt||'')+'</textarea></div>'+
@@ -753,13 +756,15 @@ function saveBotSettings(ch){
  if(aiEl) body.aiEnabled = aiEl.checked ? 'true':'false';
  if(recEl) body.msgRecord = recEl.checked ? 'true':'false';
  if(proEl) body.proactiveEnabled = proEl.checked ? 'true':'false';
+ var joinEl=$('bs_qq_join'); if(joinEl) body.groupJoin = joinEl.checked ? 'true':'false';
+ var probEl=$('bs_qq_prob'); if(probEl && probEl.value.trim()!=='') body.groupJoinProb = Math.max(0, Math.min(100, parseInt(probEl.value)||0)).toString();
  var wel=$('bs_'+ch+'_wel'); if(wel && wel.value.trim()) body.welcome = wel.value.trim();
  var md=$('bs_'+ch+'_model'); if(md && md.value.trim()) body.aiModel = md.value.trim();
  var sp=$('bs_'+ch+'_sp'); if(sp && sp.value.trim()) body.systemPrompt = sp.value.trim();
  api('/api/platform/settings',{method:'POST',body:body}).then(function(r){ toast(r.msg||'', r.code===0); });
 }
 
-// ===== ★ v1.198 统一消息记录中心（QQ/微信/公众号 收发记录查询/筛选/清空） =====
+// ===== ★ v1.199 统一消息记录中心（QQ/微信/公众号 收发记录查询/筛选/清空） =====
 var msgCenterCh = '';
 function loadMsgCenter(){
  var box = $('view-msgcenter');

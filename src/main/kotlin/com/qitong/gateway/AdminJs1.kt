@@ -62,7 +62,7 @@ function api(url, opts){
  var headers = { 'Authorization': 'Bearer ' + token };
  var body = opts.body;
  if(body && typeof body === 'object'){ headers['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
- // ★ v1.198 修复「加载中一直显示」：fetch 默认无超时，网络挂起时 promise 永不 resolve → 占位加载文案永不替换
+ // ★ v1.199 修复「加载中一直显示」：fetch 默认无超时，网络挂起时 promise 永不 resolve → 占位加载文案永不替换
  //   加 15s 超时 AbortController，超时返回明确的网络错误标志（调用方可自行判断展示错误占位）
  return new Promise(function(resolve){
   var ctrl = null;
@@ -82,7 +82,7 @@ function api(url, opts){
   });
  });
 }
-/** ★ v1.198 带加载态控制的统一请求：setLoading 可传函数或元素ID；失败自动替换"加载中"为错误提示 */
+/** ★ v1.199 带加载态控制的统一请求：setLoading 可传函数或元素ID；失败自动替换"加载中"为错误提示 */
 function apiL(url, opts, loadingEl){
  var el = typeof loadingEl === 'string' ? document.getElementById(loadingEl) : loadingEl;
  var setLoading = function(txt){ if(el) el.innerHTML = txt; };

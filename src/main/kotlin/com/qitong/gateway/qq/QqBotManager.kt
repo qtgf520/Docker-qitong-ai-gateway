@@ -202,7 +202,7 @@ object QqBotManager {
         } catch (e: Exception) { System.err.println("[QQBot] 主动活跃异常: ${e.message}") }
     }
 
-    /** ★ v1.198 主动发消息：向指定 QQ 用户（C2C 私聊）发送文本（send_message_to_user 沙盒工具用） */
+    /** ★ v1.199 主动发消息：向指定 QQ 用户（C2C 私聊）发送文本（send_message_to_user 沙盒工具用） */
     fun sendToUserC2C(userOpenid: String, text: String): Boolean {
         if (userOpenid.isBlank() || text.isBlank()) return false
         return try {
@@ -443,8 +443,25 @@ object QqBotManager {
             System.err.println("[QQBot] ${bot.appid} 群消息处理：获取AccessToken失败")
             return
         }
-        // 新群首次触达：若开启欢迎且填了欢迎语，自动下发
-        if (isNewGroup) {
+
+        // ★ v1.199 群聊自由插话：非@消息（GROUP_MESSAGE_CREATE 全量模式）按决策参与讨论
+        //   @消息（GROUP_AT_MESSAGE_CREATE）必回不受影响
+        if (!msg.isAt) {
+            val rawText = stripAt(msg.content).trim()
+            if (rawText.isNotEmpty()) {
+                // 消息记录照常留存（不管参不参与）
+                runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "in", rawText, bot.aiModel) }
+                // 决策：不参与则直接返回（不留会话历史、不打扰）
+                if (!shouldJoinGroupChat(rawText, msg.groupOpenid)) {
+                    // 只登记活跃（心跳主动问候用），不触发 AI
+                    db.touchQqGroup(msg.groupOpenid, bot.appid)
+                    return
+                }
+            }
+        }
+
+        // 新群首次触达：若开启欢迎且填了欢迎语，自动下发（仅@消息触发，避免全量模式刷欢迎）
+        if (isNewGroup && msg.isAt) {
             val cfg = db.getQqGroupConfig(msg.groupOpenid)
             if (cfg != null && (cfg["welcomeEnabled"] as Boolean)) {
                 val g = cfg["greeting"] as? String
@@ -455,7 +472,7 @@ object QqBotManager {
         val text = stripAt(msg.content).trim()
         if (text.isEmpty()) return
 
-        // ★ v1.198 消息记录中心：QQ 群消息入站留存
+        // ★ v1.199 消息记录中心：QQ 群消息入站留存（插话/必回都留）
         runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "in", text, bot.aiModel) }
 
         // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
@@ -489,7 +506,7 @@ object QqBotManager {
             System.err.println("[QQBot] ${bot.appid} 私聊消息处理：获取AccessToken失败")
             return
         }
-        // ★ v1.198 消息记录中心：QQ 私聊入站留存
+        // ★ v1.199 消息记录中心：QQ 私聊入站留存
         runCatching { db.addPlatformMessage("qq", bot.id, msg.userOpenid, "", "in", msg.content.trim(), bot.aiModel) }
         // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
         val key = "${bot.id}:c:${msg.userOpenid}"
@@ -559,7 +576,7 @@ object QqBotManager {
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "progress", "开启完整模式(verbose)", System.currentTimeMillis() - t0)
             return
         }
-        // ★ v1.198 平台设置：AI 总开关（关=机器人不 AI 应答；仅 admin/绑定管理指令仍可用）
+        // ★ v1.199 平台设置：AI 总开关（关=机器人不 AI 应答；仅 admin/绑定管理指令仍可用）
         runCatching {
             val ps = db.getPlatformSettings("qq")
             if ((ps["aiEnabled"] as? Boolean) != true) {
@@ -1309,7 +1326,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         text.contains("我查", true) || text.contains("来弄", true) || text.contains("搞定", true)
 
     /**
-     * ★ v1.198 承诺话术检测：模型只输出「我帮你/我看一下/帮你查/我这就去查」这类承诺
+     * ★ v1.199 承诺话术检测：模型只输出「我帮你/我看一下/帮你查/我这就去查」这类承诺
      * 但没有真输出工具调用标签的行为 = 「说了要做 → 没做」→ 必须强制兜底真执行。
      * 返回 true 表示该回复是空承诺（需要派子Agent真执行用户原话）。
      */
@@ -1331,7 +1348,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return true
     }
 
-    /** ★ v1.198 承诺闭环兜底：把用户原话派子Agent真执行，结果必达（不再放行空承诺） */
+    /** ★ v1.199 承诺闭环兜底：把用户原话派子Agent真执行，结果必达（不再放行空承诺） */
     private fun promiseFallback(userText: String, userOpenid: String, groupOpenid: String, effUserId: Long, channel: String, smartSend: (String, Boolean) -> Boolean): String {
         smartSend("⏳ 我这就去处理，稍等片刻…", false)
         val task = "用户请求：$userText\n请自主拆解并用网关沙盒工具真实执行，干完输出完整结果（含关键数据）。"
@@ -1340,7 +1357,40 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         else "✅ 任务完成：\n$result"
     }
 
-    /** ★ v71 大消息分段：超 maxLen 按行切段（QQ 长消息不丢） */
+    /** ★ v1.199 群聊自由插话决策：非@消息是否参与讨论（自主式群聊参与）。
+     * 返回 true = 机器人应插话。开启条件：平台设置 qq.groupJoin=true 且该群 ai_enabled。
+     * 触发策略：①消息含机器人名/@意向词 ②求助/提问关键词（帮/查/谁/怎么/如何/有没有/知道吗/大家觉得 等）③概率闲聊参与 */
+    private fun shouldJoinGroupChat(text: String, groupOpenid: String): Boolean {
+        // 平台总开关（默认关，需要用户在机器人设置里开启「群聊自动参与」）
+        val enabled = (db.getPlatformSettings("qq")["groupJoin"] as? Boolean) ?: false
+        if (!enabled) return false
+        // 群级 AI 开关（关了不参与）
+        val cfg = db.getQqGroupConfig(groupOpenid)
+        if (cfg != null && (cfg["aiEnabled"] != true)) return false
+        // 1) 提到机器人（名字/昵称）→ 必回应
+        val t = text.lowercase()
+        val botMention = t.contains("机器人", true) || t.contains("小桐", true) || t.contains("綦桐", true) ||
+            t.contains("ai", true) || t.contains("助手", true) || botNames.any { t.contains(it, true) }
+        if (botMention) return true
+        // 2) 求助/提问意图（群里有人问问题=机器人擅长领域）
+        val ask = t.contains("帮我", true) || t.contains("帮帮", true) || t.contains("查一下", true) ||
+            t.contains("谁知道", true) || t.contains("怎么", true) || t.contains("如何", true) ||
+            t.contains("有没有", true) || t.contains("知道吗", true) || t.contains("大家觉得", true) ||
+            t.contains("什么", true) || t.contains("哪里", true) || t.contains("哪个好", true) ||
+            t.contains("有人", true) || t.contains("请问", true) || t.contains("求解", true) ||
+            t.contains("求助", true) || t.contains("不懂", true) || t.contains("帮忙", true) ||
+            t.contains("推荐", true) || t.contains("介绍", true) || t.contains("分析", true) ||
+            t.contains("咋样", true) || t.contains("怎么样", true)
+        if (ask) return true
+        // 3) 低概率参与闲聊（避免刷屏：默认 8% 概率偶尔插话，酷一点）
+        val joinProb = (db.getConfig("qq_group_join_prob", "8").toIntOrNull() ?: 8).coerceIn(0, 100)
+        return if (joinProb > 0) (0 until 100).random() < joinProb else false
+    }
+
+    /** ★ v1.199 QQ 机器人自定义名称列表（群聊提到这些名字触发回应） */
+    private val botNames: List<String> by lazy { listOf("小助手", "小ai", "网关", "助理") }
+
+    /** ★ v1.71 大消息分段：超 maxLen 按行切段（QQ 长消息不丢） */
     private fun splitText(text: String, maxLen: Int = 1800): List<String> {
         if (text.length <= maxLen) return listOf(text)
         val result = mutableListOf<String>()
@@ -1906,7 +1956,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 }
                             } catch (e: Exception) { null }
                             if (guided.isNullOrBlank()) {
-                                // ★ v1.198 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
+                                // ★ v1.199 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
                                 if (continueIntent(content) || isPromiseOnly(content)) {
                                     content = promiseFallback(userText, userOpenid, groupOpenid, effUserId, "qq", smartSend)
                                     break
@@ -2076,7 +2126,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             }
                         } catch (e: Exception) { null }
                         if (guided2.isNullOrBlank()) {
-                            // ★ v1.198 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 若本轮还没真执行过工具，则派子Agent真执行用户原话
+                            // ★ v1.199 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 若本轮还没真执行过工具，则派子Agent真执行用户原话
                             if (continueIntent(content) || isPromiseOnly(content)) {
                                 content = promiseFallback(userText, userOpenid, groupOpenid, effUserId, "qq", smartSend)
                                 break
@@ -2089,7 +2139,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     if (calls2.isEmpty()) break
                 }
-                // ★ v1.198 承诺闭环终极兜底：循环全部走完仍没真执行过工具，且最终内容是纯承诺话术（"我帮你看一下"等）
+                // ★ v1.199 承诺闭环终极兜底：循环全部走完仍没真执行过工具，且最终内容是纯承诺话术（"我帮你看一下"等）
                 //   → 直接派子Agent真执行用户原话，结果必达，绝不放行空承诺当答案
                 if (!executedCalls && content.isNotBlank() && (continueIntent(content) || isPromiseOnly(content)) && userText.isNotBlank()) {
                     content = promiseFallback(userText, userOpenid, groupOpenid, effUserId, "qq", smartSend)
