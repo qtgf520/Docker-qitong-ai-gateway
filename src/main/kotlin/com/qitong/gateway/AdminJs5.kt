@@ -772,7 +772,7 @@ function fmDelete(enName){
   toast(r.msg||(r.code===0?'已删除':'删除失败'), r.code===0); if(r.code===0) fmLoad();
  });
 }
-// ★ v1.104 SSH 远程终端管理（对齐 Agora 多后端）
+// ★ v1.104 SSH 远程终端管理（多后端）
 function termSsh(){
  openModal('🔌 SSH 远程终端', '<div class="form-row"><label>保存的连接</label><select class="input" id="sshSel" onchange="sshSelect()"><option value="">--- 选择已保存的连接 ---</option></select></div>'+
   '<div style="display:flex;gap:6px;margin:8px 0"><input class="input" id="sshName" placeholder="连接名（如 我的服务器）" style="flex:1;font-size:12px"><input class="input" id="sshHost" placeholder="主机 IP" style="width:130px;font-size:12px"><input class="input" id="sshPort" value="22" style="width:60px;font-size:12px"></div>'+

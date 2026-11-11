@@ -551,7 +551,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.195 微信公众号（webhook 回调模式，多公众号管理，对齐 qq_bots/weixin_bots 风格）
+            // ★ v1.193 微信公众号（webhook 回调模式，多公众号管理，对齐 qq_bots/weixin_bots 风格）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_bots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -572,7 +572,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.195 公众号关键词规则（每公众号独立：触发词 -> 固定回复/AI，对齐 qq_commands 风格）
+            // ★ v1.193 公众号关键词规则（每公众号独立：触发词 -> 固定回复/AI，对齐 qq_commands 风格）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_keywords (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -585,7 +585,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.195 公众号粉丝 openid 绑定网关账号（对齐 weixin_user_bindings：权限/余额/用量）
+            // ★ v1.193 公众号粉丝 openid 绑定网关账号（对齐 weixin_user_bindings：权限/余额/用量）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_fans (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -598,7 +598,7 @@ class Database(private val dbPath: String) {
                     UNIQUE(bot_id, openid)
                 )"""
             )
-            // ★ v1.195 公众号运行日志（对齐 weixin_logs）
+            // ★ v1.193 公众号运行日志（对齐 weixin_logs）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS mp_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -821,7 +821,7 @@ class Database(private val dbPath: String) {
                     run_at INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'pending',       -- pending / done / cancelled
                     created_at INTEGER NOT NULL DEFAULT 0,
-                    cron_expr TEXT NOT NULL DEFAULT ''            -- ★ v84 Agora cron：5字段表达式，空=一次性
+                    cron_expr TEXT NOT NULL DEFAULT ''            -- ★ v84 cron：5字段表达式，空=一次性
                 )"""
             )
             // ★ v84 旧库迁移：补 cron_expr 列（cron 周期任务）
@@ -867,7 +867,7 @@ class Database(private val dbPath: String) {
                 )"""
             )
 
-            // ★ v1.104 SSH 配置持久化表（重启不丢；对齐 Agora Shell 多后端）
+            // ★ v1.104 SSH 配置持久化表（重启不丢）
             st.execute(
                 """CREATE TABLE IF NOT EXISTS ssh_configs (
                     name TEXT PRIMARY KEY,
@@ -2470,7 +2470,7 @@ fun updateUserLogin(id: Long) {
         return n
     }
 
-    // ============ 计划任务（v76：AI 安排未来执行任务；v84：Agora CronExpression 周期任务） ============
+    // ============ 计划任务（v76：AI 安排未来执行任务；v84：CronExpression 周期任务） ============
 
     fun addScheduledTask(channel: String, userOpenid: String, taskType: String, content: String, runAt: Long, cronExpr: String = "", intervalMinutes: Int = 0): Long {
         stmt(
@@ -2546,6 +2546,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.196", "加载中永不消失根治 + 主动发消息工具（send_message_to_user）", "让后台/前端永不再卡「加载中」，让智能体能主动找用户说话：①加载态根治三连——api() 加 15 秒 fetch 超时（AbortController）并返回 timeout 标志，请求挂起不再让 promise 永不 resolve，「加载中」占位不再永远不消失；新增统一请求函数 apiL()（带加载态控制：请求中显示⏳ 加载中…、失败显示红色错误+重试按钮）；AdminJs10.kt 注入全局「加载中」守护（12 秒未响应自动替换为⚠️ 加载超时+刷新按钮，兜底所有页面）。②主动发消息沙盒工具 send_message_to_user——智能体可自主给用户/群主动推送消息（对标一流智能体平台 proactive message，自研实现）：参数 text=内容/target=目标/image=图片/file=文件；QQ 渠道支持 group:群号 与 user:openid 私聊（新增 QqBotManager.sendToUserC2C）；微信渠道调用 sendActiveGreet；公众号渠道调 MpPush 客服消息；权限 user/modify（用户只能发自己会话）。③全量外部项目名残留清零：历史注释里的外部开源项目名全部改写为自研描述（界面零外部来源名）。"),
 Triple("v1.195", "多子Agent调度 + Cron定时AI Agent（subagent_run/subagent_result + ai:前缀）", "让智能体拥有分身干活能力，对标一流智能体平台多Agent架构：①多子Agent调度——沙盒新增 subagent_run（派发子任务：task=描述, model=模型, wait=1前台等结果 or 后台）/ subagent_result（查询结果）；子Agent独立上下文、最多8轮、可自主调沙盒工具真执行、线程池并发上限8个，干完出结论；结果存 subagent_tasks 表。②后台任务管理——管理页智能体→子Agent 查看所有子任务（状态/结果/删除，普通用户看自己的），API /api/subagent/tasks。③Cron定时AI Agent——计划任务内容新增 ai: 前缀（如 ai:查一下今天服务商健康并汇报），到点由心跳引擎调子Agent引擎真执行（配合已有 cron 表达式定时主动干活），扩展现有 cmd:/wf:/mail: 前缀。④心跳引擎 executeDueAction 扩展支持 AI 智能体执行。"),
 Triple("v1.194", "知识库（RAG 检索增强：多库管理 + 文档分块 + BM25 检索 + 三渠道自动注入）", "上传文档让 AI 基于资料精准回答：①多知识库管理——后台「知识库」菜单可新建/编辑/删除多个知识库（公开/私有，owner 隔离），每库独立文档；②文档自动分块——粘贴 txt/md 内容自动按段落/句子边界递归分块（500字/块、80字重叠，中英混合识别），kb_docs/kb_chunks 表入库；③BM25 稀疏检索——自研词频+逆文档频率打分（无需 embedding 离线可用），searchKbAcross 支持多库跨库检索；④三渠道自动注入——内置聊天/QQ/微信用户提问时自动检索知识库（公开库+绑定账号自己的库），命中结果注入 System Prompt 让 AI 优先参考文档回答（kb_list/kb_search 沙盒工具可自主调用）；⑤管理页检索测试——知识库详情可直接输入检索词验证命中效果。"),
 Triple("v1.193", "微信公众号接入（webhook 回调模式·多公众号·关键词回答+AI智能回答·步骤显示开关）", "新增公众号独立模块，与 QQ/微信机器人并行：①多公众号管理——mp_bots 表，每号独立 AppID/AppSecret/Token/EncodingAESKey/加密模式/AI模型/人设/欢迎语/默认回复/关键词开关；管理页「机器人→公众号」支持添加/编辑/删除/详情，列表直接展示每个号的 Webhook 回调地址（微信公众平台「服务器配置」填这个）。②关键词回答——mp_keywords 表每公众号独立规则：触发词（精确/包含/正则）→ 固定回复/AI智能回答/忽略，命中即 5 秒内被动回复秒回。③AI 智能回答——关键词未命中且 AI 开关开时走网关大模型（复用 qtai-sj 等，loopback 同 QQ/微信链路），每粉丝 openid 独立多轮上下文；先回「处理中」占位防 5s 超时，AI 结果通过客服消息异步推送（认证服务号；订阅号借用 48h 会话窗口）。④步骤显示开关——默认 quiet 不推过程，粉丝发「显示步骤」开启 verbose（AI 干活步骤实时推送），「隐藏步骤」关闭；开关按公众号绑定账号记忆。⑤粉丝 openid 可绑定网关账号（权限/余额/用量对齐 QQ/微信），公众号运行日志 mp_logs 全程记录。⑥URL 验签——GET /mp/webhook/{id} 用 sha1(token+ts+nonce) 完成公众平台配置校验。"),
@@ -2570,7 +2571,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
             Triple("v1.174", "隐藏延伸至测速/OpenAI接口 + 沙盒Agent运行可视化 + Linux终端系统", "①隐藏功能延伸：模型按用户隐藏不再只过滤模型管理页列表——首页测速排行、OpenAI 兼容接口 /v1/models 同样按当前用户隐藏模型过滤（跟停用一个道理，隐藏=对你彻底不可见不可用）。②沙盒 Agent 运行可视化：新增实时运行状态面板，QQ/微信/内置聊天 正在跑的 Agent 任务（轮次/工具调用/结果/状态）实时推送后台，按绑定用户隔离，群内消息保持简洁不再刷屏过程。③Linux 终端系统：终端页新增「Linux 系统」能力，可下载安装适配的 Ubuntu/Linux rootfs（proot 用户态运行），从此网关内有真实 Linux 环境；新建终端可改时长（默认30分钟/可永久），qtai-sj 专属永久终端不可删除、Agent 可操作。"),
             Triple("v1.173", "服务商Key密码验证提取 + 模型按用户隐藏", "①服务商 API Key 全面脱敏：后台服务商列表 Key 一律掩码显示（管理员也不例外），不再直接明文展示任何人的 Key。②密码验证提取：新增 POST /api/providers/{id}/reveal，需输入该服务商添加者（属主）的登录密码（BCrypt 校验）才能提取完整 Key；系统级服务商验证当前管理员自己的密码；其他管理员也无法直接查看，杜绝互相窥探。③模型按用户隐藏：模型列表每行新增「隐藏」按钮，隐藏后该模型对当前用户关闭显示（纯按用户隔离，非全局）；提供「显示已隐藏」开关随时恢复。④全员可用：后台管理员、用户代理、普通用户都可对自己的模型列表执行隐藏/恢复，互不影响。"),
             Triple("v1.172", "预测式自动切换（思考阶段预热，故障转移毫秒级）", "对齐原APP v3.18.24 预测式预热：①思考阶段介入——当请求发出（含 QQ/微信/qtai-sj 大脑），自动记录当前模型特征（modelId/providerId/请求模态/用户池），触发三级预测预热；②三级预测策略——强制故障池当前命中模型的下一个（池序=切换优先）→ 测速排行榜当前模型的下一个健康模型 → 兜底全局最优模型；③连接预建——对预测目标发轻量 HEAD 请求（5s 超时、后台异步、失败静默），提前完成 TCP+TLS+HTTP/2 握手，连接放入 OkHttp 共享连接池（复用 UpstreamClient 200 连接池）；④切换零感知——故障转移时目标连接已就绪，切换到下一模型毫秒级完成；⑤命中统计——/api/status 新增 prewarm 状态（已预热目标/累计预热次数/累计命中次数），预热命中自动登记。完全后台异步，不阻塞主请求，不影响现有故障转移/测速逻辑。"),
-            Triple("v1.171", "模型配置customAlias直接作对外别名 + 显示名按钮颜色修复", "①模型配置里单独模型的自定义别名（customAlias）直接对外生效：/v1/models 对这些模型追加密名条目（id=别名、display_name=别名、alias_of=真实模型），外部 APP 拉列表即看到别名；请求侧 GatewayProxy 实时反查 findModelByAlias（命中 customAlias → 映射回真实模型转发，带归属校验），配置里改别名立即生效，无需额外配置。②修复模型页「🏷️ 显示名管理」按钮文字看不见：青色文字在靛蓝背景上对比度不足，改纯白。③Shizuku 保活 Operit 与綦桐AI网关（RUN_IN_BACKGROUND/START_FOREGROUND/deviceidle 白名单/standby active）。"),
+            Triple("v1.171", "模型配置customAlias直接作对外别名 + 显示名按钮颜色修复", "①模型配置里单独模型的自定义别名（customAlias）直接对外生效：/v1/models 对这些模型追加密名条目（id=别名、display_name=别名、alias_of=真实模型），外部 APP 拉列表即看到别名；请求侧 GatewayProxy 实时反查 findModelByAlias（命中 customAlias → 映射回真实模型转发，带归属校验），配置里改别名立即生效，无需额外配置。②修复模型页「🏷️ 显示名管理」按钮文字看不见：青色文字在靛蓝背景上对比度不足，改纯白。③Shizuku 保活宿主APP与綦桐AI网关（RUN_IN_BACKGROUND/START_FOREGROUND/deviceidle 白名单/standby active）。"),
             Triple("v1.170", "模型试用401修复 + 模型自定义显示名(对外别名) + OpenAI余额查询", "①修复模型页「试用」按钮 401：tryModel 的 fetch 请求没带 Authorization 头（/api/chat/stream 强制 requireAuth），补 Bearer token 即可。②模型自定义显示名（对外别名）：复用 model_mappings 表并新增 owner_id 字段做用户隔离——管理员映射全局共享，普通用户可自建自己的别名（如「DeepSeek 免费」→ 真实 deepseek-chat）；/v1/models 对外列表在真实模型后追加别名条目（id=别名、display_name=自定义名），外部 APP 拉模型列表看到的就是自定义名，用别名请求时网关自动反查映射到真实模型转发（同一轮注册的全局/用户映射都能命中）；后台模型页新增「显示名」管理入口（管理员=全部映射，用户=自己的）。③OpenAI 兼容余额查询：新增 GET /v1/dashboard/billing/credit_grants（按 API Key 属主隔离，普通用户只看自己的余额/累计充值/配额用量；本地请求免 key 时归属 0 不泄露），对接方可像 OpenAI 一样查余额。④模型测速与速度排行沿用现有用户隔离逻辑不变（/api/status healthCache 只显示当前用户可见模型）。"),
             Triple("v1.169", "修复工具重复执行（Agent 循环跨轮去重 + 统一标签清洗）", "①根因：模型同一轮输出「[[沙盒:fn()]] 标签 + 正在调用 fn() 自然语言描述」或下一轮复述上一轮调用描述时，格式9（自然语言识别）无条件下启用 → parseCalls 把描述二次解析为真调用 → 同一工具被执行两遍（如「开一个终端开了俩」）。修复双保险：②解析侧跨轮去重：SandboxEngine 新增带 executed 集合的 parseCalls 重载 + callSignature（函数名+参数排序拼接），QQ/微信/AdminApi 三渠道 Agent 循环统一在循环外建 executedSigs，每次工具执行成功后登记签名，下一轮 parseCalls 自动过滤已执行过的调用——同一 fn+参数不会被二次执行，失败异常不登记、允许模型改参数重试；③回传侧统一清洗：新增 SandboxEngine.cleanCallTags 统一清洗器（覆盖原 QQ/微信各自 cleanFunctionTags 全部规则 + 新增「正在调用 fn()/调用 fn()/我需要调用 fn()」自然语言调用描述抹除），三渠道 cleanFunctionTags 全部改为委托它——从源头不给模型照抄的机会。④格式9 收紧：自然语言描述识别仅在严格格式一个都没命中时才启用，且函数名必须真实存在于知识库 KNOWN_FNS。"),
             Triple("v1.168", "QQ 私聊/群记忆场景隔离 + 会话防串台 + 聊天风格自然化", "①修复QQ私聊与群聊长期记忆串台：私聊和群聊现在各自独立读写记忆，不管是否管理员都不再串。绑定账号用户私聊用 qq_c2c、群聊用 qq_group:{群号}；未绑定用户私聊用 qq:c2c:{用户}、群聊用 qq:{群}:{成员}。读取时新场景记忆为空自动回退老数据，存量记忆不丢失。②会话历史 key 加 botId 前缀（{bot.id}:g:群:成员 / {bot.id}:c:用户），多机器人同手机不串台。③修复幽灵回调：被遗弃的旧 WebSocket 延迟回调不再触发误重连。④QQ 渠道新增聊天风格段：说话更像真人朋友，但沙盒铁律不受影响（仅 QQ 渠道，微信侧不变）。"),
@@ -2578,18 +2579,18 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
             Triple("v1.166", "修复具体模型请求被强制池错误接管（连接卡顿/断连）", "v1.159 把强制故障池错误应用到所有请求，导致具体模型请求（如 deepseek-chat）被强制池接管、请求模型没置首、全部走池内模型还都失败→卡顿/断连。现对齐原APP精确语义：qtai-sj→强制切换（大脑绑定→用户池→全局池→活跃→智能路由兜底，按池顺序故障转移）；其他模型→测速排行（请求模型置首+强制池其余按序作候选，无池时按测速排行故障切换，不再接管请求）。保留v1.159主页系统动态持久化+强制池表格化展示。"),
             Triple("v1.159", "强制故障池对齐原APP结构 + 主页动态持久化", "①qtai-sj专用配置（大脑绑定）真正生效：请求qtai-sj时优先走大脑绑定→用户强制池→全局池→活跃模型，最后才是智能路由/测速排行兜底，不再一上来就跳测速排行。②强制池卡片改表格化展示（对齐测速排行榜：序号/模型/服务商/状态/操作列），每个模型独立一行，▲▼调序/点灯强制切换/移出池按钮分开独立。③新增gateway_logs表持久化系统动态（模型切换/测速完成/故障转移/启动停止），首页「⚡系统动态」先渲染最近10条历史、刷新不丢，再实时增量推送。修复WebUi顶栏VER历史残留。"),
             Triple("v1.158", "强制故障池支持调顺序（序号=切换优先）", "首页强制故障池每个模型新增▲▼排序按钮，点▲上移提高切换优先、点▼下移降低；序号=切换优先，越靠前越先尝试，故障转移严格按池顺序。接口 POST /api/gateway/forced-pool 新增 action=move（dir=up/down），管理员全局池、普通用户自己的池。沙盒 gateway_forced_pool 新增 move 动作+dir 参数，QQ/微信/qtai-sj 可远程调顺序。修复 WebUi 顶栏版本号 VER 历史残留（v1.133→v1.158）。"),
-            Triple("v1.157", "六大能力升级（2FA安全 + new-api四件套 + 冒烟测试）", "两步验证2FA（TOTP，个人中心开启，登录需动态码，防暴力破解）。模型映射（外部请求名→内部模型列表按序路由故障转移）。表达式计费（按模型/角色/时段差异化定价，覆盖价或倍率）。渠道分组（fast/cheap/stable，用户请求组名只在该组内自动选模型）。记忆分组管理（按来源筛选+批量删除）。自动化冒烟测试（scripts/smoke_test.sh发版后自动验证核心链路）。"),
-            Triple("v1.156", "机器人提速 + 元宝Bot下线 + 模型权重 + 在线试用", "QQ/微信回复提速（单轮超时90→60s、网关流式空闲300→120s全链路收敛，超时快速失败触发故障转移）。元宝Bot彻底下线（路由/菜单/表/前端全链路移除）。沙盒System Prompt新增OpenClaw式自动化编排铁律（失败自动重试2次/多步任务不中断/异步长任务轮询/批量并行/主动补全）。模型权重负载均衡（new-api渠道优先级思路落地：weight字段默认50，故障转移同延迟权重高优先）。Playground在线试用（模型页每行「试用」按钮，弹窗输入流式试玩）。"),
+            Triple("v1.157", "六大能力升级（2FA安全 + 四件套 + 冒烟测试）", "两步验证2FA（TOTP，个人中心开启，登录需动态码，防暴力破解）。模型映射（外部请求名→内部模型列表按序路由故障转移）。表达式计费（按模型/角色/时段差异化定价，覆盖价或倍率）。渠道分组（fast/cheap/stable，用户请求组名只在该组内自动选模型）。记忆分组管理（按来源筛选+批量删除）。自动化冒烟测试（scripts/smoke_test.sh发版后自动验证核心链路）。"),
+            Triple("v1.156", "机器人提速 + 元宝Bot下线 + 模型权重 + 在线试用", "QQ/微信回复提速（单轮超时90→60s、网关流式空闲300→120s全链路收敛，超时快速失败触发故障转移）。元宝Bot彻底下线（路由/菜单/表/前端全链路移除）。沙盒System Prompt新增自主式自动化编排铁律（失败自动重试2次/多步任务不中断/异步长任务轮询/批量并行/主动补全）。模型权重负载均衡（按渠道优先级加权落地：weight字段默认50，故障转移同延迟权重高优先）。Playground在线试用（模型页每行「试用」按钮，弹窗输入流式试玩）。"),
             Triple("v1.155", "智能体全接口对齐：网关接口全部开放给沙盒 Agent", "沙盒智能体（QQ/微信/qtai-sj）新增 40+ 网关函数，实现后台全部接口远程可控：价格表查询/自定义维护、用量统计、网关总览、系统监控、数据备份/恢复、套餐管理、卡密生成/兑换、SSH 远程执行、工单列表/创建/详情、操作/登录/QQ/微信日志、记忆库查看/添加/清空、QQ用户列表/积分调整、网关全局启停、我的API开关、活跃模型查看/切换、强制故障池管理、自动测速开关、通知配置查看/测试发送、路由规则增删查、我的会话列表。按用户/管理员双层权限隔离，普通用户只读+自助，管理员全权。"),
             Triple("v1.154", "用户管理菜单修复 + 价格表可维护 + 个人中心额度显示", "修复用户管理菜单消失（历史版本误删入口，视图/loader一直在，已补回）。模型价格表可手动维护：新增 model_prices 表+接口（GET/POST/DELETE/clear），管理员可在价格表页添加/编辑/删除/清空自定义价格，计费优先级：自定义表→模型单价→内置表。个人中心账户卡补额度使用+到期时间显示。扫bug：价格表只读→可维护全链路，计费取价逻辑对齐自定义表（余额检查+扣费两处）"),
             Triple("v1.153", "心跳指定目标推送 + 记忆并入总记忆多选 + 页面多选下拉", "心跳推送只发指定目标：不再全群/全联系人广播（QQ发配置的群 heartbeat_target_qq，微信发配置的openid heartbeat_target_wx，没配兜底发第一个群/最近联系人）。记忆并入总记忆+备注来源：管理员记忆页可见全部来源（账号/QQ用户/微信用户/QQ群），每条备注来源；普通用户只看自己的。记忆页多选：复选框全选+批量删除+按来源筛选下拉。模型页多选改下拉：批量操作从按钮改下拉（批量启用/停用/设公用/删除）+执行。服务商页多选：全选+下拉批量删除/启用/停用。修复记忆批量删除接口类型错误、心跳推送目标逻辑"),
-            Triple("v1.152", "修复长文截断 + Agent 半途而废（OpenClaw 式干完才停）", "修复长文被截断：工具结果推送从 take(120) 摘要改为完整推送（QQ/微信单工具+并行全改）。修复「说要继续查却停了」：Agent 循环里模型说继续查/接着弄/下一步但没输出调用标签时原来直接 break，现在识别继续意图并引导输出真标签再执行（最多2次仍无调用才收尾），像 OpenClaw 一样干不完绝不听。closeBody 收敛放开：最终答复强调该长则长、分多段列表输出，不再压缩成一句话。分段推送确认无丢尾巴"),
-            Triple("v1.151", "全部模型走沙盒Agent + 重要消息主动推送 + OpenClaw化", "QQ/微信全部模型走沙盒 Agent：以前只有配 qtai-sj 的机器人有工具调度能力，现在无论配哪个模型都进完整沙盒 Agent 循环（自主规划→调工具→结果回填→多轮执行轮数20）。心跳引擎新增模型健康告警（可用模型占比<30%自动汇报，QQ群+微信双推）。沙盒新增铁律7重要消息醒目呈现（关键结果前置/异常主动汇报/过程克制结果满足）。web_browse 权限表补齐。沙盒对齐 OpenClaw：自主循环/并行批处理/异步终端轮询/主动记忆检索/技能自提炼/网页浏览/模型健康感知"),
+            Triple("v1.152", "修复长文截断 + Agent 半途而废（干完才停）", "修复长文被截断：工具结果推送从 take(120) 摘要改为完整推送（QQ/微信单工具+并行全改）。修复「说要继续查却停了」：Agent 循环里模型说继续查/接着弄/下一步但没输出调用标签时原来直接 break，现在识别继续意图并引导输出真标签再执行（最多2次仍无调用才收尾），像自主 Agent 一样干不完绝不听。closeBody 收敛放开：最终答复强调该长则长、分多段列表输出，不再压缩成一句话。分段推送确认无丢尾巴"),
+            Triple("v1.151", "全部模型走沙盒Agent + 重要消息主动推送 + 自主化", "QQ/微信全部模型走沙盒 Agent：以前只有配 qtai-sj 的机器人有工具调度能力，现在无论配哪个模型都进完整沙盒 Agent 循环（自主规划→调工具→结果回填→多轮执行轮数20）。心跳引擎新增模型健康告警（可用模型占比<30%自动汇报，QQ群+微信双推）。沙盒新增铁律7重要消息醒目呈现（关键结果前置/异常主动汇报/过程克制结果满足）。web_browse 权限表补齐。沙盒自主化：自主循环/并行批处理/异步终端轮询/主动记忆检索/技能自提炼/网页浏览/模型健康感知"),
             Triple("v1.150", "十项体验升级：官网首页/权限收紧/模态路由/多选/智能体增强", "官网首页上线（/ 根路径未登录显示官网，已登录进控制台）；网关开关仅管理员可操作（普通用户隐藏+403，独立 user-toggle 管自己的 API 开关）；服务商 Key 仅原添加者可见（非属主 **** + 提示）；网关设置新增模态路由（文本/图片/语音/视频/输入/输出 六类可指定固定模型，不设置默认全通）；QQ 机器人掉线重连退避改进（连续失败10次固定60s周期，连上复位，掉线自动恢复不用重启容器）；系统动态去重+只留重要事件+样式低调；模型页多选批量操作（全选/批量启停/设公用/删除）；智能体新增 web_browse 网页浏览（抓取标题/正文/链接，felinks 式）；反代理文档更新官网首页说明"),
             Triple("v1.149", "修复服务商同步模型全部失败（SQLite 参数错位）", "修复「服务商获取模型仍失败」真正根因：addModel 的 INSERT 语句 16 个占位符却传了 19 个参数（v1.105 加授权字段时尾部 supportsVision/Audio/Video 重复复制三遍）→ JDBC「Parameter index out of range」异常，只要该服务商有新增模型同步就必然失败。排查过程：容器内实测上游 /v1/models 全部 HTTP 200、key 有效、itboy 62 个模型都能拉到，但落库为 0 → 定位 SQL 参数不匹配。已修复参数对齐；顺带全库扫描其他 INSERT 均正常"),
             Triple("v1.148", "服务商获取模型失败精准修复", "修复「服务商无法获取模型」：同步模型固定走代理通道导致直连服务商全失败。改为直连+代理双通道（优先直连，失败切代理兜底）；区分具体错误原因展示给前端（网络不通/401鉴权失败/403/404接口不支持/429限流/5xx/格式异常）；兼容 Ollama models[] 与 OpenAI data[] 两种返回格式"),
-            Triple("v1.133", "机器人全面审计修复（对齐 OpenClaw 龙虾式）", "审计 QQ/微信 askModel 代码定位并修复 7 大缺陷：①微信 loop++ 双递增 bug（每轮+2 → 任务最多跑10轮就被截断=「卡住」元凶）②QQ 缺假调用引导（模型说在调用但没输出标签 → 直接中断，对齐微信 v77）③QQ 单工具执行无异常保护（execute 抛异常 → 整个任务崩溃）④QQ 预推假思考（一进循环就推「正在处理」，与实际脱节，改真思考）⑤hist 不记执行结果（「接着弄」时模型看不到之前干了啥，上下文断档）⑥微信 send lambda 无异常保护（推送失败中断 AI 思考）⑦循环内记录工具调用结果到上下文（连续操作上下文不断链）"),
-            Triple("v1.131", "机器人不重复内容（龙虾式收敛修复）", "修复「重复执行里的内容」：过程推送已实时展示工具结果但最终回复模型又复述。QQ 补 closeBody 最终收敛（循环结束且执行过工具→单独调模型生成简短自然收尾，绝不复述）；newPrompt 精修明确用户已看到结果只做决策严禁重复粘贴；对齐 OpenClaw 龙虾式精髓（过程实时推送+最终简洁收尾）"),
+            Triple("v1.133", "机器人全面审计修复（自主闭环式）", "审计 QQ/微信 askModel 代码定位并修复 7 大缺陷：①微信 loop++ 双递增 bug（每轮+2 → 任务最多跑10轮就被截断=「卡住」元凶）②QQ 缺假调用引导（模型说在调用但没输出标签 → 直接中断，对齐微信 v77）③QQ 单工具执行无异常保护（execute 抛异常 → 整个任务崩溃）④QQ 预推假思考（一进循环就推「正在处理」，与实际脱节，改真思考）⑤hist 不记执行结果（「接着弄」时模型看不到之前干了啥，上下文断档）⑥微信 send lambda 无异常保护（推送失败中断 AI 思考）⑦循环内记录工具调用结果到上下文（连续操作上下文不断链）"),
+            Triple("v1.131", "机器人不重复内容（龙虾式收敛修复）", "修复「重复执行里的内容」：过程推送已实时展示工具结果但最终回复模型又复述。QQ 补 closeBody 最终收敛（循环结束且执行过工具→单独调模型生成简短自然收尾，绝不复述）；newPrompt 精修明确用户已看到结果只做决策严禁重复粘贴；自主闭环式精髓（过程实时推送+最终简洁收尾）"),
             Triple("v1.130", "机器人龙虾式智能进化（QQ/微信）", "QQ/微信 Agent 循环从静默模式改为每步实时推送（💭调用工具→🔧执行细节→✅每步结果→继续下一步）；真思考模式（不再预先推假的思考中，模型真调用才推进展，无调用直接出答案）；进度心跳 30s→10s（长任务不显卡死）；连续操作轮数20不停息，用户不喊停止一直干一直推；停止指令即时打断保留"),
             Triple("v1.128b", "修复内置聊天 401 流式失败", "内置聊天发消息报「流式请求失败（401）」：v1.127 前端直调网关 /v1/chat/completions 用了后台登录 token，而网关只认 sk- API Key。新增 /api/chat/stream 后端 SSE 流式代理（后台登录鉴权→回环转发网关→SSE 字节透传），前端改走新接口，保留打字机流式+思考实时展示"),
             Triple("v1.128", "悬浮胶囊玻璃顶栏", "顶栏悬浮胶囊化（顶部10px留白+左右16px边距+圆角+阴影）；侧边栏/内容区/聊天/toast 全端联动适配；保留聊天顶部不被遮挡、底部输入框贴导航"),
@@ -2725,7 +2726,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         stmt("DELETE FROM todos WHERE id=? AND user_openid=?", id, userOpenid)
     }
 
-    // ============ SSH 配置持久化（v1.104：重启不丢，对齐 Agora 多后端） ============
+    // ============ SSH 配置持久化（v1.104：重启不丢） ============
 
     fun saveSshConfig(name: String, host: String, port: Int, username: String, password: String, privateKey: String = ""): Boolean {
         if (name.isBlank() || host.isBlank() || username.isBlank()) return false
@@ -3660,7 +3661,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
 
     fun deleteWeixinBot(id: Long) { stmt("DELETE FROM weixin_bots WHERE id=?", id) }
 
-    // ============ ★ v1.195 微信公众号（webhook 回调模式） ============
+    // ============ ★ v1.193 微信公众号（webhook 回调模式） ============
 
     /** 全部公众号 */
     fun getMpBots(): List<Map<String, Any?>> =

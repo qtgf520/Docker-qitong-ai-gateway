@@ -12,7 +12,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
- * 微信 ilink 官方 Bot API 客户端（协议实测自 @tencent-weixin/openclaw-weixin@2.4.9）
+ * 微信 ilink 官方 Bot API 客户端（协议实测自官方 ilink Bot API v2.4.9）
  *  - Base: https://ilinkai.weixin.qq.com
  *  - 登录: POST ilink/bot/get_bot_qrcode?bot_type=3 → 长轮询 GET ilink/bot/get_qrcode_status?qrcode=xxx
  *  - 收消息: POST ilink/bot/getupdates（长轮询 35s，回传 get_updates_buf 游标）

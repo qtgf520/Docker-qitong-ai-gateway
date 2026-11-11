@@ -4,7 +4,7 @@ import java.util.Calendar
 import java.util.TimeZone
 
 /**
- * Agora CronExpression —— 标准 5 字段 cron 表达式（v84 移植自 https://github.com/newo-ether/Agora）
+ * CronExpression —— 标准 5 字段 cron 表达式（v84 自研）
  *
  * 格式：`minute hour day-of-month month day-of-week`
  * 支持：星号、单值、列表（a,b）、范围（a-b）、步进（斜杠 n、a-b斜杠n、a斜杠n）

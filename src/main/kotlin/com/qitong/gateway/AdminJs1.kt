@@ -62,14 +62,38 @@ function api(url, opts){
  var headers = { 'Authorization': 'Bearer ' + token };
  var body = opts.body;
  if(body && typeof body === 'object'){ headers['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
- return fetch(url, { method: opts.method, headers: headers, body: body }).then(function(res){
-  return res.text().then(function(txt){
-   var data = null;
-   try { data = JSON.parse(txt); } catch(e){ data = { code:-1, msg:'响应异常' }; }
-   if(res.status === 401){ localStorage.removeItem('qt_token'); location.href='/login'; }
-   return data;
+ // ★ v1.196 修复「加载中一直显示」：fetch 默认无超时，网络挂起时 promise 永不 resolve → 占位加载文案永不替换
+ //   加 15s 超时 AbortController，超时返回明确的网络错误标志（调用方可自行判断展示错误占位）
+ return new Promise(function(resolve){
+  var ctrl = null;
+  if(typeof AbortController !== 'undefined') { ctrl = new AbortController(); var t = setTimeout(function(){ try{ctrl.abort();}catch(e){} }, (opts.timeout||15000)); }
+  var p = ctrl ? fetch(url, { method: opts.method, headers: headers, body: body, signal: ctrl.signal }) : fetch(url, { method: opts.method, headers: headers, body: body });
+  p.then(function(res){
+   if(ctrl){ clearTimeout(t); }
+   return res.text().then(function(txt){
+    var data = null;
+    try { data = JSON.parse(txt); } catch(e){ data = { code:-1, msg:'响应异常' }; }
+    if(res.status === 401){ localStorage.removeItem('qt_token'); location.href='/login'; }
+    resolve(data);
+   });
+  }).catch(function(err){
+   if(ctrl){ clearTimeout(t); }
+   resolve({ code:-1, msg:'网络错误: '+err.message, timeout:true });
   });
- }).catch(function(err){ return { code:-1, msg:'网络错误: '+err.message }; });
+ });
+}
+/** ★ v1.196 带加载态控制的统一请求：setLoading 可传函数或元素ID；失败自动替换"加载中"为错误提示 */
+function apiL(url, opts, loadingEl){
+ var el = typeof loadingEl === 'string' ? document.getElementById(loadingEl) : loadingEl;
+ var setLoading = function(txt){ if(el) el.innerHTML = txt; };
+ if(setLoading && el) setLoading('<div style="color:var(--muted);padding:14px;text-align:center;font-size:12px">⏳ 加载中…</div>');
+ opts = opts || {};
+ return api(url, opts).then(function(r){
+  if(!r || r.code !== 0){
+   if(setLoading && el) setLoading('<div style="color:var(--red);padding:14px;text-align:center;font-size:12px">⚠️ ' + ((r&&r.msg)||'加载失败') + (r&&r.timeout ? '（请求超时，请检查网络/服务）' : '') + ' <button class="btn-ghost btn-sm" style="margin-left:6px" onclick="' + (opts._reload||'') + '">重试</button></div>');
+   }
+  return r;
+ });
 }
 // ===== 导航 =====
 var loaders = {};

@@ -50,7 +50,7 @@ object PipelineSetup {
         // 3) 订阅事件：消息进入/回复/工具执行/记忆沉淀，各模块解耦
         subscribeEvents(database)
 
-        println("[PipelineSetup] v1.195 管道装配完成: chat=${chatPipeline.stages.size}Stages, qq=${qqPipeline.stages.size}Stages, wx=${wxPipeline.stages.size}Stages")
+        println("[PipelineSetup] v1.196 管道装配完成: chat=${chatPipeline.stages.size}Stages, qq=${qqPipeline.stages.size}Stages, wx=${wxPipeline.stages.size}Stages")
     }
 
     /** 构建指定渠道的管道（注入该渠道的 Agent executor；可空→兜底占位） */

@@ -82,7 +82,7 @@ object TerminalManager {
     fun closeAll() { sessions.clear() }
     fun get(id: String): TermSession? = sessions[id]
 
-    // ★ v65 异步任务：长命令后台跑，大模型可轮询 terminal_status 拿结果（OpenClaw 式等待）
+    // ★ v65 异步任务：长命令后台跑，大模型可轮询 terminal_status 拿结果（自主 Agent 式等待）
     data class AsyncTask(
         val id: String,
         val cmd: String,
@@ -195,7 +195,7 @@ object TerminalManager {
         }
     }
 
-    // ============ ★ v1.104 文件管理（对齐 Agora 文件工具：读/写/列目录/搜索） ============
+    // ============ ★ v1.104 文件管理（读/写/列目录/搜索） ============
 
     /** 列出目录内容（真实服务器目录，即容器挂载卷），返回 名称/类型/大小/修改时间 */
     fun listDir(path: String): Pair<Boolean, String> {
@@ -288,7 +288,7 @@ object TerminalManager {
         }
     }
 
-    /** 搜索文件名（对齐 Agora fileGlob） */
+    /** 搜索文件名（fileGlob 风格） */
     fun globFiles(basePath: String, pattern: String, depth: Int = 3): Pair<Boolean, String> {
         return try {
             val base = java.io.File(basePath)
@@ -310,7 +310,7 @@ object TerminalManager {
         }
     }
 
-    // ============ ★ v1.104 SSH 远程连接（对齐 Agora Shell 多后端：本地沙盒 + 远程SSH） ============
+    // ============ ★ v1.104 SSH 远程连接（本地沙盒 + 远程SSH） ============
     // ★ v1.104 配置持久化到数据库（重启不丢）：内存作读缓存，读写都走 DB
 
     data class SshConfig(

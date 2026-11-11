@@ -202,6 +202,21 @@ object QqBotManager {
         } catch (e: Exception) { System.err.println("[QQBot] 主动活跃异常: ${e.message}") }
     }
 
+    /** ★ v1.196 主动发消息：向指定 QQ 用户（C2C 私聊）发送文本（send_message_to_user 沙盒工具用） */
+    fun sendToUserC2C(userOpenid: String, text: String): Boolean {
+        if (userOpenid.isBlank() || text.isBlank()) return false
+        return try {
+            val bots = db.getQqBots().filter { (it["enabled"] as? Boolean) == true }
+            if (bots.isEmpty()) return false
+            val bot = botFromRow(bots.first())
+            val at = api.getAccessToken(bot)
+            if (at.isNullOrBlank()) return false
+            val ok = api.sendC2cMessage(bot, at, userOpenid, text, null)
+            if (ok) db.addQqLog(bot.appid, "", userOpenid, "active", "主动私聊: $text", 0)
+            ok
+        } catch (e: Exception) { System.err.println("[QQBot] 主动私聊异常: ${e.message}"); false }
+    }
+
     fun startAll(scope: CoroutineScope, database: Database, gatewayPort: Int) {
         this.db = database
         this.gatewayPort = gatewayPort
@@ -956,7 +971,7 @@ object QqBotManager {
                 }
             }
         }
-        // ★ v59 全功能自由调度：qtai-sj 模式下，技能/游戏/工作流/AI终端不再硬编码拦截，全部交给大模型自主调度（OpenClaw 式）
+        // ★ v59 全功能自由调度：qtai-sj 模式下，技能/游戏/工作流/AI终端不再硬编码拦截，全部交给大模型自主调度（自主 Agent 式）
         val qtaiFree = bot.aiModel.equals("qtai-sj", true)
         if (!qtaiFree) {
         // 0.5) 网关技能指令（内置：查状态/排行/余额/充值/启停/切模型等，按 openid 权限控制）
@@ -1251,8 +1266,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return System.currentTimeMillis() - last < seconds * 1000L
     }
 
-    /** ★ v1.166 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，OpenClaw 式不半途而废）
- *  ★ v1.195 扩展：模型表达做事意图（抓取/查看/查找/搜索/读取/检查/确认/重新/试一下 等）但没输出工具标签，
+    /** ★ v1.166 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，自主 Agent 式不半途而废）
+ *  ★ v1.191 扩展：模型表达做事意图（抓取/查看/查找/搜索/读取/检查/确认/重新/试一下 等）但没输出工具标签，
  *    同样引导输出真标签继续干活，绝不"说了不做"就 break 放弃 */
     private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
         text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
@@ -1260,7 +1275,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         text.contains("再确认", true) || text.contains("继续处理", true) || text.contains("继续执行", true) ||
         text.contains("还有", true) || text.contains("进一步", true) || text.contains("接下来", true) ||
         text.contains("稍等", true) || text.contains("等我", true) ||
-        // ★ v1.195 做事意图动作词：说了要干活就必须真调用，不能光说
+        // ★ v1.191 做事意图动作词：说了要干活就必须真调用，不能光说
         text.contains("抓取", true) || text.contains("爬取", true) || text.contains("打开网站", true) ||
         text.contains("查看", true) || text.contains("查找", true) || text.contains("搜索", true) ||
         text.contains("查询", true) || text.contains("读取", true) || text.contains("浏览", true) ||
@@ -1581,7 +1596,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         val groupCfg = if (groupOpenid.isNotBlank()) db.getQqGroupConfig(groupOpenid) else null
         val groupPrompt = groupCfg?.get("groupPrompt") as? String
         val userPersona = db.getQqUser(userOpenid)?.get("persona") as? String?
-        // ★ v1.166 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（OpenClaw 式）
+        // ★ v1.166 全部模型走沙盒 Agent（不只 qtai-sj）：无论配的哪个模型，机器人都有工具调度能力（自主 Agent 式）
         val sandboxOn = true
         // ★ v50 绑定账号身份：QQ 用户绑定网关账号后，沙盒调用自动用该账号 userId（权限/余额/用量对齐）
         val boundUser = db.getQqBoundUser(userOpenid)
@@ -1801,7 +1816,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     //   同一 fn+参数已执行过 → 解析结果为空 → 循环正常收尾，不再执行第二遍
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
                     if (calls.isEmpty()) {
-                        // ★ v1.195 说要做但没输出标签 → 引导真调用（不止"正在调用"，抓取/查看/检查/重新/我来 等做事意图都引导）
+                        // ★ v1.191 说要做但没输出标签 → 引导真调用（不止"正在调用"，抓取/查看/检查/重新/我来 等做事意图都引导）
                         //   原来只认 5 个词，用户案例「我重新抓取一下页面内容」识别不出 → 直接 break 返回空话还标完成（说了不做）
                         val intented = content.contains("正在调用", true) || content.contains("调用沙盒", true) ||
                             content.contains("准备调用", true) || content.contains("我需要调用", true) || content.contains("我来调用", true) ||
@@ -1878,7 +1893,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         // ★ v1.186 真执行过工具（对齐微信 executedCalls，供 closeBody 收敛判断）
                         executedCalls = true
                         // ★ v1.166 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文本分段由 smartSend 自动拆
-                        //   OpenClaw 式：结果就是结果，必须完整给用户看到
+                        //   自主式：结果就是结果，必须完整给用户看到
                         val rShow = r.trim()
                         smartSend("✅ $fn 完成：\n$rShow", false)
                         db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args", 0)
@@ -1964,7 +1979,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     if (content.isNotBlank()) {
                         com.qitong.gateway.http.AgentRunTracker.modelReply(agentRunId, content)
                     }
-                    // ★ v1.166 OpenClaw 式「没干完绝不听」：模型说「继续查/接着/下一步/再查」但没输出调用标签 →
+                    // ★ v1.166 自主式「没干完绝不听」：模型说「继续查/接着/下一步/再查」但没输出调用标签 →
                     //   引导一次让它输出真标签继续执行，而不是直接 break 停半路
                     val calls2 = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
                     if (calls2.isEmpty() && noCallGuide < 2 && continueIntent(content)) {
@@ -2045,7 +2060,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         }
                         if (!closeContent.isNullOrBlank() && closeContent.length > 2) {
                             val closeCleaned = cleanFunctionTags(closeContent)
-                            // ★ v1.195 真执行过工具才标完成；否则标"已结束（未执行真实工具）"——不再空话还标✅
+                            // ★ v1.191 真执行过工具才标完成；否则标"已结束（未执行真实工具）"——不再空话还标✅
                             com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                                 if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                             // ★ v1.167 修复串台：只写最终回复进 hist（原连续写 cleaned+closeCleaned 两个
@@ -2069,7 +2084,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                         }
                     }
-                    // ★ v1.195 真执行过工具才标完成（否则标"未执行真实工具"）
+                    // ★ v1.191 真执行过工具才标完成（否则标"未执行真实工具"）
                     com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                         if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                     return cleaned
@@ -2084,7 +2099,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                         }
                     }
-                    // ★ v1.195 真执行过工具才标完成（否则标"未执行真实工具"）
+                    // ★ v1.191 真执行过工具才标完成（否则标"未执行真实工具"）
                     com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                         if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                     return cleaned
@@ -2130,7 +2145,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         runCatching { db.saveGroupBrainMemory(groupOpenid, userText.take(200)) }
                     }
                 }
-                // ★ v1.195 真执行过工具才标完成（否则标"未执行真实工具"）——不再空话还标✅
+                // ★ v1.191 真执行过工具才标完成（否则标"未执行真实工具"）——不再空话还标✅
                 com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                     if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                 content

@@ -6,7 +6,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * ★ v1.195 公众号 AI 智能回答
+ * ★ v1.193 公众号 AI 智能回答
  * - 复用网关大模型（本机 /v1/chat/completions，走 loopback，跟 QQ/微信同链路）
  * - 每粉丝 openid 独立多轮上下文（保留最近 20 条，与 QQ/微信一致）
  * - 步骤显示：默认 quiet（不推过程），用户发「显示步骤」→ verbose（Agent 干活过程实时客服消息推送）

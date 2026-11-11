@@ -48,6 +48,69 @@ object V155Ext2 {
                 }
             }
         }
+        // ★ v1.196 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
+        // 支持三渠道：QQ（group:群号 或 user:openid）/ 微信（openid）/ 公众号（粉丝openid）
+        "send_message_to_user" -> {
+            val text = (args["text"] ?: "").trim()
+            val image = (args["image"] ?: "").trim()
+            val file = (args["file"] ?: "").trim()
+            val target = (args["target"] ?: "").trim()
+            if (text.isBlank() && image.isBlank() && file.isBlank())
+                "⚠️ 语法：send_message_to_user(text=内容, target=目标可空, image=图片URL可空, file=文件路径可空)"
+            else {
+                val content = buildString {
+                    if (text.isNotBlank()) append(text)
+                    if (image.isNotBlank()) { if (isNotEmpty()) append("\n"); append("🖼 $image") }
+                    if (file.isNotBlank()) { if (isNotEmpty()) append("\n"); append("📎 $file") }
+                }
+                when (channel) {
+                    "weixin", "wx" -> {
+                        val openid = target
+                        if (openid.isBlank()) "⚠️ 微信渠道需指定 target=用户openid"
+                        else {
+                            com.qitong.gateway.weixin.WeixinBotManager.sendActiveGreet(openid, content)
+                            "✅ 消息已发送给微信用户 $openid（若机器人离线则未送达）"
+                        }
+                    }
+                    "mp" -> {
+                        val openid = target
+                        if (openid.isBlank()) "⚠️ 公众号渠道需指定 target=粉丝openid"
+                        else {
+                            val bots = db.getMpBots()
+                            if (bots.isEmpty()) "❌ 未配置任何公众号"
+                            else {
+                                // getMpBots 返回精简字段，需用 getMpBotById 取完整配置（含 appSecret）
+                                val fullBot = db.getMpBotById((bots.first()["id"] as? Number)?.toLong() ?: 0L)
+                                if (fullBot == null) "❌ 公众号配置读取失败"
+                                else {
+                                    val ok = com.qitong.gateway.mpx.MpPush.sendText(db, fullBot, openid, content)
+                                    if (ok) "✅ 消息已发送给公众号粉丝 $openid"
+                                    else "❌ 发送失败（未认证号无客服消息权限或 token 异常）"
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        // QQ 默认渠道：group:群号 / user:openid / c2c:openid / 裸串按群号
+                        val tgt = target
+                        if (tgt.isBlank()) "⚠️ QQ渠道需指定 target（group:群号 或 user:用户openid）"
+                        else if (tgt.startsWith("group:")) {
+                            val gid = tgt.removePrefix("group:")
+                            com.qitong.gateway.qq.QqBotManager.sendActiveGreetToGroup(gid, content)
+                            "✅ 消息已发送到QQ群 $gid"
+                        } else if (tgt.startsWith("user:") || tgt.startsWith("c2c:")) {
+                            val uid = tgt.substringAfter(":")
+                            val ok = com.qitong.gateway.qq.QqBotManager.sendToUserC2C(uid, content)
+                            if (ok) "✅ 消息已私聊发送给 $uid"
+                            else "❌ 私聊发送失败（机器人未配置或token异常）"
+                        } else {
+                            com.qitong.gateway.qq.QqBotManager.sendActiveGreetToGroup(tgt, content)
+                            "✅ 消息已发送到QQ群 $tgt"
+                        }
+                    }
+                }
+            }
+        }
         "ticket_list" -> {
             val rows = db.getTickets(if (isAdmin) null else userId, isAdmin, 50)
             if (rows.isEmpty()) "📭 暂无工单"

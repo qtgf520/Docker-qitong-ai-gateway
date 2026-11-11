@@ -356,7 +356,7 @@ window.restoreBackup = function(i){
  });
 };
 
-// ===== ★ v1.195 微信公众号管理页（多公众号 + 关键词 + webhook 地址 + 日志） =====
+// ===== ★ v1.193 微信公众号管理页（多公众号 + 关键词 + webhook 地址 + 日志） =====
 var mpCurBot = 0;
 loaders.mp = function(){
  var box = $('view-mp');
@@ -669,5 +669,42 @@ window.saDel = function(id){
   if(r.code===0) loadSubagentTasks();
  });
 };
+
+// ★ v1.196 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
+//   解决列表/详情页网络挂起时“加载中”永远显示（配合 api() 15s 超时，双重兜底）
+(function(){
+ var guardTimer = null;
+ function scanLoading(){
+  // 只扫当前可见视图
+  var view = document.querySelector('.view.active');
+  if(!view) return;
+  var now = Date.now();
+  view.querySelectorAll('div').forEach(function(d){
+   var txt = d.textContent || '';
+   if((txt.indexOf('加载中…') >= 0 || txt.indexOf('加载中') >= 0) && d.children.length <= 2){
+    var key = 'lg_' + (d.id || (Math.random()*1e6|0));
+    if(!d.getAttribute('data-lg-start')) d.setAttribute('data-lg-start', now);
+    var start = parseInt(d.getAttribute('data-lg-start')||now, 10);
+    if(now - start > 12000 && !d.getAttribute('data-lg-err')){
+     d.setAttribute('data-lg-err', '1');
+     var tip = document.createElement('div');
+     tip.style.cssText = 'color:var(--red);padding:14px;text-align:center;font-size:12px';
+     tip.innerHTML = '⚠️ 加载超时（12秒未响应） <button class="btn-ghost btn-sm" onclick="location.reload()">刷新页面</button>';
+     d.innerHTML = '';
+     d.appendChild(tip);
+    }
+   }
+  });
+ }
+ function startGuard(){
+  if(guardTimer) return;
+  guardTimer = setInterval(scanLoading, 4000);
+ }
+ // 切页/打开弹窗后再扫描一轮
+ var _origSwitch = window.switchView;
+ window.switchView = function(pg){ if(_origSwitch) _origSwitch(pg); setTimeout(scanLoading, 1500); };
+ document.addEventListener('click', function(){ setTimeout(scanLoading, 2000); });
+ setInterval(scanLoading, 8000);  // 常驻兜底
+})();
 """
 }

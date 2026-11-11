@@ -80,7 +80,7 @@ loaders.models = function(){
    });
   });
  };
-// ★ v1.166 Playground 在线试用（new-api 思路落地）：选模型→输入→流式试玩
+// ★ v1.166 Playground 在线试用：选模型→输入→流式试玩
 var tryModelAbort = null;
 window.tryModel = function(id, modelId, displayName){
   var mid = modelId;

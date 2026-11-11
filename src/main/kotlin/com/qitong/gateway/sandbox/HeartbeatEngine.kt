@@ -83,7 +83,7 @@ object HeartbeatEngine {
     /** 当前配置描述 */
     fun statusText(): String = if (started) "✅ 心跳运行中（间隔 ${intervalMs / 60000} 分钟）" else "⛔ 心跳已停止"
 
-    /** ★ v1.104 到期任务动作执行器（Agora TaskExecutionEngine 精髓）：
+    /** ★ v1.104 到期任务动作执行器）：
      *  content 前缀分派真动作：
      *   cmd:xxx   → 终端执行命令（复用 TerminalManager，危险拦截）
      *   wf:名称    → 触发工作流（按名称查 steps 并执行）
@@ -284,7 +284,7 @@ object HeartbeatEngine {
                 }
             }
 
-            // ★ v1.166 模型健康告警：可用模型占比低（<30%）时主动汇报（OpenClaw 式主动感知健康）
+            // ★ v1.166 模型健康告警：可用模型占比低（<30%）时主动汇报（自主式主动感知健康）
             runCatching {
                 val health = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
                 val healthy = health.count { (it["isHealthy"] as? Boolean) == true }
@@ -302,7 +302,7 @@ object HeartbeatEngine {
                 if (todos.isNotEmpty()) okLines.add("📌 有 ${todos.size} 条高优先级记忆待回顾")
             }
             // ★ v76 到期计划任务检查（无用户输入时也能跑，受 scheduled_tasks_enabled 开关控制）
-            // ★ v1.104 Agora 精髓：到期任务按 content 前缀执行真动作（cmd:跑终端 / wf:跑工作流 / mail:发邮件 / 默认纯提醒）
+            // ★ v1.104 任务引擎精髓：到期任务按 content 前缀执行真动作（cmd:跑终端 / wf:跑工作流 / mail:发邮件 / 默认纯提醒）
             runCatching {
                 if (db.getConfig("scheduled_tasks_enabled", "true") != "false") {
                     val now = System.currentTimeMillis()

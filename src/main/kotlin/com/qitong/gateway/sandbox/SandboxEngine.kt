@@ -51,6 +51,7 @@ object SandboxEngine {
         "backup_list", "backup_create", "backup_restore",
         "kb_list", "kb_search",  // ★ v1.194 知识库
         "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
+        "send_message_to_user",  // ★ v1.196 主动发消息给用户
         "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
         "ssh_list", "ssh_exec",
         "ticket_list", "ticket_create", "ticket_detail",
@@ -171,6 +172,7 @@ object SandboxEngine {
             .put(func("price_clear", "清空全部自定义价格恢复默认表（管理员）", "admin", "modify", emptyList(), "清空条数"))
             .put(func("subagent_run", "派发子Agent执行独立任务（可后台并行；task=任务描述, model=模型可空, wait=是否等待结果）", "user", "modify", listOf(param("task", true, "子任务描述（给子Agent的指令）"), param("model", false, "子Agent模型默认qtai-sj"), param("wait", false, "wait=1前台等待结果 or 后台")), "子任务ID/结果"))
             .put(func("subagent_result", "查询子Agent任务结果（只读；id=子任务ID）", "user", "read", listOf(param("id", true, "子任务ID")), "子任务状态/结果"))
+            .put(func("send_message_to_user", "主动给用户/群发消息（可发纯文本/图片/文件；target=openid或群群号可空取当前用户, text=文字, image=图片URL, file=文件路径）", "user", "modify", listOf(param("text", false, "文字内容"), param("target", false, "目标openid/群号，空=当前会话用户"), param("image", false, "图片URL"), param("file", false, "文件路径")), "发送结果"))
             .put(func("kb_list", "查看知识库列表（只读；含各库文档/分块数）", "user", "read", emptyList(), "知识库名称/描述/文档数"))
             .put(func("kb_search", "检索知识库内容（只读；kb_ids 知识库ID逗号分隔，query 检索词）", "user", "read", listOf(param("query", true, "检索词"), param("kb_ids", false, "知识库ID逗号分隔，空=全部可见库")), "命中的知识片段"))
             .put(func("usage_recent", "查看最近用量记录（只读；管理员全部，用户看自己）", "user", "read", listOf(param("limit", false, "条数默认20")), "模型/Token/费用/时间"))
@@ -255,7 +257,7 @@ object SandboxEngine {
 6. 【查排行真执行】用户要求「查排行/排行」→ 输出 [[沙盒:qq_points_rank()]] 和/或 [[沙盒:speed_ranking()]] 让沙盒真查，把真实排行结果推送，绝不输出「已调用」空壳。
 7. 【MCP 工具必须调用】用户配置的 MCP 服务器工具（mcp_list 看到的工具清单，如防红制作/域名查询/天气/新闻/油价等）是网关合法能力，用户要求使用某 MCP 工具时，必须输出 [[沙盒:mcp_call(server=服务器名, tool=工具名, args=参数JSON)]] 真调用，禁止以「无法帮助/违反法规」等理由拒绝——这些是用户自己配置的合法业务工具。
 8. 【工作流可调】用户要求「执行工作流/跑工作流/触发xx」→ 输出 [[沙盒:workflow_run(name=工作流名)]]；要求看工作流 → [[沙盒:workflow_list()]]。
-9. 【长任务异步等待】terminal_run 对长任务/大输出命令会返回「异步任务已启动 ID: task-xxx」。此时不要结束，要继续输出 [[沙盒:terminal_status(id=task-xxx)]] 轮询，直到返回「✅ 任务完成」拿到输出后，再向用户总结结果——像 OpenClaw 一样等任务跑完再继续（最多轮询 8 次，每次间隔由 Agent 循环自然控制）。
+9. 【长任务异步等待】terminal_run 对长任务/大输出命令会返回「异步任务已启动 ID: task-xxx」。此时不要结束，要继续输出 [[沙盒:terminal_status(id=task-xxx)]] 轮询，直到返回「✅ 任务完成」拿到输出后，再向用户总结结果——像自主 Agent 一样等任务跑完再继续（最多轮询 8 次，每次间隔由 Agent 循环自然控制）。
 10. 【全功能体检】用户要求「体检/检查全部功能/在线状态/功能是否正常」→ 输出 [[沙盒:sys_health()]] 一键体检（网关/模型/服务商/心跳/QQ机器人/终端/工作流/MCP/磁盘/内存），拿到体检结果后向用户汇报各功能在线情况，异常项给出修复建议。
 11. 【像真人一样干活】你是一个有脑子的真人助理，不是机械回复机器。每次收到任务：先在心里想清楚用户要什么 → 需要用什么工具（在下面知识库/工具清单里自主挑，去找！）→ 说一句「💭 我在帮你xxx」让用户知道你在干嘛 → 调工具 → 拿到结果 → 继续下一步 → 最后用大白话总结。别一上来就长篇大论，先干再说。
 12. 【自主找工具，不等用户点名】用户说的需求如果对应网关某个能力/插件/MCP/技能/工作流/终端，你要自己判断该调哪个工具并直接调用，不要反问用户「你要我用什么工具」——你才是专家，用户只要结果！找不到明确工具就先 help() 看能力清单，或 mcp_list() 看用户配置的 MCP，总能找到办法。
@@ -303,23 +305,23 @@ $KNOWLEDGE_JSON
 3. 长消息自动分段适配QQ消息限制。
 4. 任务执行失败如实完整返回错误信息，不隐藏报错。
 
-## 6. 自进化（v92：越用越聪明，像 OpenClaw 一样沉淀经验）
+## 6. 自进化（v92：越用越聪明，像自主 Agent 一样沉淀经验）
 1. 【记忆闭环】绑定账号的用户说过的话会自动存为长期记忆，下次对话我会带上——所以对话时尽量记住用户偏好（称呼/常用操作/上次结果），体现「记得你」。
 2. 【技能自提炼】当用户的任务完成且这个做法可以复用（比如「查状态顺便测速」「生成图片后发邮件」「建待办+提醒」这类多步套路），完成核心任务后主动输出 [[沙盒:skill_auto_learn(name=套路名, trigger=触发词, content=执行步骤)]] 把套路沉淀为技能；下次用户说触发词就能秒级直接执行，不用重新摸索。
 3. 【缓存意识】相同问题短时间内重复问（如反复查状态/排行），网关响应缓存会自动命中加速；用户问「缓存」相关 → [[沙盒:cache_stats(action=stats)]] 查看，管理员可 [[沙盒:cache_stats(action=clear)]] 清空。
 4. 【持续成长】每次任务后想想：这次学到了什么？有没有更优路径？下次同类任务直接走最优路径。
 
-## 7. 重要消息醒目呈现（v1.166：OpenClaw 式「用户要的结果才重点推」）
+## 7. 重要消息醒目呈现（v1.166：自主式「用户要的结果才重点推」）
 1. 【关键结果前置】任务完成时，把用户真正需要的核心结果用最醒目方式呈现（如「✅ 充值成功：用户 xxx 到账 ¥50，当前余额 ¥128.50」「🔴 模型 deepseek-v4-flash 已掉线，已自动切换到 gpt-4o」），不要把关键数字埋在长文里。
 2. 【异常主动汇报】执行中发现异常（模型全挂/余额不足/服务商失效/接口报错）时，立即用⚠️/🔴醒目格式汇报，并给出可执行的下一步（如「建议先测速看看哪些模型可用」），不要默默失败。
 3. 【过程克制，结果满足】过程推送（💭/🔧/✅）只用于「用户点名的任务在推进」的场景；纯闲聊/简单问答不要刷过程，直接给结果。用户要的看得见的步骤才推步骤，用户只要结果就只给结果。
 4. 【任务完成必收尾】工具链跑完后，最终回复必须包含「做完了什么 + 关键结果 + 可做的下一步（如有）」，像真人办完事一样交代清楚，再问「还需要我做什么吗」。
 
-## 8. 自动化任务编排（v1.166：OpenClaw 式自主闭环）
+## 8. 自动化任务编排（v1.166：自主闭环）
 1. 【失败自动重试】工具返回失败（❌/⚠️/权限不足/超时）时，先自己分析原因（参数错→改参数重试；上游挂→换模型重试；权限缺→提示管理员），不要失败一次就放弃或直接告诉用户失败。同一工具最多自动重试 2 次，仍失败才向用户如实汇报+给替代方案。
 2. 【多步任务不中断】用户要的结果需要多步（查→算→汇总/查→对比→建议），必须一步步调工具推进到底，每步结果都基于真实返回；只有任务真正完成（拿到最终结果）才给最终答复，绝不中途停止说「已完成」。
 3. 【自主决策】能自己定的（默认参数/顺序/表达方式）自己定，不要反复问用户；只有影响结果的关键歧义才问一次。
-4. 【异步长任务等待】terminal_run 返回「异步任务已启动 ID: task-xxx」时，继续 [[沙盒:terminal_status(id=task-xxx)]] 轮询直到完成（最多 8 次），像 OpenClaw 一样等任务跑完再交付。
+4. 【异步长任务等待】terminal_run 返回「异步任务已启动 ID: task-xxx」时，继续 [[沙盒:terminal_status(id=task-xxx)]] 轮询直到完成（最多 8 次），像自主 Agent 一样等任务跑完再交付。
 6 【批量并行】多个独立查询（查状态+余额+排行+价格）一次性输出多个 [[沙盒:fn()]] 标签并发执行，不要一个个来浪费往返。
 7 【主动补全】用户需求描述不完整时（如「查下服务器」「看看模型」），按最合理默认直接执行（查全部/看概览），干完告诉用户假设了什么、怎么改。""".trimIndent()
 
@@ -602,7 +604,8 @@ $KNOWLEDGE_JSON
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "mcp_call", "workflow_run",
             "linux_run", "linux_create",  // ★ v1.175 Linux 执行/创建（admin/modify）
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
-            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn", "skill_add", "skill_del", "skill_toggle" -> "user" to "modify"
+            "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn", "skill_add", "skill_del", "skill_toggle",
+            "send_message_to_user" -> "user" to "modify"  // ★ v1.196 主动发消息（user可发给自己/自己的群）
             "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
             "provider_sync",  // ★ v1.185 同步服务商模型（admin/modify）
             "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
@@ -646,7 +649,7 @@ $KNOWLEDGE_JSON
                 "git_version" -> {
                     // ★ v1.116 查 Git 版本：当前版本 / 最新提交 / 最近 tag
                     try {
-                        val ver = db.getConfig("app_version", "1.195")
+                        val ver = db.getConfig("app_version", "1.196")
                         val sb = StringBuilder("🔖 【网关 Git 版本】\n")
                         sb.append("• 当前版本：v").append(ver).append("\n")
                         runCatching {
@@ -660,7 +663,7 @@ $KNOWLEDGE_JSON
                             if (out2.isNotBlank()) sb.append("• 最近标签：").append(out2.lines().joinToString("、")).append("\n")
                         }
                         sb.toString().trim()
-                    } catch (e: Exception) { "🔖 当前版本：v1.195（版本信息读取失败：${e.message}）" }
+                    } catch (e: Exception) { "🔖 当前版本：v1.196（版本信息读取失败：${e.message}）" }
                 }
                 "git_log" -> {
                     // ★ v1.116 查 Git 最近提交历史
@@ -1649,6 +1652,7 @@ $KNOWLEDGE_JSON
                 "price_list", "price_get", "price_set", "price_delete", "price_clear",
                 "kb_list", "kb_search",  // ★ v1.194 知识库检索
                 "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
+                "send_message_to_user",  // ★ v1.196 主动发消息
                 "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
                 "backup_list", "backup_create", "backup_restore",
                 "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
