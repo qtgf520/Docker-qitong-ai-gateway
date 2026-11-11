@@ -610,7 +610,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.199 统一消息记录中心（QQ/微信/公众号 三渠道收发全量留存，后台可查；消息历史思路自研）
+            // ★ v1.200 统一消息记录中心（QQ/微信/公众号 三渠道收发全量留存，后台可查；消息历史思路自研）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS platform_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2561,6 +2561,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.200", "QQ 反复断登根治（invalid session 死循环 + 主动消息无权限防护）", "修复 QQ 机器人一直断登「好烦」的问题：①根因确诊——服务器日志 invalid session 265 次 vs READY 仅 3 次：AccessToken 被 QQ 提前吊销后，getAccessToken 换新失败时仍降级返回缓存里的死 token → identify 永远 INVALID_SESSION → 无限重连死循环；②修复——getAccessToken 换 token 失败/网络异常时不再降级死 token，直接清缓存返回 null（由上层走换取失败稍后重试分支）；token 缓存提升为静态伴生共享（QqApiClient companion object），QqGatewayClient 收到 op 9 invalid session 时立刻清共享缓存 + 断开旧连接 + 立即重连（下次 connect 换新 token），杜绝拿死 token 反复 identify；③主动消息 40034105 无权限防护——群聊自由插话（v1.199 全量消息）走主动消息有 QQ 官方配额限制，频繁插话会触发无权限；新增群插话冷却（同一群 20 秒只插一句）+ 参与概率节流，从源头避免烧配额；④保留 401 兜底（forceRefreshToken 改走静态共享缓存）。"),
 Triple("v1.199", "QQ群聊自由插话（不@也接话，官方全量群消息通道）", "让 QQ 机器人在群里像真人一样自动参与讨论（自主式群聊参与能力）：①底层通道——QQ 官方机器人 API 支持 GROUP_MESSAGE_CREATE 全量群消息事件（机器人在开放平台开启「接收所有消息」后，群里每条消息不@也推送），QqGatewayClient 新增解析该事件，QqGroupMessage 数据类加 isAt 标志（@消息 vs 全量消息）与 memberName 昵称；②参与决策 shouldJoinGroupChat——非@消息按三级策略决定是否插话：提到机器人名字（小桐/綦桐/机器人/助手/AI 等）必回应；求助/提问意图（帮我/查一下/谁知道/怎么/如何/有没有/推荐/分析等 25+ 关键词）高概率参与；否则按概率（默认 8%）偶尔参与闲聊避免刷屏；③开关与配置——后台「机器人→机器人设置」QQ 卡片新增「群聊自动参与」开关 + 参与概率输入（1-100%），默认关（避免未开全量权限的机器人收到未知事件）；平台设置数据层/API/沙盒四件套同步加 groupJoin/groupJoinProb 字段，智能体可一句话「把QQ群聊自动参与打开」遥控；④@消息（GROUP_AT_MESSAGE_CREATE）必回不受影响，新群欢迎语仅@消息触发避免全量刷屏，消息记录中心照常留存全量消息；⑤参与插话时走完整沙盒 Agent 循环（自主调工具干活），并受平台 AI 开关与群级 ai_enabled 双重控制。"),
 Triple("v1.198", "机器人说了就干（承诺闭环根治：「我帮你看一下」不再断链）", "根治机器人在群里说「我帮你看一下」「我这就去查」后没下文的断链问题：①根因——模型输出承诺话术（我帮你/我看一下/帮你查/稍等一下等）但没输出沙盒工具调用标签时，原逻辑引导2次失败后直接 break 把空承诺原样发给用户=任务根本没执行；②修复——QQ/微信 askModel 三处断链点全部接入承诺兜底：引导失败时检测到继续意图/承诺话术即派子Agent真执行用户原话（新增 SubAgentEngine.runSync 同步执行器 45s 必出结果），循环全走完仍未真执行且是纯承诺话术同样兜底，绝不放行空承诺当答案；③新增 isPromiseOnly 承诺话术检测（我帮你/我看一下/我这就去/帮你查/稍等/等我一下等20+前缀，排除含结果数字/链接/✅的真回复）+ promiseFallback 兜底（先推「我这就去处理」→派子Agent真执行→✅任务完成+完整结论必达）；④三处断链点覆盖：首次引导失败、二次引导失败、循环结束仍未执行工具。"),
 Triple("v1.197", "机器人平台设置（QQ/微信/公众号三渠道 AI开关·消息记录·主动问候·欢迎语·模型·人设）+ 统一消息记录中心 + 智能体遥控", "把机器人平台配置体系拉到一流智能体平台水平（自研实现）：①机器人设置页——后台「机器人→机器人设置」新增三渠道独立设置面板：AI智能回答开关（关=机器人不 AI 应答，管理指令仍可用；QQ/微信/公众号三处消息入口全部真实生效）、消息记录开关、主动问候开关（关=心跳智能体不再对该渠道主动冒泡）、默认欢迎语/默认模型/默认人设（供后续按渠道兜底）。②统一消息记录中心——新增 platform_messages 表存 QQ/微信/公众号三渠道收发全量消息（方向 in/out、渠道、目标、模型），后台「消息记录」页可筛选渠道/查看内容/清空，超 8000 条自动滚动；QQ 群/QQ私聊/微信/公众号四处收发入口全部埋点。③智能体遥控——沙盒新增 platform_settings_get（查平台设置）/platform_settings_set（改开关，管理员）/platform_messages（查消息记录），一句话「把QQ的AI开关关掉」「查下微信最近消息」即可代改代查。④网关全接口远程可控原则再延伸：平台级配置同样纳入智能体按身份操作范围。"),
@@ -3860,7 +3861,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         }
     }
 
-    // ============ ★ v1.199 平台设置（QQ/微信/公众号 三渠道全局设置：AI开关/消息记录/主动问候/欢迎语） ============
+    // ============ ★ v1.200 平台设置（QQ/微信/公众号 三渠道全局设置：AI开关/消息记录/主动问候/欢迎语） ============
 
     /** 读取某渠道平台设置（无则给默认值；gateway_config 存 JSON 字符串） */
     fun getPlatformSettings(channel: String): Map<String, Any?> {
@@ -3911,7 +3912,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         setConfig("bot_settings_$channel", next.toString())
     }
 
-    // ============ ★ v1.199 统一消息记录中心（三渠道收发全量留存，后台可查可清） ============
+    // ============ ★ v1.200 统一消息记录中心（三渠道收发全量留存，后台可查可清） ============
 
     /** 保存一条平台消息记录（在/出站均可）；超 8000 条自动清最旧 */
     fun addPlatformMessage(channel: String, botId: Long, openid: String, groupOpenid: String, direction: String, content: String, model: String = "") {

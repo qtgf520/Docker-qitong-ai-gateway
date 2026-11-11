@@ -30,8 +30,17 @@ class QqApiClient {
     private val jsonCt = "application/json; charset=utf-8".toMediaType()
 
     // ★ v64 令牌缓存：避免每次消息都现取（过夜掉线根因）+ 失败自动重试用旧 token
+    // ★ v1.200 提升为静态伴生共享：QqGatewayClient 的 invalid session 处理器也要能清掉它（否则清的是别的实例缓存，死 token 无限循环）
     private class TokenCache(val token: String, val expireAt: Long)
-    private val tokenCache = ConcurrentHashMap<String, TokenCache>()
+    companion object {
+        private val tokenCache = ConcurrentHashMap<String, TokenCache>()
+
+        /** ★ v1.200 静态强制刷新：清掉指定 bot 的 token 缓存（供 QqGatewayClient invalid session 处理调用） */
+        @JvmStatic
+        fun forceRefreshTokenKey(appid: String, useSandbox: Boolean) {
+            tokenCache.remove("$appid:$useSandbox")
+        }
+    }
 
     /** 用 AppID + AppSecret 换取 AccessToken（新版鉴权；带缓存，过期自动刷新） */
     @Synchronized
@@ -58,19 +67,25 @@ class QqApiClient {
                 val body = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
                     System.err.println("[QQBot] 获取AccessToken失败 ${bot.appid}: HTTP ${resp.code} $body")
-                    // 换 token 失败 → 若有旧 token 缓存，降级用旧 token（可能仍有效，避免掉线）
-                    return cached?.token
+                    // ★ v1.200 断登根治：换 token 失败时绝不降级返回缓存里的死 token！
+                    //   死 token 会导致 identify 一直 INVALID_SESSION → 无限重连循环（invalid session 265次/READY 3次）
+                    //   直接清缓存返回 null，由上层走「换取失败稍后重试」分支（不再拿死 token 反复 identify）
+                    tokenCache.remove(key)
+                    return null
                 }
                 val token = JSONObject(body).optString("access_token").ifBlank { null }
                 if (token != null) {
                     tokenCache[key] = TokenCache(token, System.currentTimeMillis() + 7200_000L - 300_000L)
                     return token
                 }
-                cached?.token
+                tokenCache.remove(key)
+                null
             }
         } catch (e: Exception) {
             System.err.println("[QQBot] 获取AccessToken异常 ${bot.appid}: ${e.message}")
-            cached?.token  // 网络异常也降级用旧 token，避免掉线
+            // ★ v1.200 网络异常也不降级死 token（同上：避免拿失效 token 死循环 identify）
+            tokenCache.remove(key)
+            null
         }
     }
 
@@ -165,9 +180,9 @@ class QqApiClient {
         }
     }
 
-    /** ★v1.186 强制清除 token 缓存（401 兜底用，下次 getAccessToken 真正换新） */
+    /** ★v1.186 强制清除 token 缓存（401 兜底用，下次 getAccessToken 真正换新）；★v1.200 改走静态共享缓存 */
     fun forceRefreshToken(bot: QqBot) {
-        tokenCache.remove("${bot.appid}:${bot.useSandbox}")
+        forceRefreshTokenKey(bot.appid, bot.useSandbox)
     }
 
     /** 发送群卡片消息（markdown 模板，msg_type=2）。content 为 markdown 原文 */

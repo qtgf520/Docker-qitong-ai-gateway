@@ -48,7 +48,7 @@ object V155Ext2 {
                 }
             }
         }
-        // ★ v1.199 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
+        // ★ v1.200 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
         // 支持三渠道：QQ（group:群号 或 user:openid）/ 微信（openid）/ 公众号（粉丝openid）
         "send_message_to_user" -> {
             val text = (args["text"] ?: "").trim()
@@ -368,7 +368,7 @@ object V155Ext2 {
                 "• [${c.id}] ${c.title}"
             }.take(1400)
         }
-        // ★ v1.199 平台设置遥控（智能体可自主读取/修改 QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候）
+        // ★ v1.200 平台设置遥控（智能体可自主读取/修改 QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候）
         "platform_settings_get" -> {
             val channel = (args["channel"] ?: "").trim().lowercase()
             if (channel !in listOf("qq", "weixin", "mp")) "⚠️ 语法：platform_settings_get(channel=qq/weixin/mp)"

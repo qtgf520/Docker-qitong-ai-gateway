@@ -224,6 +224,15 @@ Copyright 2026 綦桐 (qtgf520)
 ---
 
 ## 📝 更新日志（CHANGELOG）
+### v1.200
+**QQ 反复断登根治** —— 修复 QQ 机器人一直断登（invalid session 死循环 + 主动消息无权限防护）：
+
+- **根因**：服务器日志 invalid session 265 次 vs READY 仅 3 次——AccessToken 被 QQ 吊销后换新失败仍降级用死 token → identify 永远 INVALID_SESSION → 无限重连
+- **修复①**：`getAccessToken` 换 token 失败/网络异常时**不再降级死 token**，清缓存返回 null，由上层走"换取失败稍后重试"
+- **修复②**：token 缓存提升静态伴生共享，`op 9 invalid session` 时**立刻清共享缓存 + 断旧连 + 立即重连**（下次 connect 换新 token）
+- **修复③**：群聊插话 20 秒冷却（同群只插一句），防主动消息配额耗尽触发 40034105 无权限
+- **保留** 401 自动刷新兜底
+
 ### v1.199
 **QQ 群聊自由插话（不@也接话）** —— 让 QQ 机器人在群里像真人一样自动参与讨论：
 
