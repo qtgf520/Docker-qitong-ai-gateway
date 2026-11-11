@@ -670,7 +670,7 @@ window.saDel = function(id){
  });
 };
 
-// ★ v1.197 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
+// ★ v1.198 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
 //   解决列表/详情页网络挂起时“加载中”永远显示（配合 api() 15s 超时，双重兜底）
 (function(){
  var guardTimer = null;
@@ -707,7 +707,7 @@ window.saDel = function(id){
  setInterval(scanLoading, 8000);  // 常驻兜底
 })();
 
-// ===== ★ v1.197 机器人设置（QQ/微信/公众号 三渠道平台设置面板：AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
+// ===== ★ v1.198 机器人设置（QQ/微信/公众号 三渠道平台设置面板：AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
 loaders.botsettings = function(){
  var box = $('view-botsettings');
  if(!box) return;
@@ -759,7 +759,7 @@ function saveBotSettings(ch){
  api('/api/platform/settings',{method:'POST',body:body}).then(function(r){ toast(r.msg||'', r.code===0); });
 }
 
-// ===== ★ v1.197 统一消息记录中心（QQ/微信/公众号 收发记录查询/筛选/清空） =====
+// ===== ★ v1.198 统一消息记录中心（QQ/微信/公众号 收发记录查询/筛选/清空） =====
 var msgCenterCh = '';
 function loadMsgCenter(){
  var box = $('view-msgcenter');

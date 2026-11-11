@@ -69,6 +69,39 @@ object SubAgentEngine {
     }
 
     /**
+     * ★ v1.198 承诺闭环：同步执行一个简洁子任务并等结果（供机器人「承诺后必达」兜底用）。
+     * 与 dispatch 的区别：直接等结果、不落库、可指定会话 key，用于 Agent 承诺了要干活却没输出工具标签时强制真执行。
+     * @return 子Agent最终结论文本（失败返回错误说明）
+     */
+    fun runSync(db: Database, parentUserId: Long, channel: String, session: String, taskDesc: String, model: String = "qtai-sj", timeoutMs: Long = 45_000L): String {
+        if (taskDesc.isBlank()) return "（空任务）"
+        if (runningCount.get() >= MAX_CONCURRENT) return "⛔ 子Agent并发已满，稍后再试"
+        runningCount.incrementAndGet()
+        return try {
+            val taskId = db.addSubagentTask(parentUserId, channel, session, "subagent_sync", taskDesc, model)
+            val future = executor.submit<String> {
+                try {
+                    val result = runSubAgent(db, taskId, taskDesc, model, parentUserId, channel)
+                    db.finishSubagentTask(taskId, success = true, result = result)
+                    result
+                } catch (e: Exception) {
+                    db.finishSubagentTask(taskId, success = false, error = e.message ?: "未知错误")
+                    "❌ 子Agent执行失败：${e.message}"
+                }
+            }
+            try {
+                future.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (e: java.util.concurrent.TimeoutException) {
+                "⏱️ 子Agent执行超时（${timeoutMs / 1000}s），请稍后重试"
+            } catch (e: Exception) {
+                "❌ 子Agent执行异常：${e.message}"
+            }
+        } finally {
+            runningCount.decrementAndGet()
+        }
+    }
+
+    /**
      * 子 Agent 主体：用独立上下文跑多轮沙盒（复用 SandboxEngine 的真实工具）。
      * 子 Agent 与主 Agent 的区别：上下文独立、任务聚焦、最多 8 轮。
      */

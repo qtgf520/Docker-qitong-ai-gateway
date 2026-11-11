@@ -225,9 +225,9 @@ object WeixinBotManager {
         val t = msg.content.trim()
         if (t.isBlank()) return
         val t0 = System.currentTimeMillis()
-        // ★ v1.197 消息记录中心：微信入站留存
+        // ★ v1.198 消息记录中心：微信入站留存
         runCatching { d.addPlatformMessage("weixin", bot.id, msg.from, "", "in", t, bot.aiModel) }
-        // ★ v1.197 平台设置：AI 总开关（关=机器人不 AI 应答，由平台设置面板控制）
+        // ★ v1.198 平台设置：AI 总开关（关=机器人不 AI 应答，由平台设置面板控制）
         runCatching {
             val ps = d.getPlatformSettings("weixin")
             if ((ps["aiEnabled"] as? Boolean) != true) {
@@ -771,7 +771,14 @@ object WeixinBotManager {
                                     .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
                                     ?.optString("content")?.trim().orEmpty()
                             }
-                            if (guided.isNullOrBlank()) { content = cleanFunctionTags(content); break }
+                            if (guided.isNullOrBlank()) {
+                                // ★ v1.198 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
+                                if (continueIntent(content) || isPromiseOnly(content)) {
+                                    content = promiseFallback(d, userText, msg.from, userId, pSend)
+                                    break
+                                }
+                                content = cleanFunctionTags(content); break
+                            }
                             content = guided
                             continue  // 下一轮用引导结果再解析
                         }
@@ -915,11 +922,20 @@ object WeixinBotManager {
                             }
                         } catch (e: Exception) { null }
                         if (!guided2.isNullOrBlank()) { content = guided2; continue }
+                        // ★ v1.198 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 派子Agent真执行用户原话
+                        if (continueIntent(content) || isPromiseOnly(content)) {
+                            content = promiseFallback(d, userText, msg.from, userId, pSend)
+                            break
+                        }
                         // 引导也没拿到下一步 → 确实做完了，正常收尾
                         break
                     }
                     // ★ v1.169 收尾二次解析也带去重（与主调用、calls2 一致）
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty()) break
+                }
+                // ★ v1.198 承诺闭环终极兜底：循环全走完仍没真执行过工具，且最终内容是纯承诺话术 → 派子Agent真执行，结果必达
+                if (!executedCalls && content.isNotBlank() && (continueIntent(content) || isPromiseOnly(content)) && userText.isNotBlank()) {
+                    content = promiseFallback(d, userText, msg.from, userId, pSend)
                 }
                 // ★ v1.191 真执行过工具才标完成（否则标"已结束（未执行真实工具）"）——不再空话还标✅
                 com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
@@ -1051,6 +1067,32 @@ object WeixinBotManager {
         text.contains("需要查", true) || text.contains("查一下", true) || text.contains("看下", true) ||
         text.contains("我看", true) || text.contains("我试", true) || text.contains("我查", true) ||
         text.contains("来弄", true) || text.contains("搞定", true)
+
+    /** ★ v1.198 承诺话术检测（对齐 QQ）：模型只输出"我帮你/我看一下"但没真调用工具 = 空承诺 */
+    private fun isPromiseOnly(text: String): Boolean {
+        val t = text.trim()
+        if (t.length > 60) return false
+        val promise = t.startsWith("我帮你", true) || t.startsWith("我帮您", true) ||
+            t.startsWith("我看一下", true) || t.startsWith("我看下", true) || t.startsWith("我看看", true) ||
+            t.startsWith("我这就", true) || t.startsWith("我马上", true) || t.startsWith("我去查", true) ||
+            t.startsWith("我来查", true) || t.startsWith("我来看看", true) || t.startsWith("我查一下", true) ||
+            t.startsWith("我处理一下", true) || t.startsWith("帮你查", true) || t.startsWith("帮你看看", true) ||
+            t.startsWith("帮你处理", true) || t.startsWith("请稍等", true) || t.startsWith("稍等一下", true) ||
+            t.startsWith("等我一下", true) || t.startsWith("好的我看看", true) || t.startsWith("让我看看", true)
+        if (!promise) return false
+        if (t.contains("✅") || t.contains("结果") || t.contains("已") && t.contains("完成") ||
+            t.contains("http") || Regex("[0-9]").containsMatchIn(t) || t.contains("：") || t.contains(":")) return false
+        return true
+    }
+
+    /** ★ v1.198 承诺闭环兜底（对齐 QQ）：把用户原话派子Agent真执行，结果必达 */
+    private fun promiseFallback(d: Database, userText: String, openid: String, effUserId: Long, pSend: (String) -> Unit): String {
+        pSend("⏳ 我这就去处理，稍等片刻…")
+        val task = "用户请求：$userText\n请自主拆解并用网关沙盒工具真实执行，干完输出完整结果（含关键数据）。"
+        val result = com.qitong.gateway.sandbox.SubAgentEngine.runSync(d, effUserId, "weixin", "weixin:$openid", task, "qtai-sj", 45_000L)
+        return if (result.isBlank() || result.startsWith("❌") || result.startsWith("⛔") || result.startsWith("⏱️")) result
+        else "✅ 任务完成：\n$result"
+    }
 
     /** 清洗回复里的函数调用标签（防 XML/JSON 泄漏给用户，对齐 QQ 侧逻辑） */
     // ★ v1.169 委托统一清洗器：SandboxEngine.cleanCallTags 覆盖原全部规则并新增「自然语言调用描述」清洗
