@@ -226,9 +226,9 @@ object WeixinBotManager {
         if (t.isBlank()) return
         val t0 = System.currentTimeMillis()
         val wxSettings = d.getPlatformSettings("weixin")
-        // ★ v1.201 唤醒设置：忽略自己发送的消息（ignoreSelf）
+        // ★ v1.202 唤醒设置：忽略自己发送的消息（ignoreSelf）
         if ((wxSettings["ignoreSelf"] as? Boolean) == true && msg.from == bot.ilinkBotId) return
-        // ★ v1.201 私聊自动回复开关（c2cAuto）：关=不自动 AI 应答（管理/绑定指令仍可用）
+        // ★ v1.202 私聊自动回复开关（c2cAuto）：关=不自动 AI 应答（管理/绑定指令仍可用）
         runCatching {
             if ((wxSettings["c2cAuto"] as? Boolean) != true) {
                 val isMgmt = t.startsWith("绑定", true) || t == "我的账号" || t == "退出账号" || t == "网关状态" ||
@@ -239,9 +239,9 @@ object WeixinBotManager {
                 }
             }
         }
-        // ★ v1.201 消息记录中心：微信入站留存
+        // ★ v1.202 消息记录中心：微信入站留存
         runCatching { d.addPlatformMessage("weixin", bot.id, msg.from, "", "in", t, bot.aiModel) }
-        // ★ v1.201 平台设置：AI 总开关（关=机器人不 AI 应答，由平台设置面板控制）
+        // ★ v1.202 平台设置：AI 总开关（关=机器人不 AI 应答，由平台设置面板控制）
         runCatching {
             val ps = d.getPlatformSettings("weixin")
             if ((ps["aiEnabled"] as? Boolean) != true) {
@@ -786,7 +786,7 @@ object WeixinBotManager {
                                     ?.optString("content")?.trim().orEmpty()
                             }
                             if (guided.isNullOrBlank()) {
-                                // ★ v1.201 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
+                                // ★ v1.202 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
                                 if (continueIntent(content) || isPromiseOnly(content)) {
                                     content = promiseFallback(d, userText, msg.from, userId, pSend)
                                     break
@@ -936,7 +936,7 @@ object WeixinBotManager {
                             }
                         } catch (e: Exception) { null }
                         if (!guided2.isNullOrBlank()) { content = guided2; continue }
-                        // ★ v1.201 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 派子Agent真执行用户原话
+                        // ★ v1.202 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 派子Agent真执行用户原话
                         if (continueIntent(content) || isPromiseOnly(content)) {
                             content = promiseFallback(d, userText, msg.from, userId, pSend)
                             break
@@ -947,7 +947,7 @@ object WeixinBotManager {
                     // ★ v1.169 收尾二次解析也带去重（与主调用、calls2 一致）
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty()) break
                 }
-                // ★ v1.201 承诺闭环终极兜底：循环全走完仍没真执行过工具，且最终内容是纯承诺话术 → 派子Agent真执行，结果必达
+                // ★ v1.202 承诺闭环终极兜底：循环全走完仍没真执行过工具，且最终内容是纯承诺话术 → 派子Agent真执行，结果必达
                 if (!executedCalls && content.isNotBlank() && (continueIntent(content) || isPromiseOnly(content)) && userText.isNotBlank()) {
                     content = promiseFallback(d, userText, msg.from, userId, pSend)
                 }
@@ -1082,7 +1082,7 @@ object WeixinBotManager {
         text.contains("我看", true) || text.contains("我试", true) || text.contains("我查", true) ||
         text.contains("来弄", true) || text.contains("搞定", true)
 
-    /** ★ v1.201 承诺话术检测（对齐 QQ）：模型只输出"我帮你/我看一下"但没真调用工具 = 空承诺 */
+    /** ★ v1.202 承诺话术检测（对齐 QQ）：模型只输出"我帮你/我看一下"但没真调用工具 = 空承诺 */
     private fun isPromiseOnly(text: String): Boolean {
         val t = text.trim()
         if (t.length > 60) return false
@@ -1099,7 +1099,7 @@ object WeixinBotManager {
         return true
     }
 
-    /** ★ v1.201 承诺闭环兜底（对齐 QQ）：把用户原话派子Agent真执行，结果必达 */
+    /** ★ v1.202 承诺闭环兜底（对齐 QQ）：把用户原话派子Agent真执行，结果必达 */
     private fun promiseFallback(d: Database, userText: String, openid: String, effUserId: Long, pSend: (String) -> Unit): String {
         pSend("⏳ 我这就去处理，稍等片刻…")
         val task = "用户请求：$userText\n请自主拆解并用网关沙盒工具真实执行，干完输出完整结果（含关键数据）。"

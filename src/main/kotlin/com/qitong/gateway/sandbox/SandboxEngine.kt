@@ -51,8 +51,8 @@ object SandboxEngine {
         "backup_list", "backup_create", "backup_restore",
         "kb_list", "kb_search",  // ★ v1.194 知识库
         "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
-        "send_message_to_user",  // ★ v1.201 主动发消息给用户
-        "platform_settings_get", "platform_settings_set", "platform_messages",  // ★ v1.201 平台设置/消息记录遥控
+        "send_message_to_user",  // ★ v1.202 主动发消息给用户
+        "platform_settings_get", "platform_settings_set", "platform_messages",  // ★ v1.202 平台设置/消息记录遥控
         "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
         "ssh_list", "ssh_exec",
         "ticket_list", "ticket_create", "ticket_detail",
@@ -216,7 +216,7 @@ object SandboxEngine {
             .put(func("rule_delete", "删除路由规则（管理员）", "admin", "modify", listOf(param("id", true, "规则ID")), "删除结果"))
             .put(func("conversation_list", "查看我的会话记录列表（只读）", "user", "read", emptyList(), "会话ID/标题"))
             .put(func("platform_settings_get", "查看平台设置（只读；channel=qq/weixin/mp：AI开关/消息记录/主动问候/欢迎语/模型/人设）", "admin", "read", listOf(param("channel", true, "渠道：qq/weixin/mp")), "该渠道平台设置"))
-            .put(func("platform_settings_set", "修改平台设置（管理员；channel=qq/weixin/mp，aiEnabled/msgRecord/proactiveEnabled/groupJoin/atReply/c2cAuto/ignoreSelf=on或off，groupJoinProb=0-100群聊概率，wakePrefix=唤醒前缀，welcome=欢迎语，aiModel=模型，systemPrompt=人设）", "admin", "modify", listOf(param("channel", true, "渠道：qq/weixin/mp"), param("aiEnabled", false, "AI回答开关 on/off"), param("msgRecord", false, "消息记录开关 on/off"), param("proactiveEnabled", false, "主动问候开关 on/off"), param("groupJoin", false, "群聊自动参与开关 on/off（QQ）"), param("groupJoinProb", false, "群聊参与概率0-100（QQ）"), param("atReply", false, "@机器人必回开关 on/off"), param("wakePrefix", false, "唤醒前缀（消息以它开头即触发）"), param("c2cAuto", false, "私聊自动回复开关 on/off"), param("ignoreSelf", false, "忽略自己消息 on/off"), param("welcome", false, "默认欢迎语"), param("aiModel", false, "模型"), param("systemPrompt", false, "人设")), "设置结果"))
+            .put(func("platform_settings_set", "修改平台设置（管理员；channel=qq/weixin/mp，aiEnabled/msgRecord/proactiveEnabled/groupJoin/atReply/c2cAuto/ignoreSelf=on或off，groupJoinProb=0-100群聊概率，wakePrefix=唤醒前缀，welcome=欢迎语，aiModel=模型，systemPrompt=人设）", "admin", "modify", listOf(param("channel", true, "渠道：qq/weixin/mp"), param("aiEnabled", false, "AI回答开关 on/off"), param("msgRecord", false, "消息记录开关 on/off"), param("proactiveEnabled", false, "主动问候开关 on/off"), param("groupJoin", false, "群聊自动参与开关 on/off（QQ）"), param("groupJoinProb", false, "群聊参与概率0-100（QQ）"), param("atReply", false, "@机器人必回开关 on/off"), param("wakePrefix", false, "唤醒前缀（消息以它开头即触发）"), param("c2cAuto", false, "私聊自动回复开关 on/off"), param("ignoreSelf", false, "忽略自己消息 on/off"), param("blacklist", false, "黑名单逗号分隔"), param("whitelist", false, "白名单逗号分隔"), param("joinCooldownSec", false, "插话冷却秒"), param("replyFreqLimit", false, "每分钟回复上限"), param("welcome", false, "默认欢迎语"), param("aiModel", false, "模型"), param("systemPrompt", false, "人设")), "设置结果"))
             .put(func("platform_messages", "查看消息记录（管理员，只读；channel=qq/weixin/mp可空=全部，limit条数）", "admin", "read", listOf(param("channel", false, "渠道 qq/weixin/mp，空=全部"), param("limit", false, "条数默认20")), "收发消息记录列表"))
             .toString()
     }
@@ -609,7 +609,7 @@ $KNOWLEDGE_JSON
             "linux_run", "linux_create",  // ★ v1.175 Linux 执行/创建（admin/modify）
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
             "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn", "skill_add", "skill_del", "skill_toggle",
-            "send_message_to_user" -> "user" to "modify"  // ★ v1.201 主动发消息（user可发给自己/自己的群）
+            "send_message_to_user" -> "user" to "modify"  // ★ v1.202 主动发消息（user可发给自己/自己的群）
             "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
             "provider_sync",  // ★ v1.185 同步服务商模型（admin/modify）
             "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
@@ -625,7 +625,7 @@ $KNOWLEDGE_JSON
             // v1.166 新增：管理员只读
             "price_list", "sys_monitor", "plan_stats", "backup_list", "card_list", "ssh_list", "ticket_detail", "wx_users_list", "wx_user_memory",
             "op_logs", "login_logs", "qq_logs", "wx_logs", "qq_users_list", "memory_list", "notify_config", "rule_list" -> "admin" to "read"
-            // ★ v1.201 平台设置/消息记录遥控（管理员）
+            // ★ v1.202 平台设置/消息记录遥控（管理员）
             "platform_settings_get", "platform_messages" -> "admin" to "read"
             "platform_settings_set" -> "admin" to "modify"
             // v1.166 新增：管理员修改
@@ -656,7 +656,7 @@ $KNOWLEDGE_JSON
                 "git_version" -> {
                     // ★ v1.116 查 Git 版本：当前版本 / 最新提交 / 最近 tag
                     try {
-                        val ver = db.getConfig("app_version", "1.201")
+                        val ver = db.getConfig("app_version", "1.202")
                         val sb = StringBuilder("🔖 【网关 Git 版本】\n")
                         sb.append("• 当前版本：v").append(ver).append("\n")
                         runCatching {
@@ -670,7 +670,7 @@ $KNOWLEDGE_JSON
                             if (out2.isNotBlank()) sb.append("• 最近标签：").append(out2.lines().joinToString("、")).append("\n")
                         }
                         sb.toString().trim()
-                    } catch (e: Exception) { "🔖 当前版本：v1.201（版本信息读取失败：${e.message}）" }
+                    } catch (e: Exception) { "🔖 当前版本：v1.202（版本信息读取失败：${e.message}）" }
                 }
                 "git_log" -> {
                     // ★ v1.116 查 Git 最近提交历史
@@ -1659,7 +1659,7 @@ $KNOWLEDGE_JSON
                 "price_list", "price_get", "price_set", "price_delete", "price_clear",
                 "kb_list", "kb_search",  // ★ v1.194 知识库检索
                 "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
-                "send_message_to_user",  // ★ v1.201 主动发消息
+                "send_message_to_user",  // ★ v1.202 主动发消息
                 "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
                 "backup_list", "backup_create", "backup_restore",
                 "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",

@@ -610,7 +610,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.201 统一消息记录中心（QQ/微信/公众号 三渠道收发全量留存，后台可查；消息历史思路自研）
+            // ★ v1.202 统一消息记录中心（QQ/微信/公众号 三渠道收发全量留存，后台可查；消息历史思路自研）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS platform_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2561,6 +2561,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
 val logs = listOf(
+Triple("v1.202", "设置体系补全3项（引用回复开关·黑白名单·冷却参数化）+ QQ 群过滤", "P0-2 剩余设置补齐（对齐一流智能体平台）：①引用回复开关 quoteReply——默认开=被引用/回复时触发；关=引用不触发；②黑白名单——blacklist 逗号分隔（关键词或 openid 命中直接忽略不回复）、whitelist 逗号分隔（非空时仅白名单成员/关键词可触发），QQ 群消息入口真实拦截；③冷却参数化 joinCooldownSec——群聊插话冷却秒数从写死 20 秒改为后台可配（0-600），replyFreqLimit 预留每分钟回复上限；④四层全打通——DB platform_settings 加 5 字段、API POST 全解析、沙盒 platform_settings_get 展示/platform_settings_set 支持 blacklist/whitelist/joinCooldownSec/replyFreqLimit 遥控（智能体一句话「把广告加进黑名单」）、后台机器人设置页新增引用回复开关+黑白名单输入框+插话冷却输入；⑤QQ handleGroup 接入黑白名单过滤 + 冷却参数化，安全默认：黑名单空/白名单空/冷却 20 秒。"),
 Triple("v1.201", "唤醒/回话设置体系（@必回开关·唤醒前缀·私聊开关·忽略自己）+ 对接全平台设置", "补齐机器人唤醒/回话完整设置体系（对齐一流智能体平台唤醒配置，自研实现）：①@回话开关——atReply 默认开=群聊@机器人必回；关=@也走插话决策，后台可配；②唤醒前缀——wakePrefix 如「小桐」，群里消息以它开头即使不@也触发（跳过插话冷却，被叫必回），实现「叫名字就应」；③私聊自动回复开关——c2cAuto 关=私聊不自动 AI 应答（绑定/管理指令仍可用），微信/QQ 双端生效；④忽略自己消息——ignoreSelf 防机器人自我循环（QQ/微信 handler 入口拦截）；⑤忽略@全体预留 ignoreAtAll、无权限提示开关 noPermReply（对齐 no_permission_reply 思路）；⑥设置四层全打通——DB platform_settings 加 6 个字段、API /api/platform/settings POST 全解析、沙盒 platform_settings_get 展示唤醒项/platform_settings_set 支持 atReply/wakePrefix/c2cAuto/ignoreSelf 遥控（一句话「把@必回关掉」「设置唤醒前缀小桐」）、后台机器人设置页三渠道卡片新增 4 个唤醒开关+唤醒前缀输入框；⑦QQ handleGroup 重构——ignoreSelf 入口拦截 + wakePrefix 命中直接参与 + atReply 关时@也进插话决策。"),
 Triple("v1.200", "QQ 反复断登根治（invalid session 死循环 + 主动消息无权限防护）", "修复 QQ 机器人一直断登「好烦」的问题：①根因确诊——服务器日志 invalid session 265 次 vs READY 仅 3 次：AccessToken 被 QQ 提前吊销后，getAccessToken 换新失败时仍降级返回缓存里的死 token → identify 永远 INVALID_SESSION → 无限重连死循环；②修复——getAccessToken 换 token 失败/网络异常时不再降级死 token，直接清缓存返回 null（由上层走换取失败稍后重试分支）；token 缓存提升为静态伴生共享（QqApiClient companion object），QqGatewayClient 收到 op 9 invalid session 时立刻清共享缓存 + 断开旧连接 + 立即重连（下次 connect 换新 token），杜绝拿死 token 反复 identify；③主动消息 40034105 无权限防护——群聊自由插话（v1.199 全量消息）走主动消息有 QQ 官方配额限制，频繁插话会触发无权限；新增群插话冷却（同一群 20 秒只插一句）+ 参与概率节流，从源头避免烧配额；④保留 401 兜底（forceRefreshToken 改走静态共享缓存）。"),
 Triple("v1.199", "QQ群聊自由插话（不@也接话，官方全量群消息通道）", "让 QQ 机器人在群里像真人一样自动参与讨论（自主式群聊参与能力）：①底层通道——QQ 官方机器人 API 支持 GROUP_MESSAGE_CREATE 全量群消息事件（机器人在开放平台开启「接收所有消息」后，群里每条消息不@也推送），QqGatewayClient 新增解析该事件，QqGroupMessage 数据类加 isAt 标志（@消息 vs 全量消息）与 memberName 昵称；②参与决策 shouldJoinGroupChat——非@消息按三级策略决定是否插话：提到机器人名字（小桐/綦桐/机器人/助手/AI 等）必回应；求助/提问意图（帮我/查一下/谁知道/怎么/如何/有没有/推荐/分析等 25+ 关键词）高概率参与；否则按概率（默认 8%）偶尔参与闲聊避免刷屏；③开关与配置——后台「机器人→机器人设置」QQ 卡片新增「群聊自动参与」开关 + 参与概率输入（1-100%），默认关（避免未开全量权限的机器人收到未知事件）；平台设置数据层/API/沙盒四件套同步加 groupJoin/groupJoinProb 字段，智能体可一句话「把QQ群聊自动参与打开」遥控；④@消息（GROUP_AT_MESSAGE_CREATE）必回不受影响，新群欢迎语仅@消息触发避免全量刷屏，消息记录中心照常留存全量消息；⑤参与插话时走完整沙盒 Agent 循环（自主调工具干活），并受平台 AI 开关与群级 ai_enabled 双重控制。"),
@@ -3862,7 +3863,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         }
     }
 
-    // ============ ★ v1.201 平台设置（QQ/微信/公众号 三渠道全局设置：AI开关/消息记录/主动问候/欢迎语） ============
+    // ============ ★ v1.202 平台设置（QQ/微信/公众号 三渠道全局设置：AI开关/消息记录/主动问候/欢迎语） ============
 
     /** 读取某渠道平台设置（无则给默认值；gateway_config 存 JSON 字符串） */
     fun getPlatformSettings(channel: String): Map<String, Any?> {
@@ -3877,13 +3878,19 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
                     "proactiveEnabled" to (o.optBoolean("proactiveEnabled", true)),
                     "groupJoin" to (o.optBoolean("groupJoin", false)),
                     "groupJoinProb" to (o.optInt("groupJoinProb", 8)),
-                    // ★ v1.201 唤醒/回话设置（对齐一流智能体平台唤醒体系）
+                    // ★ v1.202 唤醒/回话设置（对齐一流智能体平台唤醒体系）
                     "atReply" to (o.optBoolean("atReply", true)),           // @机器人必回（群聊）
                     "wakePrefix" to (o.optString("wakePrefix", "")),        // 唤醒前缀，如「小桐」开头即触发（无需@）
                     "ignoreAtAll" to (o.optBoolean("ignoreAtAll", false)),  // 忽略@全体（防止全体消息误触发）
                     "ignoreSelf" to (o.optBoolean("ignoreSelf", false)),    // 忽略自己发送的消息
                     "c2cAuto" to (o.optBoolean("c2cAuto", true)),           // 私聊消息自动回复开关
                     "noPermReply" to (o.optBoolean("noPermReply", false)),  // 无权限时是否回复提示（对齐 no_permission_reply）
+                    "quoteReply" to (o.optBoolean("quoteReply", true)),  // ★引用回复开关：被引用/回复时是否触发
+                    // ★ v1.202 黑白名单 + 冷却参数化
+                    "blacklist" to (o.optString("blacklist", "")),        // 黑名单（逗号分隔：关键词或openid，命中不回复）
+                    "whitelist" to (o.optString("whitelist", "")),        // 白名单（逗号分隔：仅这些openid/关键词可触发，空=不限制）
+                    "joinCooldownSec" to (o.optInt("joinCooldownSec", 20)), // 群聊插话冷却秒数
+                    "replyFreqLimit" to (o.optInt("replyFreqLimit", 0)),  // 回复频率限制（每分钟最多N条，0=不限）
                     "welcome" to (o.optString("welcome", "")),
                     "aiModel" to (o.optString("aiModel", "")),
                     "systemPrompt" to (o.optString("systemPrompt", ""))
@@ -3900,13 +3907,18 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         "proactiveEnabled" to true,
         "groupJoin" to false,
         "groupJoinProb" to 8,
-        // ★ v1.201 唤醒/回话默认值（@必回默认开；其余默认安全值）
+        // ★ v1.202 唤醒/回话默认值（@必回默认开；其余默认安全值）
         "atReply" to true,
         "wakePrefix" to "",
         "ignoreAtAll" to false,
         "ignoreSelf" to false,
         "c2cAuto" to true,
         "noPermReply" to false,
+        "quoteReply" to true,
+        "blacklist" to "",
+        "whitelist" to "",
+        "joinCooldownSec" to 20,
+        "replyFreqLimit" to 0,
         "welcome" to "",
         "aiModel" to "",
         "systemPrompt" to ""
@@ -3921,20 +3933,25 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         next.put("proactiveEnabled", updates["proactiveEnabled"] as? Boolean ?: (cur["proactiveEnabled"] as? Boolean ?: true))
         next.put("groupJoin", updates["groupJoin"] as? Boolean ?: (cur["groupJoin"] as? Boolean ?: false))
         next.put("groupJoinProb", updates["groupJoinProb"] as? Int ?: (cur["groupJoinProb"] as? Int ?: 8))
-        // ★ v1.201 唤醒/回话字段
+        // ★ v1.202 唤醒/回话字段
         next.put("atReply", updates["atReply"] as? Boolean ?: (cur["atReply"] as? Boolean ?: true))
         next.put("wakePrefix", (updates["wakePrefix"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["wakePrefix"] as? String ?: ""))
         next.put("ignoreAtAll", updates["ignoreAtAll"] as? Boolean ?: (cur["ignoreAtAll"] as? Boolean ?: false))
         next.put("ignoreSelf", updates["ignoreSelf"] as? Boolean ?: (cur["ignoreSelf"] as? Boolean ?: false))
         next.put("c2cAuto", updates["c2cAuto"] as? Boolean ?: (cur["c2cAuto"] as? Boolean ?: true))
         next.put("noPermReply", updates["noPermReply"] as? Boolean ?: (cur["noPermReply"] as? Boolean ?: false))
+        next.put("quoteReply", updates["quoteReply"] as? Boolean ?: (cur["quoteReply"] as? Boolean ?: true))
+        next.put("blacklist", (updates["blacklist"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["blacklist"] as? String ?: ""))
+        next.put("whitelist", (updates["whitelist"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["whitelist"] as? String ?: ""))
+        next.put("joinCooldownSec", updates["joinCooldownSec"] as? Int ?: (cur["joinCooldownSec"] as? Int ?: 20))
+        next.put("replyFreqLimit", updates["replyFreqLimit"] as? Int ?: (cur["replyFreqLimit"] as? Int ?: 0))
         next.put("welcome", (updates["welcome"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["welcome"] as? String ?: ""))
         next.put("aiModel", (updates["aiModel"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["aiModel"] as? String ?: ""))
         next.put("systemPrompt", (updates["systemPrompt"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["systemPrompt"] as? String ?: ""))
         setConfig("bot_settings_$channel", next.toString())
     }
 
-    // ============ ★ v1.201 统一消息记录中心（三渠道收发全量留存，后台可查可清） ============
+    // ============ ★ v1.202 统一消息记录中心（三渠道收发全量留存，后台可查可清） ============
 
     /** 保存一条平台消息记录（在/出站均可）；超 8000 条自动清最旧 */
     fun addPlatformMessage(channel: String, botId: Long, openid: String, groupOpenid: String, direction: String, content: String, model: String = "") {
