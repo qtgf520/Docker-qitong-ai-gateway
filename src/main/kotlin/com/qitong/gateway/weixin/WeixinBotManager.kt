@@ -225,6 +225,19 @@ object WeixinBotManager {
         val t = msg.content.trim()
         if (t.isBlank()) return
         val t0 = System.currentTimeMillis()
+        // ★ v1.197 消息记录中心：微信入站留存
+        runCatching { d.addPlatformMessage("weixin", bot.id, msg.from, "", "in", t, bot.aiModel) }
+        // ★ v1.197 平台设置：AI 总开关（关=机器人不 AI 应答，由平台设置面板控制）
+        runCatching {
+            val ps = d.getPlatformSettings("weixin")
+            if ((ps["aiEnabled"] as? Boolean) != true) {
+                // 绑定/管理类指令仍可用（用户自身操作），仅拦截 AI 对话
+                if (!t.startsWith("绑定", true) && t != "我的账号" && t != "退出账号" && t != "网关状态" && t != "状态" && t != "查余额" && !t.startsWith("查", true) && !t.startsWith("显示", true) && !t.startsWith("隐藏", true)) {
+                    runCatching { api.sendMessage(bot.botToken, msg.from, "🤖 机器人已暂停 AI 应答（后台平台设置关闭了 AI 开关）", msg.contextToken) }
+                    return
+                }
+            }
+        }
         // ★ v1.178 统一消息管道：微信消息进入事件（事件总线已挂载，订阅者可监听/统计/联动）
         runCatching {
             com.qitong.gateway.pipeline.GatewayEventBus.publish(
@@ -245,6 +258,7 @@ object WeixinBotManager {
         // ★ v1.133 发送异常保护：推送失败不中断 AI 思考/工具执行，记日志继续
         val send = { text: String ->
             try {
+                runCatching { d.addPlatformMessage("weixin", bot.id, msg.from, "", "out", text, bot.aiModel) }
                 val pieces = splitMessage(text)
                 pieces.forEach { p ->
                     runCatching { api.sendMessage(bot.botToken, msg.from, p, msg.contextToken) }

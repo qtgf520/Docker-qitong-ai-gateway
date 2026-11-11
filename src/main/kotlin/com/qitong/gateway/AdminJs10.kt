@@ -670,7 +670,7 @@ window.saDel = function(id){
  });
 };
 
-// ★ v1.196 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
+// ★ v1.197 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
 //   解决列表/详情页网络挂起时“加载中”永远显示（配合 api() 15s 超时，双重兜底）
 (function(){
  var guardTimer = null;
@@ -706,5 +706,91 @@ window.saDel = function(id){
  document.addEventListener('click', function(){ setTimeout(scanLoading, 2000); });
  setInterval(scanLoading, 8000);  // 常驻兜底
 })();
+
+// ===== ★ v1.197 机器人设置（QQ/微信/公众号 三渠道平台设置面板：AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
+loaders.botsettings = function(){
+ var box = $('view-botsettings');
+ if(!box) return;
+ box.innerHTML = '<div class="card"><h3>⚙️ 机器人平台设置</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中…</div></div>';
+ api('/api/platform/settings?channel=qq').then(function(r){
+  if(r.code !== 0){ box.innerHTML='<div class="card"><h3>⚙️ 机器人平台设置</h3><div style="color:var(--red);padding:10px">加载失败</div></div>'; return; }
+  var chName = {qq:'QQ机器人', weixin:'微信机器人', mp:'公众号'};
+  var chKey = {qq:'qq', weixin:'weixin', mp:'mp'};
+  function loadChannel(ch){
+   return api('/api/platform/settings?channel='+ch).then(function(r2){ return r2.data||{}; });
+  }
+  // 三个卡片：三渠道开关 + 配置项
+  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-top:8px" id="bsGrid"></div>';
+  box.innerHTML = '<div class="card"><h3>⚙️ 机器人平台设置</h3><div style="color:var(--muted);padding:8px;font-size:12px">三渠道独立控制：AI智能回答 / 消息记录 / 主动问候 / 欢迎语 / 默认模型 / 人设。配置即时生效，也可对机器人说「把QQ的AI开关关掉」让智能体代改。</div>' + html + '</div>';
+  var grid = $('bsGrid');
+  chKey.qq = 'qq'; chKey.weixin = 'weixin'; chKey.mp = 'mp';
+  Object.keys(chKey).forEach(function(k){
+   var ch = chKey[k];
+   loadChannel(ch).then(function(ps){
+    ps = ps||{};
+    var aiOn = ps.aiEnabled === true || ps.aiEnabled === undefined ? true : !!ps.aiEnabled;
+    var recOn = ps.msgRecord === true || ps.msgRecord === undefined ? true : !!ps.msgRecord;
+    var proOn = ps.proactiveEnabled === true || ps.proactiveEnabled === undefined ? true : !!ps.proactiveEnabled;
+    var card = '<div class="card" style="box-shadow:none;border:1px solid var(--border)">'+
+     '<h4>'+chName[k]+'</h4>'+
+     '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">'+ch.toUpperCase()+'</div>'+
+     '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_ai" '+(aiOn?'checked':'')+'> AI 智能回答</label></div>'+
+     '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_rec" '+(recOn?'checked':'')+'> 消息记录</label></div>'+
+     '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_pro" '+(proOn?'checked':'')+'> 主动问候</label></div>'+
+     '<div class="form-row"><label>默认欢迎语</label><input class="input" id="bs_'+ch+'_wel" value="'+esc(ps.welcome||'')+'" placeholder="留空=用机器人各自设置"></div>'+
+     '<div class="form-row"><label>默认模型（留空=各机器人自己的）</label><input class="input" id="bs_'+ch+'_model" value="'+esc(ps.aiModel||'')+'" placeholder="如 qtai-sj"></div>'+
+     '<div class="form-row"><label>默认人设（留空=各机器人自己的）</label><textarea class="input" id="bs_'+ch+'_sp" rows="2">'+esc(ps.systemPrompt||'')+'</textarea></div>'+
+     '<button class="btn btn-sm" onclick="saveBotSettings(\''+ch+'\')">💾 保存 '+chName[k]+'</button>'+
+     '</div>';
+    grid.insertAdjacentHTML('beforeend', card);
+   });
+  });
+ });
+}
+function saveBotSettings(ch){
+ var body = {channel:ch};
+ var aiEl=$('bs_'+ch+'_ai'), recEl=$('bs_'+ch+'_rec'), proEl=$('bs_'+ch+'_pro');
+ if(aiEl) body.aiEnabled = aiEl.checked ? 'true':'false';
+ if(recEl) body.msgRecord = recEl.checked ? 'true':'false';
+ if(proEl) body.proactiveEnabled = proEl.checked ? 'true':'false';
+ var wel=$('bs_'+ch+'_wel'); if(wel && wel.value.trim()) body.welcome = wel.value.trim();
+ var md=$('bs_'+ch+'_model'); if(md && md.value.trim()) body.aiModel = md.value.trim();
+ var sp=$('bs_'+ch+'_sp'); if(sp && sp.value.trim()) body.systemPrompt = sp.value.trim();
+ api('/api/platform/settings',{method:'POST',body:body}).then(function(r){ toast(r.msg||'', r.code===0); });
+}
+
+// ===== ★ v1.197 统一消息记录中心（QQ/微信/公众号 收发记录查询/筛选/清空） =====
+var msgCenterCh = '';
+function loadMsgCenter(){
+ var box = $('view-msgcenter');
+ if(!box) return;
+ box.innerHTML = '<div class="card"><h3>💬 消息记录中心</h3><div style="color:var(--muted);padding:10px;font-size:13px">加载中…</div></div>';
+ api('/api/platform/messages?limit=50').then(function(r){
+  var rows = r.data||[];
+  var html = '<div class="action-bar">'+
+   '<select class="input" style="max-width:160px" onchange="msgCenterCh=this.value;loadMsgCenter()"><option value="">全部渠道</option><option value="qq"'+(msgCenterCh==='qq'?' selected':'')+'>QQ</option><option value="weixin"'+(msgCenterCh==='weixin'?' selected':'')+'>微信</option><option value="mp"'+(msgCenterCh==='mp'?' selected':'')+'>公众号</option></select>'+
+   '<button class="btn-ghost" onclick="loadMsgCenter()">刷新</button>'+
+   '<button class="btn-ghost danger" onclick="clearMsgCenter()">🗑 清空记录</button></div>'+
+   '<div style="overflow-x:auto"><table class="tb"><thead><tr><th>时间</th><th>渠道</th><th>方向</th><th>目标</th><th>内容</th><th>模型</th></tr></thead><tbody>';
+  if(!rows.length) html += '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:18px">暂无消息记录</td></tr>';
+  else rows.forEach(function(m){
+   var ts = m.createdAt||0;
+   var tstr = ts ? new Date(ts).toLocaleString('zh-CN',{hour12:false}) : '-';
+   var chTxt = m.channel==='qq'?'QQ':(m.channel==='weixin'?'微信':(m.channel==='mp'?'公众号':m.channel));
+   var dirTxt = m.direction==='out' ? '<span class="badge" style="color:var(--green)">出↖</span>' : '<span class="badge" style="color:var(--cyan)">入↙</span>';
+   var target = (m.groupOpenid||'').slice(0,12) || (m.openid||'').slice(0,16) || '-';
+   html += '<tr><td style="font-size:11px;white-space:nowrap">'+tstr+'</td><td>'+chTxt+'</td><td>'+dirTxt+'</td><td style="font-family:monospace;font-size:11px">'+esc(target)+'</td><td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc((m.content||'').slice(0,80))+'</td><td style="font-size:11px">'+esc(m.model||'')+'</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  box.innerHTML = '<div class="card"><h3>💬 消息记录中心</h3><div style="color:var(--muted);padding:2px 0 8px;font-size:12px">三渠道收发消息全量留存（最多8000条自动滚动），智能体也可说「查下QQ最近消息」查看。</div>'+html+'</div>';
+ });
+}
+function clearMsgCenter(){
+ if(!confirm('确认清空全部消息记录？')) return;
+ api('/api/platform/messages/clear',{method:'POST',body:{channel:''}}).then(function(r){
+  toast(r.msg||'', r.code===0); if(r.code===0) loadMsgCenter();
+ });
+}
+loaders.msgcenter = function(){ msgCenterCh=''; loadMsgCenter(); };
 """
 }

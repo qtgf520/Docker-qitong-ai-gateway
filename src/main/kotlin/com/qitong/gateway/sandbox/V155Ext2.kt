@@ -48,7 +48,7 @@ object V155Ext2 {
                 }
             }
         }
-        // ★ v1.196 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
+        // ★ v1.197 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
         // 支持三渠道：QQ（group:群号 或 user:openid）/ 微信（openid）/ 公众号（粉丝openid）
         "send_message_to_user" -> {
             val text = (args["text"] ?: "").trim()
@@ -367,6 +367,56 @@ object V155Ext2 {
             else "💬 【我的会话】\n" + rows.take(30).joinToString("\n") { c ->
                 "• [${c.id}] ${c.title}"
             }.take(1400)
+        }
+        // ★ v1.197 平台设置遥控（智能体可自主读取/修改 QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候）
+        "platform_settings_get" -> {
+            val channel = (args["channel"] ?: "").trim().lowercase()
+            if (channel !in listOf("qq", "weixin", "mp")) "⚠️ 语法：platform_settings_get(channel=qq/weixin/mp)"
+            else {
+                val ps = db.getPlatformSettings(channel)
+                "⚙️ 【${channel.uppercase()} 平台设置】\n" +
+                    "• AI智能回答：${if (ps["aiEnabled"] == true) "✅开" else "⛔关"}\n" +
+                    "• 消息记录：${if (ps["msgRecord"] == true) "✅开" else "⛔关"}\n" +
+                    "• 主动问候：${if (ps["proactiveEnabled"] == true) "✅开" else "⛔关"}\n" +
+                    "• 默认欢迎语：${(ps["welcome"] as? String)?.takeIf { it.isNotBlank() } ?: "(未设置)"}\n" +
+                    "• 模型：${(ps["aiModel"] as? String)?.takeIf { it.isNotBlank() } ?: "(用各机器人默认)"}\n" +
+                    "• 人设：${(ps["systemPrompt"] as? String)?.takeIf { it.isNotBlank() }?.take(60) ?: "(未设置)"}"
+            }
+        }
+        "platform_settings_set" -> {
+            if (!isAdmin) return "⛔ 仅管理员可修改平台设置"
+            val channel = (args["channel"] ?: "").trim().lowercase()
+            if (channel !in listOf("qq", "weixin", "mp")) "⚠️ 语法：platform_settings_set(channel=qq/weixin/mp, aiEnabled=on/off, msgRecord=on/off, proactiveEnabled=on/off, welcome=欢迎语, aiModel=模型, systemPrompt=人设)"
+            else {
+                val upd = mutableMapOf<String, Any?>()
+                (args["aiEnabled"] ?: "").let { if (it.isNotBlank()) upd["aiEnabled"] = it in listOf("on", "true", "1", "开", "启用") }
+                (args["msgRecord"] ?: "").let { if (it.isNotBlank()) upd["msgRecord"] = it in listOf("on", "true", "1", "开", "启用") }
+                (args["proactiveEnabled"] ?: "").let { if (it.isNotBlank()) upd["proactiveEnabled"] = it in listOf("on", "true", "1", "开", "启用") }
+                (args["welcome"] ?: "").let { if (it.isNotBlank()) upd["welcome"] = it }
+                (args["aiModel"] ?: "").let { if (it.isNotBlank()) upd["aiModel"] = it }
+                (args["systemPrompt"] ?: "").let { if (it.isNotBlank()) upd["systemPrompt"] = it }
+                if (upd.isEmpty()) "⚠️ 没有要修改的项，参考语法传参"
+                else {
+                    db.setPlatformSettings(channel, upd)
+                    "✅ ${channel.uppercase()} 平台设置已更新：" + upd.keys.joinToString("、")
+                }
+            }
+        }
+        "platform_messages" -> {
+            if (!isAdmin) return "⛔ 仅管理员可查看消息记录"
+            val channel = (args["channel"] ?: "").trim().lowercase()
+            val limit = (args["limit"] ?: "20").toIntOrNull()?.coerceIn(1, 100) ?: 20
+            val rows = db.getPlatformMessages(channel, "", limit)
+            if (rows.isEmpty()) "📭 暂无消息记录${if (channel.isNotBlank()) "（$channel）" else ""}"
+            else {
+                val chName = mapOf("qq" to "QQ", "weixin" to "微信", "mp" to "公众号")
+                "💬 【消息记录${if (channel.isNotBlank()) "·${chName[channel] ?: channel}" else ""}·最近${limit}条】\n" + rows.map { m ->
+                    val ts = m["createdAt"] as? Long ?: 0L
+                    val tstr = if (ts > 0) { val sdf = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.CHINA); sdf.format(java.util.Date(ts)) } else ""
+                    val dir = if (m["direction"] == "out") "⬆️" else "⬇️"
+                    "[$tstr ${chName[m["channel"]] ?: m["channel"]}} $dir] ${(m["content"] as? String ?: "").take(80)}"
+                }.joinToString("\n").take(1800)
+            }
         }
         else -> null
     }

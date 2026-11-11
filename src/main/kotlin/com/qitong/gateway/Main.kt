@@ -107,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.196
+ * 綦桐AI网关 · Docker 服务器版 v1.197
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -119,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.196   ║
+        ║   綦桐AI网关 · Docker Server v1.197   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -130,8 +130,8 @@ fun main(args: Array<String>) {
     // ★ v1.178 统一消息管道 + 平台适配器：初始化注册（三渠道共用一套管道编排）
     runCatching {
         com.qitong.gateway.pipeline.PipelineSetup.install(database)
-        println("[Gateway] v1.196 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
-    }.onFailure { e -> System.err.println("[Gateway] v1.196 管道初始化失败: ${e.message}") }
+        println("[Gateway] v1.197 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
+    }.onFailure { e -> System.err.println("[Gateway] v1.197 管道初始化失败: ${e.message}") }
 
     // ★ v85 播种更新历史（首次启动写入，前端/QQ/微信/qtai-sj 可查）
     runCatching { database.migrateMultimodal() }
@@ -222,7 +222,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.196"))
+                put("version", JsonPrimitive("1.197"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1678,6 +1678,49 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, "日志已清空")
         }
 
+        // ===== ★ v1.197 平台设置（QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
+        get("/api/platform/settings") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val channel = call.request.queryParameters["channel"] ?: ""
+            if (channel !in listOf("qq", "weixin", "mp")) { AdminApi.fail(call, "channel 必须是 qq/weixin/mp", 400); return@get }
+            AdminApi.ok(call, database.getPlatformSettings(channel), "ok")
+        }
+        post("/api/platform/settings") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val channel = body["channel"]?.jsonPrimitive?.content ?: ""
+            if (channel !in listOf("qq", "weixin", "mp")) { AdminApi.fail(call, "channel 必须是 qq/weixin/mp", 400); return@post }
+            val updates = mutableMapOf<String, Any?>()
+            body["aiEnabled"]?.jsonPrimitive?.content?.let { updates["aiEnabled"] = it.toBoolean() }
+            body["msgRecord"]?.jsonPrimitive?.content?.let { updates["msgRecord"] = it.toBoolean() }
+            body["proactiveEnabled"]?.jsonPrimitive?.content?.let { updates["proactiveEnabled"] = it.toBoolean() }
+            body["welcome"]?.jsonPrimitive?.content?.let { updates["welcome"] = it }
+            body["aiModel"]?.jsonPrimitive?.content?.let { updates["aiModel"] = it }
+            body["systemPrompt"]?.jsonPrimitive?.content?.let { updates["systemPrompt"] = it }
+            database.setPlatformSettings(channel, updates)
+            AdminApi.ok(call, database.getPlatformSettings(channel), "设置已保存")
+        }
+
+        // ===== ★ v1.197 统一消息记录中心（QQ/微信/公众号 三渠道收发记录查询/清空） =====
+        get("/api/platform/messages") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val channel = call.request.queryParameters["channel"] ?: ""
+            val direction = call.request.queryParameters["direction"] ?: ""
+            val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 100
+            AdminApi.ok(call, database.getPlatformMessages(channel, direction, limit), "ok")
+        }
+        post("/api/platform/messages/clear") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = runCatching { call.receive<JsonObject>() }.getOrNull()
+            val channel = body?.get("channel")?.jsonPrimitive?.content ?: ""
+            val n = database.clearPlatformMessages(channel)
+            AdminApi.ok(call, null, "已清空 $n 条消息记录")
+        }
+
         // QQ 动态概览（流动面板数据源）
         get("/api/qq/overview") {
             val u = call.requireAuth(database) ?: return@get
@@ -2876,7 +2919,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.196"))
+                put("version", JsonPrimitive("1.197"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3720,7 +3763,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.196"))
+                    put("version", JsonPrimitive("1.197"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

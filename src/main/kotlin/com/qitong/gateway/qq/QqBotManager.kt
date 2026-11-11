@@ -202,7 +202,7 @@ object QqBotManager {
         } catch (e: Exception) { System.err.println("[QQBot] 主动活跃异常: ${e.message}") }
     }
 
-    /** ★ v1.196 主动发消息：向指定 QQ 用户（C2C 私聊）发送文本（send_message_to_user 沙盒工具用） */
+    /** ★ v1.197 主动发消息：向指定 QQ 用户（C2C 私聊）发送文本（send_message_to_user 沙盒工具用） */
     fun sendToUserC2C(userOpenid: String, text: String): Boolean {
         if (userOpenid.isBlank() || text.isBlank()) return false
         return try {
@@ -455,6 +455,9 @@ object QqBotManager {
         val text = stripAt(msg.content).trim()
         if (text.isEmpty()) return
 
+        // ★ v1.197 消息记录中心：QQ 群消息入站留存
+        runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "in", text, bot.aiModel) }
+
         // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
         val key = "${bot.id}:g:${msg.groupOpenid}:${msg.memberOpenid}"
         // ★ v1.178 统一消息管道：QQ 群消息进入事件（事件总线已挂载，订阅者可监听/统计/联动）
@@ -471,7 +474,10 @@ object QqBotManager {
 
         withUserLock(key) {
             dispatch(bot, key, msg.groupOpenid, msg.memberOpenid, text, msg.msgId,
-                send = { content -> api.sendGroupMessage(bot, at, msg.groupOpenid, content, msg.msgId) })
+                send = { content ->
+                    runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "out", content, bot.aiModel) }
+                    api.sendGroupMessage(bot, at, msg.groupOpenid, content, msg.msgId)
+                })
         }
     }
 
@@ -483,6 +489,8 @@ object QqBotManager {
             System.err.println("[QQBot] ${bot.appid} 私聊消息处理：获取AccessToken失败")
             return
         }
+        // ★ v1.197 消息记录中心：QQ 私聊入站留存
+        runCatching { db.addPlatformMessage("qq", bot.id, msg.userOpenid, "", "in", msg.content.trim(), bot.aiModel) }
         // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
         val key = "${bot.id}:c:${msg.userOpenid}"
         // ★ v1.178 统一消息管道：QQ 私聊消息进入事件（事件总线已挂载，订阅者可监听/统计/联动）
@@ -498,7 +506,10 @@ object QqBotManager {
         }
         withUserLock(key) {
             dispatch(bot, key, "", msg.userOpenid, msg.content.trim(), msg.msgId,
-                send = { content -> api.sendC2cMessage(bot, at, msg.userOpenid, content, msg.msgId) })
+                send = { content ->
+                    runCatching { db.addPlatformMessage("qq", bot.id, msg.userOpenid, "", "out", content, bot.aiModel) }
+                    api.sendC2cMessage(bot, at, msg.userOpenid, content, msg.msgId)
+                })
         }
     }
 
@@ -547,6 +558,16 @@ object QqBotManager {
             send("👁️ 好的，已恢复完整模式：之后干活我会实时推送每一步过程 💭→🔧→✅。\n想简洁就发「隐藏步骤」。")
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "progress", "开启完整模式(verbose)", System.currentTimeMillis() - t0)
             return
+        }
+        // ★ v1.197 平台设置：AI 总开关（关=机器人不 AI 应答；仅 admin/绑定管理指令仍可用）
+        runCatching {
+            val ps = db.getPlatformSettings("qq")
+            if ((ps["aiEnabled"] as? Boolean) != true) {
+                val isMgmt = t.startsWith("绑定", true) || t.startsWith("停止", true) || t.startsWith("显示", true) ||
+                    t.startsWith("隐藏", true) || t.equals("我的账号", true) || t.equals("退出账号", true) ||
+                    t.startsWith("查状态", true) || t.startsWith("网关状态", true) || t.startsWith("查余额", true) || t.startsWith("我的余额", true)
+                if (!isMgmt) { send("🤖 机器人已暂停 AI 应答（后台平台设置关闭了 AI 开关）"); db.addQqLog(bot.appid, groupOpenid, userOpenid, "gate", "AI开关关闭拦截", System.currentTimeMillis() - t0); return }
+            }
         }
         // ★ v64 停止指令：用户发「停止/停一下/中断/不干了」→ 打断当前 Agent 思考/执行（由大模型自由调度感知）
         if (t.equals("停止", true) || t.equals("停", true) || t.equals("停一下", true) ||

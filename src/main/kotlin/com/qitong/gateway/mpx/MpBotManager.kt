@@ -72,15 +72,35 @@ object MpBotManager {
             val content = (xml["Content"] ?: "").trim()
             val event = xml["Event"] ?: ""
 
+            // ★ v1.197 消息记录中心：公众号入站留存（文本消息；事件也留一条）
+            runCatching {
+                if (msgType == "text" && content.isNotBlank()) db.addPlatformMessage("mp", botId, fromUser, "", "in", content, (bot["aiModel"] as? String) ?: "")
+                else if (msgType == "event") db.addPlatformMessage("mp", botId, fromUser, "", "in", "【事件】$event", "")
+            }
+
             // ★ 统一被动回复出口：安全/兼容模式自动加密返回，明文模式原样
             val encryptMode = (bot["encryptMode"] as? String) ?: "plain"
             val encKey = (bot["encodingAesKey"] as? String) ?: ""
             val mpToken = (bot["token"] as? String) ?: ""
             fun replyText(replyContent: String): String {
+                // ★ v1.197 消息记录中心：公众号出站留存（被动回复）
+                runCatching { db.addPlatformMessage("mp", botId, fromUser, "", "out", replyContent, (bot["aiModel"] as? String) ?: "") }
                 val plain = makePassiveReply(toUser, fromUser, "text", replyContent)
                 return if (isEncrypted && encKey.isNotBlank() && encryptMode != "plain")
                     encryptReplyMsg(encKey, plain, appid, timestamp, nonce, mpToken)
                 else plain
+            }
+
+            // ★ v1.197 平台设置：AI 总开关（关=普通文本直接回默认语，仅拦截 AI 智能回答；关键词回答仍可用）
+            runCatching {
+                val ps = db.getPlatformSettings("mp")
+                val aiEnabled = (ps["aiEnabled"] as? Boolean) ?: true
+                if (!aiEnabled && msgType == "text" && content.isNotBlank()) {
+                    if (!content.contains("显示步骤", true) && !content.contains("隐藏步骤", true)) {
+                        val dr = (bot["defaultReply"] as? String)?.takeIf { it.isNotBlank() } ?: "🤖 收到！该公众号已关闭智能回答（后台平台设置）。"
+                        return replyText(dr)
+                    }
+                }
             }
 
             // 事件消息（关注/取关/菜单等）

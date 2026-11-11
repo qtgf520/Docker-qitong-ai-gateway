@@ -185,7 +185,10 @@ object HeartbeatEngine {
 
                     // ① 找最近活跃的 QQ 群（2 小时内有过消息 + AI 开启）
                     val activeGroups = db.getActiveQqGroups(2 * 3600 * 1000L, 5)
+                    // ★ v1.197 平台设置：QQ 主动问候总开关（关=整个 QQ 渠道不主动冒泡）
+                    val qqPro = (db.getPlatformSettings("qq")["proactiveEnabled"] as? Boolean) ?: true
                     for (g in activeGroups) {
+                        if (!qqPro) break
                         val gid = (g["groupOpenid"] as? String ?: "").ifBlank { continue }
                         val key = "g:$gid"
                         val last = lastGreet.optLong(key, 0L)
@@ -222,7 +225,10 @@ object HeartbeatEngine {
                     }
                     // ② 找最近活跃的微信联系人
                     val activeWx = db.getActiveWxUsers(2 * 3600 * 1000L, 5)
+                    // ★ v1.197 平台设置：微信主动问候总开关（关=整个微信渠道不主动冒泡）
+                    val wxPro = (db.getPlatformSettings("weixin")["proactiveEnabled"] as? Boolean) ?: true
                     for (w in activeWx) {
+                        if (!wxPro) break
                         val openid = (w["openid"] as? String ?: "").ifBlank { continue }
                         val key = "w:$openid"
                         val last = lastGreet.optLong(key, 0L)
