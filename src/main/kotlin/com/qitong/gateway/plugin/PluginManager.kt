@@ -6,7 +6,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * ★ v1.204 轻量插件系统（对齐主流智能体平台 Star 插件框架思路，自研实现）
+ * ★ v1.206 轻量插件系统（对齐主流智能体平台 Star 插件框架思路，自研实现）
  *
  * 插件目录规范：
  *   plugins/

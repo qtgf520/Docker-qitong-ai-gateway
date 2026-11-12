@@ -670,7 +670,7 @@ window.saDel = function(id){
  });
 };
 
-// ★ v1.204 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
+// ★ v1.206 全局「加载中」守护：定时扫描页面里仍显示“加载中…”的占位区 → 超过 12s 自动替换为错误提示+重试
 //   解决列表/详情页网络挂起时“加载中”永远显示（配合 api() 15s 超时，双重兜底）
 (function(){
  var guardTimer = null;
@@ -707,7 +707,7 @@ window.saDel = function(id){
  setInterval(scanLoading, 8000);  // 常驻兜底
 })();
 
-// ===== ★ v1.204 机器人设置（QQ/微信/公众号 三渠道平台设置面板：AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
+// ===== ★ v1.206 机器人设置（QQ/微信/公众号 三渠道平台设置面板：AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
 loaders.botsettings = function(){
  var box = $('view-botsettings');
  if(!box) return;
@@ -737,14 +737,14 @@ loaders.botsettings = function(){
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_ai" '+(aiOn?'checked':'')+'> AI 智能回答</label></div>'+
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_rec" '+(recOn?'checked':'')+'> 消息记录</label></div>'+
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_pro" '+(proOn?'checked':'')+'> 主动问候</label></div>'+
-     // ★ v1.204 唤醒/回话设置
+     // ★ v1.206 唤醒/回话设置
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_at" '+(ps.atReply!==false?'checked':'')+'> @机器人必回（默认开）</label></div>'+
      '<div class="form-row"><label>唤醒前缀（消息以它开头即触发，无需@；如「小桐」）</label><input class="input" id="bs_'+ch+'_wake" value="'+esc(ps.wakePrefix||'')+'" placeholder="留空=不启用"></div>'+
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_c2c" '+(ps.c2cAuto!==false?'checked':'')+'> 私聊自动回复</label></div>'+
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_self" '+(ps.ignoreSelf?'checked':'')+'> 忽略自己消息</label></div>'+
      '<div class="form-row"><label><input type="checkbox" id="bs_'+ch+'_quote" '+(ps.quoteReply!==false?'checked':'')+'> 引用回复（被引用时触发）</label></div>'+
-     '<div class="form-row"><label>黑名单（逗号分隔，命中不回复）</label><input class="input" id="bs_'+ch+'_bl' value="'+esc(ps.blacklist||'')+'" placeholder="如：广告,代购"></div>'+
-     '<div class="form-row"><label>白名单（逗号分隔，仅这些可触发；留空=不限制）</label><input class="input" id="bs_'+ch+'_wl' value="'+esc(ps.whitelist||'')+'" placeholder="如：openid1,openid2"></div>'+
+     '<div class="form-row"><label>黑名单（逗号分隔，命中不回复）</label><input class="input" id="bs_'+ch+'_bl" value="'+esc(ps.blacklist||'')+'" placeholder="如：广告,代购"></div>'+
+     '<div class="form-row"><label>白名单（逗号分隔，仅这些可触发；留空=不限制）</label><input class="input" id="bs_'+ch+'_wl" value="'+esc(ps.whitelist||'')+'" placeholder="如：openid1,openid2"></div>'+
      (ch==='qq' ? '<div class="form-row"><label><input type="checkbox" id="bs_qq_join" '+(ps.groupJoin?'checked':'')+'> 群聊自动参与（不@也接话）</label></div>'+
      '<div class="form-row"><label>群聊参与概率（1-100%，默认8%）</label><input class="input" type="number" min="0" max="100" id="bs_qq_prob" value="'+(ps.groupJoinProb||8)+'"></div>'+
      '<div class="form-row"><label>插话冷却秒数（默认20）</label><input class="input" type="number" min="0" max="600" id="bs_qq_cd" value="'+(ps.joinCooldownSec||20)+'"></div>'+
@@ -765,7 +765,7 @@ function saveBotSettings(ch){
  if(aiEl) body.aiEnabled = aiEl.checked ? 'true':'false';
  if(recEl) body.msgRecord = recEl.checked ? 'true':'false';
  if(proEl) body.proactiveEnabled = proEl.checked ? 'true':'false';
- // ★ v1.204 唤醒/回话字段
+ // ★ v1.206 唤醒/回话字段
  var atEl=$('bs_'+ch+'_at'); if(atEl) body.atReply = atEl.checked ? 'true':'false';
  var wakeEl=$('bs_'+ch+'_wake'); if(wakeEl && wakeEl.value.trim()) body.wakePrefix = wakeEl.value.trim();
  var c2cEl=$('bs_'+ch+'_c2c'); if(c2cEl) body.c2cAuto = c2cEl.checked ? 'true':'false';
@@ -782,7 +782,7 @@ var cdEl=$('bs_qq_cd'); if(cdEl && cdEl.value.trim()!=='') body.joinCooldownSec 
  api('/api/platform/settings',{method:'POST',body:body}).then(function(r){ toast(r.msg||'', r.code===0); });
 }
 
-// ===== ★ v1.204 统一消息记录中心（QQ/微信/公众号 收发记录查询/筛选/清空） =====
+// ===== ★ v1.206 统一消息记录中心（QQ/微信/公众号 收发记录查询/筛选/清空） =====
 var msgCenterCh = '';
 function loadMsgCenter(){
  var box = $('view-msgcenter');
@@ -816,7 +816,7 @@ function clearMsgCenter(){
 }
 loaders.msgcenter = function(){ msgCenterCh=''; loadMsgCenter(); };
 
-// ===== ★ v1.204 插件管理页（列表/热重载/启停/卸载/市场预留） =====
+// ===== ★ v1.206 插件管理页（列表/热重载/启停/卸载/市场预留） =====
 loaders.plugins = function(){
  var box = $('view-plugins');
  if(!box) return;

@@ -56,7 +56,7 @@ object QqBotManager {
     private val lastReplyText = ConcurrentHashMap<String, String>()
     // ★ v64 停止信号：用户发「停止/停一下/中断」→ 打断当前 Agent 思考/执行（大模型自由调度感知停止）
     private val stopSignals = ConcurrentHashMap<String, Boolean>()
-    // ★ v1.204 群聊插话冷却：群 openid key -> 最近一次插话时间戳（防刷屏/防主动消息配额耗尽 40034105）
+    // ★ v1.206 群聊插话冷却：群 openid key -> 最近一次插话时间戳（防刷屏/防主动消息配额耗尽 40034105）
     private val groupJoinCooldown = ConcurrentHashMap<String, Long>()
     /** v51 分步绑定状态：openid -> (step, username)；step=1 等用户名，2 等密码 */
     private val pendingBind = ConcurrentHashMap<String, Pair<Int, String>>()
@@ -204,7 +204,7 @@ object QqBotManager {
         } catch (e: Exception) { System.err.println("[QQBot] 主动活跃异常: ${e.message}") }
     }
 
-    /** ★ v1.204 主动发消息：向指定 QQ 用户（C2C 私聊）发送文本（send_message_to_user 沙盒工具用） */
+    /** ★ v1.206 主动发消息：向指定 QQ 用户（C2C 私聊）发送文本（send_message_to_user 沙盒工具用） */
     fun sendToUserC2C(userOpenid: String, text: String): Boolean {
         if (userOpenid.isBlank() || text.isBlank()) return false
         return try {
@@ -436,7 +436,7 @@ object QqBotManager {
 
     private fun handleGroup(bot: QqBot, msg: QqGroupMessage) {
         val isNewGroup = db.getQqGroupConfig(msg.groupOpenid) == null
-        // ★ v1.204 唤醒设置：忽略自己发送的消息（ignoreSelf）
+        // ★ v1.206 唤醒设置：忽略自己发送的消息（ignoreSelf）
         val ps0 = db.getPlatformSettings("qq")
         if ((ps0["ignoreSelf"] as? Boolean) == true && msg.memberOpenid.isNotBlank() && msg.memberOpenid == bot.appid) return
         db.touchQqGroup(msg.groupOpenid, bot.appid)
@@ -449,14 +449,14 @@ object QqBotManager {
             return
         }
 
-        // ★ v1.204 唤醒前缀：消息以配置的前缀开头（如「小桐」）即使没@也视为唤醒 → 必回
+        // ★ v1.206 唤醒前缀：消息以配置的前缀开头（如「小桐」）即使没@也视为唤醒 → 必回
         val wakePrefix = (db.getPlatformSettings("qq")["wakePrefix"] as? String)?.trim() ?: ""
         val isWakePrefix = wakePrefix.isNotEmpty() && stripAt(msg.content).trim().startsWith(wakePrefix)
 
-        // ★ v1.204 @回话开关（atReply）：@消息是否必回；关闭则@也走插话决策（默认开）
+        // ★ v1.206 @回话开关（atReply）：@消息是否必回；关闭则@也走插话决策（默认开）
         val atReplyOn = (db.getPlatformSettings("qq")["atReply"] as? Boolean) ?: true
 
-        // ★ v1.204 黑白名单过滤（命中黑名单直接忽略；白名单非空时仅白名单成员可触发）
+        // ★ v1.206 黑白名单过滤（命中黑名单直接忽略；白名单非空时仅白名单成员可触发）
         runCatching {
             val psBl = db.getPlatformSettings("qq")
             val bl = (psBl["blacklist"] as? String ?: "").split(",").map { it.trim() }.filter { it.isNotBlank() }
@@ -465,9 +465,9 @@ object QqBotManager {
             if (bl.any { txtChk.contains(it, true) || msg.memberOpenid == it }) return
             if (wl.isNotEmpty() && wl.none { msg.memberOpenid == it || txtChk.contains(it, true) }) return
         }
-        // ★ v1.204 插话冷却秒数（参数化，替代写死 20 秒）
+        // ★ v1.206 插话冷却秒数（参数化，替代写死 20 秒）
         val joinCooldownMs = ((db.getPlatformSettings("qq")["joinCooldownSec"] as? Number)?.toLong() ?: 20L) * 1000L
-        // ★ v1.204 群聊自由插话：非@消息（GROUP_MESSAGE_CREATE 全量模式）按决策参与讨论
+        // ★ v1.206 群聊自由插话：非@消息（GROUP_MESSAGE_CREATE 全量模式）按决策参与讨论
         //   @消息（GROUP_AT_MESSAGE_CREATE）在 atReplyOn 时必回；atReply 关时同样走参与决策
         if (!msg.isAt || !atReplyOn) {
             val rawText = stripAt(msg.content).trim()
@@ -478,7 +478,7 @@ object QqBotManager {
                 if (isWakePrefix) {
                     // 直接往下走（不设冷却，唤醒必回）
                 } else {
-                    // ★ v1.204 插话冷却防刷屏：同一群 20 秒内只插一句（QQ 主动消息有配额，频繁插话会触发 40034105 无权限）
+                    // ★ v1.206 插话冷却防刷屏：同一群 20 秒内只插一句（QQ 主动消息有配额，频繁插话会触发 40034105 无权限）
                     val now0 = System.currentTimeMillis()
                     val lastJoinKey = "qq_group_join_${msg.groupOpenid}"
                     val lastJoinAt = groupJoinCooldown[lastJoinKey] ?: 0L
@@ -509,7 +509,7 @@ object QqBotManager {
         val text = stripAt(msg.content).trim()
         if (text.isEmpty()) return
 
-        // ★ v1.204 插件 on_message 钩子：命中插件回复/忽略规则则不再走 AI
+        // ★ v1.206 插件 on_message 钩子：命中插件回复/忽略规则则不再走 AI
         runCatching {
             val pHit = com.qitong.gateway.plugin.PluginManager.onMessage(text, "qq")
             if (pHit != null) {
@@ -524,7 +524,7 @@ object QqBotManager {
             }
         }
 
-        // ★ v1.204 消息记录中心：QQ 群消息入站留存（插话/必回都留）
+        // ★ v1.206 消息记录中心：QQ 群消息入站留存（插话/必回都留）
         runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "in", text, bot.aiModel) }
 
         // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
@@ -558,7 +558,7 @@ object QqBotManager {
             System.err.println("[QQBot] ${bot.appid} 私聊消息处理：获取AccessToken失败")
             return
         }
-        // ★ v1.204 消息记录中心：QQ 私聊入站留存
+        // ★ v1.206 消息记录中心：QQ 私聊入站留存
         runCatching { db.addPlatformMessage("qq", bot.id, msg.userOpenid, "", "in", msg.content.trim(), bot.aiModel) }
         // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
         val key = "${bot.id}:c:${msg.userOpenid}"
@@ -628,7 +628,7 @@ object QqBotManager {
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "progress", "开启完整模式(verbose)", System.currentTimeMillis() - t0)
             return
         }
-        // ★ v1.204 平台设置：AI 总开关（关=机器人不 AI 应答；仅 admin/绑定管理指令仍可用）
+        // ★ v1.206 平台设置：AI 总开关（关=机器人不 AI 应答；仅 admin/绑定管理指令仍可用）
         runCatching {
             val ps = db.getPlatformSettings("qq")
             if ((ps["aiEnabled"] as? Boolean) != true) {
@@ -701,15 +701,25 @@ object QqBotManager {
         var replyCount = 0
         // ★ v1.181 过程推送配额保护：QQ 主动消息有每日配额，长任务多轮工具调用逐条烧会提前耗尽配额
         //   → 中途推送全失败、用户看到「机器人突然不说话/只会最后蹦一句」。
-        //   方案：单次任务过程推送（isFinal=false）默认最多 5 条（可配 qq_progress_budget），超预算后静默、
-        //   把配额留给最终回复（isFinal=true 不受限，必达）。微信无此限制不受影响。
-        // ★ v1.185 进度模式：用户配置 progress_mode=quiet（说「隐藏步骤」）→ 过程推送全部静默，只回最终结果
-        val progressBudget = db.getConfig("qq_progress_budget", "5").toIntOrNull() ?: 5
+        //   方案：单次任务【工具细节】推送（🔧/💭调用/⚡并行/✅完成）默认最多 20 条（可配 qq_progress_budget），
+        //   超预算后静默工具细节、把配额留给最终回复（isFinal=true 不受限，必达）。思考/进度类（⏳/🤖）不烧预算。
+        // ★ v1.206 隐藏步骤语义重构（綦桐 11-12 要求）：quiet 只隐藏【工具调用细节】，
+        //   思考内容（💭 思考中/⏳ 处理中）与执行过程进度必须保留，最终答案必达；
+        //   verbose 全量推送（工具细节+思考都要有）。预算同理只约束工具细节，思考进度永不被吞。
+        val progressBudget = db.getConfig("qq_progress_budget", "20").toIntOrNull() ?: 20
         val quietProgress = db.getUserConfig(db.getQqBoundUser(userOpenid)?.id ?: 0L, "progress_mode", "verbose") == "quiet"
         var progressUsed = 0
+        // 判断是否为【工具调用细节】推送（quiet 时隐藏的那部分）：
+        //  “💭 我正在第N步：调用…/💭 我确认一下/💭 好的，我继续查/🔧 正在执行/⚡ 我同时处理/✅ 工具 完成：结果”
+        fun isToolDetailMsg(m: String): Boolean =
+            m.contains("调用", true) || m.contains("正在执行", true) || m.contains("完成：", true) ||
+            m.contains("同时处理", true) || m.contains("确认一下", true) || m.contains("继续查", true)
         val smartSend: (String, Boolean) -> Boolean = { content, isFinal ->
-            if (!isFinal) progressUsed++
-            if (isFinal || (!quietProgress && progressUsed <= progressBudget)) {
+            val isToolDetail = !isFinal && isToolDetailMsg(content)
+            if (isToolDetail) progressUsed++
+            // quiet 下隐藏工具细节；思考/进度（⏳/🤖/⚠️/长任务）与最终回复照常推送
+            val hideTool = !isFinal && quietProgress && isToolDetail
+            if (isFinal || (!hideTool && (!isToolDetail || progressUsed <= progressBudget))) {
                 replyCount++
                 val usePassive = isFinal  // 只有最终回复用被动回复
                 val effectiveMsgId = if (usePassive) msgId else null
@@ -736,8 +746,8 @@ object QqBotManager {
                 }
                 anyOk
             } else {
-                // ★ v1.181 预算耗尽：静默跳过过程推送（不消耗被动回复名额），配额留给最终回复
-                System.out.println("[QQBot] 过程推送预算已耗尽（$progressUsed/$progressBudget），静默保最终回复")
+                // ★ v1.206 预算耗尽：只静默工具细节（不消耗被动回复名额），思考/进度与最终回复不受影响
+                System.out.println("[QQBot] 工具细节推送预算已耗尽（$progressUsed/$progressBudget），思考/进度与最终回复继续")
                 true
             }
         }
@@ -770,6 +780,13 @@ object QqBotManager {
                     send(if (cur.isNullOrBlank()) "当前人格：默认（綦桐小助理）\n发「切换人格 程序员/知心姐姐/翻译官/老师」试试不同角色" else "当前人格：\n$cur\n\n发「切换人格 默认」恢复默认")
                     return
                 }
+                // ★ v1.206 万能表情包：内置表情包池按关键词发一条趣味表情组合（QQ 官方 [face:N] 表情 + emoji）
+                "sticker" -> {
+                    val kw = builtin.second.trim()
+                    send(buildSticker(kw))
+                    db.addQqLog(bot.appid, groupOpenid, userOpenid, "sticker", "表情包 ${if (kw.isBlank()) "随机" else kw}", System.currentTimeMillis() - t0)
+                    return
+                }
                 // ★ v1.114 功能快捷面板（常用操作一目了然）
                 "features" -> {
                     val bound = db.getQqBoundUser(userOpenid)
@@ -783,6 +800,7 @@ object QqBotManager {
                         "· 提醒我 10分钟后 xxx — 定时提醒\n" +
                         "· 待办 / 添加待办 xxx — 待办管理\n" +
                         "· 切换人格 程序员/知心姐姐/翻译官/老师 — 多角色对话\n" +
+                        "· 表情包 点赞/大笑/加油 — 万能表情包（好玩）\n" +
                         "· 画图 xxx — AI 生成图片\n" +
                         "· 我的技能 / 添加技能 触发词|回复内容 — 技能自管理\n" +
                         "· 菜单 — 已安装插件"
@@ -1378,7 +1396,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         text.contains("我查", true) || text.contains("来弄", true) || text.contains("搞定", true)
 
     /**
-     * ★ v1.204 承诺话术检测：模型只输出「我帮你/我看一下/帮你查/我这就去查」这类承诺
+     * ★ v1.206 承诺话术检测：模型只输出「我帮你/我看一下/帮你查/我这就去查」这类承诺
      * 但没有真输出工具调用标签的行为 = 「说了要做 → 没做」→ 必须强制兜底真执行。
      * 返回 true 表示该回复是空承诺（需要派子Agent真执行用户原话）。
      */
@@ -1400,7 +1418,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return true
     }
 
-    /** ★ v1.204 承诺闭环兜底：把用户原话派子Agent真执行，结果必达（不再放行空承诺） */
+    /** ★ v1.206 承诺闭环兜底：把用户原话派子Agent真执行，结果必达（不再放行空承诺） */
     private fun promiseFallback(userText: String, userOpenid: String, groupOpenid: String, effUserId: Long, channel: String, smartSend: (String, Boolean) -> Boolean): String {
         smartSend("⏳ 我这就去处理，稍等片刻…", false)
         val task = "用户请求：$userText\n请自主拆解并用网关沙盒工具真实执行，干完输出完整结果（含关键数据）。"
@@ -1409,7 +1427,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         else "✅ 任务完成：\n$result"
     }
 
-    /** ★ v1.204 群聊自由插话决策：非@消息是否参与讨论（自主式群聊参与）。
+    /** ★ v1.206 群聊自由插话决策：非@消息是否参与讨论（自主式群聊参与）。
      * 返回 true = 机器人应插话。开启条件：平台设置 qq.groupJoin=true 且该群 ai_enabled。
      * 触发策略：①消息含机器人名/@意向词 ②求助/提问关键词（帮/查/谁/怎么/如何/有没有/知道吗/大家觉得 等）③概率闲聊参与 */
     private fun shouldJoinGroupChat(text: String, groupOpenid: String): Boolean {
@@ -1439,8 +1457,55 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return if (joinProb > 0) (0 until 100).random() < joinProb else false
     }
 
-    /** ★ v1.204 QQ 机器人自定义名称列表（群聊提到这些名字触发回应） */
+    /** ★ v1.206 QQ 机器人自定义名称列表（群聊提到这些名字触发回应） */
     private val botNames: List<String> by lazy { listOf("小助手", "小ai", "网关", "助理") }
+
+    /** ★ v1.206 万能表情包：内置表情包池，按关键词挑一句发（好玩、活跃群气氛）
+     *  走 QQ 官方文本表情 [face:N] + emoji 组合（比图片素材接口稳，全端可见）
+     */
+    fun buildSticker(kw: String): String {
+        val k = kw.trim().lowercase()
+        // 表情包池：关键词 -> 表情组合文本（QQ 通用 face 编码 + emoji）
+        val pool = listOf(
+            "大笑" to "[face:182][face:182][face:182]",
+            "笑哭" to "[face:187] 哈哈哈哈笑死我了",
+            "无语" to "[face:12] 这波操作我看不懂",
+            "震惊" to "[face:178] 卧槽？？？",
+            "点赞" to "[face:76][face:76][face:76] 给你点个赞！",
+            "加油" to "[face:175][face:175] 加油加油！你是最棒的！",
+            "比心" to "[face:177] 比心~ ❤️",
+            "可爱" to "[face:178] 可爱死了！[face:192]",
+            "生气" to "[face:230] 哼！生气了！",
+            "可怜" to "[face:185] 呜呜呜好可怜",
+            "庆祝" to "[face:206][face:206] 🎉🎉 庆祝一下！",
+            "晚安" to "[face:154] 晚安~ 做个好梦 🌙",
+            "早上好" to "[face:173] 早安！今天也要元气满满哦 ☀️",
+            "666" to "[face:182] 6！6！6！[face:187]",
+            "牛" to "[face:76] 太牛了！牛哇牛哇！",
+            "棒" to "[face:76][face:76] 真棒！给你点赞！",
+            "好运" to "[face:89] 好运连连！✨",
+            "欢迎" to "[face:207] 欢迎欢迎！热烈欢迎！🎊",
+            "再见" to "[face:107] 拜拜~ 下次见！👋",
+            "摸鱼" to "[face:187] 摸鱼一时爽，一直摸一直爽！🐟",
+            "咸鱼" to "[face:187] 咸鱼本鱼！不想努力了！",
+            "摆烂" to "[face:12] 摆了摆了，开摆！",
+            "躺平" to "[face:154] 躺平是最舒服的姿势～",
+            "干饭" to "[face:96] 干饭人干饭魂！🍚",
+            "困" to "[face:168] 好困啊……谁来救救我",
+            "流泪" to "[face:184] 哭唧唧……",
+            "尴尬" to "[face:162] 好尴尬啊……",
+            "晕" to "[face:245] 我晕了……",
+            "ok" to "[face:101][face:101] OKOK 没问题！",
+            "冲" to "[face:175] 冲鸭！！冲冲冲！🚀",
+            "摸头" to "[face:190] 摸摸头，不哭不哭",
+            "哈哈" to "[face:182][face:187] 哈哈哈哈哈哈",
+            "嘿嘿" to "[face:181] 嘿嘿嘿~",
+            "哇" to "[face:205] 哇塞！！[face:192]"
+        )
+        val hit = if (k.isNotBlank()) pool.firstOrNull { (tag, _) -> tag == k || k.contains(tag, true) || tag.contains(k, true) }
+        else null
+        return if (hit != null) hit.second else (pool.random().second + "\n（发「表情包 关键词」可以指定，如：表情包 点赞）")
+    }
 
     /** ★ v1.71 大消息分段：超 maxLen 按行切段（QQ 长消息不丢） */
     private fun splitText(text: String, maxLen: Int = 1800): List<String> {
@@ -1493,6 +1558,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         // ★ v1.113 人格切换：发「切换人格 助手/程序员/知心姐姐/翻译官/默认」等即可切换 qtai-sj 角色卡
         if (t.startsWith("切换人格", true) || t.startsWith("人格切换", true) || t.startsWith("设置人格", true)) return "persona_switch" to t.substringAfter(" ").trim()
         if (t.equals("查看人格", true) || t.equals("我的人格", true) || t.equals("人格", true)) return "persona_show" to t
+        // ★ v1.206 万能表情包：发「表情包/发个表情/来张图 关键词」→ 服务器表情包池随机一张（好玩）
+        if (t.startsWith("表情包", true) || t.startsWith("发个表情", true) || t.startsWith("来张表情", true) ||
+            t.startsWith("来个表情", true) || t.equals("表情", true) || t.startsWith("发图", true)) return "sticker" to t.substringAfter(" ").trim()
         // ★ v1.114 功能快捷面板：发「功能」看全部快捷指令
         if (t.equals("功能", true) || t.equals("功能菜单", true) || t.equals("快捷指令", true) || t.equals("帮助", true) || t.equals("怎么用", true)) return "features" to t
         // ★ v1.118 技能自管理：添加技能 / 删除技能 / 我的技能 / 停用技能
@@ -2008,7 +2076,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 }
                             } catch (e: Exception) { null }
                             if (guided.isNullOrBlank()) {
-                                // ★ v1.204 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
+                                // ★ v1.206 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
                                 if (continueIntent(content) || isPromiseOnly(content)) {
                                     content = promiseFallback(userText, userOpenid, groupOpenid, effUserId, "qq", smartSend)
                                     break
@@ -2178,7 +2246,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             }
                         } catch (e: Exception) { null }
                         if (guided2.isNullOrBlank()) {
-                            // ★ v1.204 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 若本轮还没真执行过工具，则派子Agent真执行用户原话
+                            // ★ v1.206 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 若本轮还没真执行过工具，则派子Agent真执行用户原话
                             if (continueIntent(content) || isPromiseOnly(content)) {
                                 content = promiseFallback(userText, userOpenid, groupOpenid, effUserId, "qq", smartSend)
                                 break
@@ -2191,7 +2259,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     if (calls2.isEmpty()) break
                 }
-                // ★ v1.204 承诺闭环终极兜底：循环全部走完仍没真执行过工具，且最终内容是纯承诺话术（"我帮你看一下"等）
+                // ★ v1.206 承诺闭环终极兜底：循环全部走完仍没真执行过工具，且最终内容是纯承诺话术（"我帮你看一下"等）
                 //   → 直接派子Agent真执行用户原话，结果必达，绝不放行空承诺当答案
                 if (!executedCalls && content.isNotBlank() && (continueIntent(content) || isPromiseOnly(content)) && userText.isNotBlank()) {
                     content = promiseFallback(userText, userOpenid, groupOpenid, effUserId, "qq", smartSend)

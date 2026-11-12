@@ -48,7 +48,7 @@ object V155Ext2 {
                 }
             }
         }
-        // ★ v1.204 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
+        // ★ v1.206 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
         // 支持三渠道：QQ（group:群号 或 user:openid）/ 微信（openid）/ 公众号（粉丝openid）
         "send_message_to_user" -> {
             val text = (args["text"] ?: "").trim()
@@ -107,6 +107,50 @@ object V155Ext2 {
                             com.qitong.gateway.qq.QqBotManager.sendActiveGreetToGroup(tgt, content)
                             "✅ 消息已发送到QQ群 $tgt"
                         }
+                    }
+                }
+            }
+        }
+        // ★ v1.206 万能表情包：发一条趣味表情组合（QQ 群/私聊/微信都可用）
+        //   kw=关键词（大笑/笑哭/点赞/加油/666/比心…），空=随机；支持 channel 指定（qq/weixin/wx/mp），qq 可带 target group:群号
+        "send_sticker" -> {
+            val kw = (args["kw"] ?: "").trim()
+            val tgt = (args["target"] ?: "").trim()
+            val sticker = com.qitong.gateway.qq.QqBotManager.buildSticker(kw)
+            when (channel) {
+                "weixin", "wx" -> {
+                    val openid = tgt
+                    if (openid.isBlank()) "⚠️ 微信渠道需指定 target=用户openid"
+                    else {
+                        com.qitong.gateway.weixin.WeixinBotManager.sendActiveGreet(openid, sticker)
+                        "✅ 表情包已发送给微信用户 $openid：$sticker"
+                    }
+                }
+                "mp" -> {
+                    val openid = tgt
+                    if (openid.isBlank()) "⚠️ 公众号渠道需指定 target=粉丝openid"
+                    else {
+                        val bots = db.getMpBots()
+                        if (bots.isEmpty()) "❌ 未配置任何公众号"
+                        else {
+                            val fullBot = db.getMpBotById((bots.first()["id"] as? Number)?.toLong() ?: 0L)
+                            if (fullBot == null) "❌ 公众号配置读取失败"
+                            else if (com.qitong.gateway.mpx.MpPush.sendText(db, fullBot, openid, sticker)) "✅ 表情包已发送给公众号粉丝 $openid"
+                            else "❌ 发送失败"
+                        }
+                    }
+                }
+                else -> {
+                    val t = tgt
+                    if (t.startsWith("group:")) {
+                        com.qitong.gateway.qq.QqBotManager.sendActiveGreetToGroup(t.removePrefix("group:"), sticker)
+                        "✅ 表情包已发到QQ群 ${t.removePrefix("group:")}：$sticker"
+                    } else if (t.isNotBlank()) {
+                        val ok = com.qitong.gateway.qq.QqBotManager.sendToUserC2C(t, sticker)
+                        if (ok) "✅ 表情包已私聊发送给 $t"
+                        else "❌ 私聊发送失败"
+                    } else {
+                        "🖼 请在群里发「表情包」或指定 target（group:群号 / 用户openid）：$sticker"
                     }
                 }
             }
@@ -368,7 +412,7 @@ object V155Ext2 {
                 "• [${c.id}] ${c.title}"
             }.take(1400)
         }
-        // ★ v1.204 平台设置遥控（智能体可自主读取/修改 QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候）
+        // ★ v1.206 平台设置遥控（智能体可自主读取/修改 QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候）
         "platform_settings_get" -> {
             val channel = (args["channel"] ?: "").trim().lowercase()
             if (channel !in listOf("qq", "weixin", "mp")) "⚠️ 语法：platform_settings_get(channel=qq/weixin/mp)"
@@ -379,7 +423,7 @@ object V155Ext2 {
                     "• 消息记录：${if (ps["msgRecord"] == true) "✅开" else "⛔关"}\n" +
                     "• 主动问候：${if (ps["proactiveEnabled"] == true) "✅开" else "⛔关"}\n" +
                     "• 群聊自动参与：${if (ps["groupJoin"] == true) "✅开" else "⛔关"}${if (channel == "qq") "（参与概率 ${ps["groupJoinProb"] ?: 8}%）" else ""}\n" +
-                    // ★ v1.204 唤醒/回话设置展示
+                    // ★ v1.206 唤醒/回话设置展示
                     "• @必回：${if ((ps["atReply"] as? Boolean) ?: true) "✅开" else "⛔关"}\n" +
                     "• 唤醒前缀：${(ps["wakePrefix"] as? String)?.takeIf { it.isNotBlank() } ?: "(未设置，仅@触发)"}\n" +
                     "• 私聊自动回复：${if ((ps["c2cAuto"] as? Boolean) ?: true) "✅开" else "⛔关"}\n" +
@@ -401,7 +445,7 @@ object V155Ext2 {
                 (args["proactiveEnabled"] ?: "").let { if (it.isNotBlank()) upd["proactiveEnabled"] = it in listOf("on", "true", "1", "开", "启用") }
                 (args["groupJoin"] ?: "").let { if (it.isNotBlank()) upd["groupJoin"] = it in listOf("on", "true", "1", "开", "启用") }
                 (args["groupJoinProb"] ?: "").toIntOrNull()?.let { upd["groupJoinProb"] = it.coerceIn(0, 100) }
-                // ★ v1.204 唤醒/回话字段
+                // ★ v1.206 唤醒/回话字段
                 (args["atReply"] ?: "").let { if (it.isNotBlank()) upd["atReply"] = it in listOf("on", "true", "1", "开", "启用") }
                 (args["wakePrefix"] ?: "").let { if (it.isNotBlank()) upd["wakePrefix"] = it }
                 (args["c2cAuto"] ?: "").let { if (it.isNotBlank()) upd["c2cAuto"] = it in listOf("on", "true", "1", "开", "启用") }

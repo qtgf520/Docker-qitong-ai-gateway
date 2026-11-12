@@ -51,8 +51,9 @@ object SandboxEngine {
         "backup_list", "backup_create", "backup_restore",
         "kb_list", "kb_search",  // ★ v1.194 知识库
         "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
-        "send_message_to_user",  // ★ v1.204 主动发消息给用户
-        "platform_settings_get", "platform_settings_set", "platform_messages",  // ★ v1.204 平台设置/消息记录遥控
+        "send_message_to_user",  // ★ v1.206 主动发消息给用户
+        "send_sticker",  // ★ v1.206 万能表情包
+        "platform_settings_get", "platform_settings_set", "platform_messages",  // ★ v1.206 平台设置/消息记录遥控
         "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
         "ssh_list", "ssh_exec",
         "ticket_list", "ticket_create", "ticket_detail",
@@ -174,6 +175,7 @@ object SandboxEngine {
             .put(func("subagent_run", "派发子Agent执行独立任务（可后台并行；task=任务描述, model=模型可空, wait=是否等待结果）", "user", "modify", listOf(param("task", true, "子任务描述（给子Agent的指令）"), param("model", false, "子Agent模型默认qtai-sj"), param("wait", false, "wait=1前台等待结果 or 后台")), "子任务ID/结果"))
             .put(func("subagent_result", "查询子Agent任务结果（只读；id=子任务ID）", "user", "read", listOf(param("id", true, "子任务ID")), "子任务状态/结果"))
             .put(func("send_message_to_user", "主动给用户/群发消息（可发纯文本/图片/文件；target=openid或群群号可空取当前用户, text=文字, image=图片URL, file=文件路径）", "user", "modify", listOf(param("text", false, "文字内容"), param("target", false, "目标openid/群号，空=当前会话用户"), param("image", false, "图片URL"), param("file", false, "文件路径")), "发送结果"))
+            .put(func("send_sticker", "发一条趣味表情包/表情组合（kw=关键词：大笑/笑哭/点赞/加油/666/比心/震惊/无语/可爱/生气等，空=随机；target=目标openid或group:群号，空=当前会话）", "user", "modify", listOf(param("kw", false, "表情关键词（见描述，空随机）"), param("target", false, "目标openid或group:群号，空=当前会话")), "表情包发送结果"))
             .put(func("kb_list", "查看知识库列表（只读；含各库文档/分块数）", "user", "read", emptyList(), "知识库名称/描述/文档数"))
             .put(func("kb_search", "检索知识库内容（只读；kb_ids 知识库ID逗号分隔，query 检索词）", "user", "read", listOf(param("query", true, "检索词"), param("kb_ids", false, "知识库ID逗号分隔，空=全部可见库")), "命中的知识片段"))
             .put(func("usage_recent", "查看最近用量记录（只读；管理员全部，用户看自己）", "user", "read", listOf(param("limit", false, "条数默认20")), "模型/Token/费用/时间"))
@@ -609,7 +611,8 @@ $KNOWLEDGE_JSON
             "linux_run", "linux_create",  // ★ v1.175 Linux 执行/创建（admin/modify）
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
             "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn", "skill_add", "skill_del", "skill_toggle",
-            "send_message_to_user" -> "user" to "modify"  // ★ v1.204 主动发消息（user可发给自己/自己的群）
+            "send_message_to_user" -> "user" to "modify"  // ★ v1.206 主动发消息（user可发给自己/自己的群）
+            "send_sticker" -> "user" to "modify"  // ★ v1.206 万能表情包（user可发给自己/自己的群）
             "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
             "provider_sync",  // ★ v1.185 同步服务商模型（admin/modify）
             "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
@@ -625,7 +628,7 @@ $KNOWLEDGE_JSON
             // v1.166 新增：管理员只读
             "price_list", "sys_monitor", "plan_stats", "backup_list", "card_list", "ssh_list", "ticket_detail", "wx_users_list", "wx_user_memory",
             "op_logs", "login_logs", "qq_logs", "wx_logs", "qq_users_list", "memory_list", "notify_config", "rule_list" -> "admin" to "read"
-            // ★ v1.204 平台设置/消息记录遥控（管理员）
+            // ★ v1.206 平台设置/消息记录遥控（管理员）
             "platform_settings_get", "platform_messages" -> "admin" to "read"
             "platform_settings_set" -> "admin" to "modify"
             // v1.166 新增：管理员修改
@@ -656,7 +659,7 @@ $KNOWLEDGE_JSON
                 "git_version" -> {
                     // ★ v1.116 查 Git 版本：当前版本 / 最新提交 / 最近 tag
                     try {
-                        val ver = db.getConfig("app_version", "1.204")
+                        val ver = db.getConfig("app_version", "1.206")
                         val sb = StringBuilder("🔖 【网关 Git 版本】\n")
                         sb.append("• 当前版本：v").append(ver).append("\n")
                         runCatching {
@@ -670,7 +673,7 @@ $KNOWLEDGE_JSON
                             if (out2.isNotBlank()) sb.append("• 最近标签：").append(out2.lines().joinToString("、")).append("\n")
                         }
                         sb.toString().trim()
-                    } catch (e: Exception) { "🔖 当前版本：v1.204（版本信息读取失败：${e.message}）" }
+                    } catch (e: Exception) { "🔖 当前版本：v1.206（版本信息读取失败：${e.message}）" }
                 }
                 "git_log" -> {
                     // ★ v1.116 查 Git 最近提交历史
@@ -1659,7 +1662,7 @@ $KNOWLEDGE_JSON
                 "price_list", "price_get", "price_set", "price_delete", "price_clear",
                 "kb_list", "kb_search",  // ★ v1.194 知识库检索
                 "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
-                "send_message_to_user",  // ★ v1.204 主动发消息
+                "send_message_to_user",  // ★ v1.206 主动发消息
                 "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
                 "backup_list", "backup_create", "backup_restore",
                 "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",

@@ -28,15 +28,15 @@ data class QqBot(
     }
 }
 
-/** 收到的一条群消息。@ 消息来自 GROUP_AT_MESSAGE_CREATE；全量群消息来自 GROUP_MESSAGE_CREATE（★v1.204） */
+/** 收到的一条群消息。@ 消息来自 GROUP_AT_MESSAGE_CREATE；全量群消息来自 GROUP_MESSAGE_CREATE（★v1.206） */
 data class QqGroupMessage(
     val msgId: String,
     val groupOpenid: String,
     val content: String,
     val memberOpenid: String,
-    /** ★ v1.204 是否 @ 了机器人（true=@消息必回；false=群全量消息，可自由参与讨论） */
+    /** ★ v1.206 是否 @ 了机器人（true=@消息必回；false=群全量消息，可自由参与讨论） */
     val isAt: Boolean = true,
-    /** ★ v1.204 消息发送者昵称（全量消息可用来称呼） */
+    /** ★ v1.206 消息发送者昵称（全量消息可用来称呼） */
     val memberName: String = ""
 )
 
