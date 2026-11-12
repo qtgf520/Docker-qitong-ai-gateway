@@ -226,9 +226,9 @@ object WeixinBotManager {
         if (t.isBlank()) return
         val t0 = System.currentTimeMillis()
         val wxSettings = d.getPlatformSettings("weixin")
-        // ★ v1.209 唤醒设置：忽略自己发送的消息（ignoreSelf）
+        // ★ v1.212 唤醒设置：忽略自己发送的消息（ignoreSelf）
         if ((wxSettings["ignoreSelf"] as? Boolean) == true && msg.from == bot.ilinkBotId) return
-        // ★ v1.209 私聊自动回复开关（c2cAuto）：关=不自动 AI 应答（管理/绑定指令仍可用）
+        // ★ v1.212 私聊自动回复开关（c2cAuto）：关=不自动 AI 应答（管理/绑定指令仍可用）
         runCatching {
             if ((wxSettings["c2cAuto"] as? Boolean) != true) {
                 val isMgmt = t.startsWith("绑定", true) || t == "我的账号" || t == "退出账号" || t == "网关状态" ||
@@ -239,9 +239,9 @@ object WeixinBotManager {
                 }
             }
         }
-        // ★ v1.209 消息记录中心：微信入站留存
+        // ★ v1.212 消息记录中心：微信入站留存
         runCatching { d.addPlatformMessage("weixin", bot.id, msg.from, "", "in", t, bot.aiModel) }
-        // ★ v1.209 平台设置：AI 总开关（关=机器人不 AI 应答，由平台设置面板控制）
+        // ★ v1.212 平台设置：AI 总开关（关=机器人不 AI 应答，由平台设置面板控制）
         runCatching {
             val ps = d.getPlatformSettings("weixin")
             if ((ps["aiEnabled"] as? Boolean) != true) {
@@ -596,7 +596,14 @@ object WeixinBotManager {
             }
             // ★ v1.130 真思考模式：不再预先推假的「思考中」，改为真实进展推送（有工具调用才推💭/🔧/✅，无调用直接出答案）
             val reply = askModel(bot, msg, t, bound?.id ?: 0L) { thinkMsg -> d.addWeixinLog(bot.id, msg.from, "think", thinkMsg, 0); send(thinkMsg) }
-            if (!reply.isNullOrBlank()) send(reply) else send("⚠️ 抱歉，我这边处理失败了，请再试一次")
+            // ★ v1.212 修复「空壳回复推给用户」「同句推两次」：最终回复为空壳占位（✅已完成，结果已实时推送）=
+            //   模型收尾失败 → 不发（过程已实时推送过，用户已看到内容，不重复；避免 354/409 空消息）
+            val isEmptyShell = reply != null && (
+                reply.contains("✅ 已完成，结果已实时推送") ||
+                reply.startsWith("✅ 已完成以上任务") ||
+                reply.length <= 2
+                )
+            if (!reply.isNullOrBlank() && !isEmptyShell) send(reply) else if (reply.isNullOrBlank()) send("⚠️ 抱歉，我这边处理失败了，请再试一次")
             d.addWeixinLog(bot.id, msg.from, "ai", t, System.currentTimeMillis() - t0)
         }
         submitTask(userKey, job)
@@ -606,7 +613,7 @@ object WeixinBotManager {
     /** loopback 调用网关大脑（qtai-sj 走完整沙盒 Agent 循环：思考推送→调工具→结果回填→多轮） */
     private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long, send: (String) -> Unit): String? {
         val d = db ?: return null
-        // ★ v1.206/★v1.209 隐藏步骤仅隐藏机械工具执行细节；思考/计划/进度话术隐藏显示都推
+        // ★ v1.206/★v1.212 隐藏步骤仅隐藏机械工具执行细节；思考/计划/进度话术隐藏显示都推
         val quietProgress = d.getUserConfig(userId, "progress_mode", "verbose") == "quiet"
         fun isToolDetailMsg(m: String): Boolean =
             m.contains("正在执行", true) || m.contains("完成：", true) || m.contains("同时处理", true)
@@ -714,7 +721,7 @@ object WeixinBotManager {
              // ★ v78 收敛标记：本轮是否真执行过工具（结果已实时推送，最终回复不再复述）
             var executedCalls = false
             var lastProgressAt = System.currentTimeMillis()
-            // ★ v1.209 模型过渡话术去重标记（"嗯嗯好的/我这就去/我正在…"每轮只推一次）
+            // ★ v1.212 模型过渡话术去重标记（"嗯嗯好的/我这就去/我正在…"每轮只推一次）
             var lastSpokenText = ""
             // ★ v74 qtai-sj 完整 Agent 循环：思考推送 → 解析函数 → 执行 → 结果回填 → 再调模型
             // ★ v1.116 多思考不停息：轮数 5→20，只要模型还在输出函数调用就不停；干不完继续干，除非用户说停
@@ -752,22 +759,26 @@ object WeixinBotManager {
                     }
                     loop++
                     // ★ v1.133 修复双递增 bug：每轮只 +1，真正能跑满 20 轮（原来两个 loop++ → 每轮 +2 只跑 10 轮就被截断=「任务做一半卡住」元凶）
-                    // ★ v1.130 长任务进度：每 10s 推一次「还在处理」，比原来 30s 更密，用户不再觉得卡死
-                    if (System.currentTimeMillis() - lastProgressAt > 10_000) {
-                        pSend("⏳ 任务还在处理中（第 $loop 轮），我继续干着，请稍候…")
+                    // ★ v1.130 长任务进度：每 15s 推一次「还在处理」；★v1.212 收敛：仅第5分钟偶发，且与过渡话术去重（避免401-406乱序刷屏）
+                    if (System.currentTimeMillis() - lastProgressAt > 15_000 && loop >= 4) {
+                        val progMsg = "⏳ 我还在继续处理中，稍等一下哈～"
+                        if (progMsg != lastSpokenText) { lastSpokenText = progMsg; pSend(progMsg) }
                         lastProgressAt = System.currentTimeMillis()
                     }
                     // ★ v1.167 user 已在入口幂等写入，循环内不再补写（避免重复写 user）
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
-                    // ★ v1.209 模型思考话术实时推送：剥掉函数调用标签后的过渡人话推给用户（像真人边想边讲）
-                    //   隐藏/显示步骤都推（思考内容不隐藏）；只在还有工具调用时推（纯聊天直接渐入最终回复）
+                    // ★ v1.209/★v1.212/★v1.212 模型思考话术实时推送：
+                    //   只有【本轮有工具调用】时才推模型过渡话术（剥标签后的话术，≤40字+行动词才推）
+                    //   修复：无工具调用时模型话术=最终答案，若当过渡推会造成「同句推两次」（386/387 实锤）
                     if (calls.isNotEmpty()) {
-                        val spoken = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim()
-                        val spokenShort = spoken
-                            .replace(Regex("\\s+"), " ")
-                            .removePrefix("好的").removePrefix("嗯").removePrefix("好")
-                            .trim()
-                        if (spokenShort.length in 2..60 && spokenShort != lastSpokenText && !spokenShort.contains("工具执行结果")) {
+                        val rawSpoken = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
+                        val spokenClean = rawSpoken.removePrefix("💭").removePrefix("💬").trim()
+                        val spokenShort = spokenClean.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
+                        val actionWords = listOf("我这就", "我去", "我来", "我查", "我看", "我看看", "稍等", "马上",
+                            "正在", "翻翻", "找找", "处理", "等一下", "这就去", "帮你")
+                        val isActionSpoken = actionWords.any { spokenShort.contains(it) }
+                        if (spokenShort.length in 2..40 && isActionSpoken && spokenShort != lastSpokenText &&
+                            !spokenShort.contains("工具执行结果") && !spokenShort.contains("\n\n") && !spokenShort.contains("？") && !spokenShort.contains("?")) {
                             lastSpokenText = spokenShort
                             pSend("💭 $spokenShort")
                         }
@@ -781,8 +792,9 @@ object WeixinBotManager {
                         // ★ v77 假调用修复：模型只输出了"正在调用 xxx"描述但没输出严格标签 → 引导它输出真标签再执行
                         if (noCallGuide < 2 && intented) {
                             noCallGuide++
-                            // ★ v1.130 引导前推送：让用户知道「模型假思考了，正在纠正」
-                            pSend("💭 我确认一下要调用哪个工具…")
+                            // ★ v1.130 引导前推送：让用户知道「模型假思考了，正在纠正」；v1.212 加去重防连推两条（398/399 实锤）
+                            val guideMsg = "💭 我确认一下要调用哪个工具…"
+                            if (guideMsg != lastSpokenText) { lastSpokenText = guideMsg; pSend(guideMsg) }
                             val guideBody = JSONObject()
                                 .put("model", bot.aiModel)
                                 .put("messages", JSONArray()
@@ -803,7 +815,7 @@ object WeixinBotManager {
                                     ?.optString("content")?.trim().orEmpty()
                             }
                             if (guided.isNullOrBlank()) {
-                                // ★ v1.209 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
+                                // ★ v1.212 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
                                 if (continueIntent(content) || isPromiseOnly(content)) {
                                     content = promiseFallback(d, userText, msg.from, userId, pSend)
                                     break
@@ -816,8 +828,9 @@ object WeixinBotManager {
                         break
                     }
                     // ★ v1.130 龙虾式实时进展：先讲要调用什么工具
+                    // ★ v1.212 修复重复推送：模型过渡话术（💭 我来帮你查…）已表达在干活，这里不再推框架「第N步调用」
+                    //   （386/387、401/402 实锤：同一轮推两条💭 = 用户看到重复）只保留 🔧 执行细节
                     val fnNames = calls.map { it.first }.distinct()
-                    pSend("💭 我正在进行第 $loop 步：调用「${fnNames.joinToString("、")}」…")
                     val results = StringBuilder()
                     // ★ v82 并行工具执行（并行批处理）：独立调用并发跑，结果按序汇总
                     val totalSteps = calls.size
@@ -920,7 +933,9 @@ object WeixinBotManager {
                     // ★ v1.166 自主式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
-                        pSend("💭 好的，我继续查…")
+                        // ★ v1.212 去重：避免「好的，我继续查」与过渡话术重复刷屏（401-406 实锤乱序）
+                        val contMsg = "💭 好的，我继续查…"
+                        if (contMsg != lastSpokenText) { lastSpokenText = contMsg; pSend(contMsg) }
                         val guideBody2 = JSONObject()
                             .put("model", bot.aiModel)
                             .put("messages", JSONArray()
@@ -953,7 +968,7 @@ object WeixinBotManager {
                             }
                         } catch (e: Exception) { null }
                         if (!guided2.isNullOrBlank()) { content = guided2; continue }
-                        // ★ v1.209 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 派子Agent真执行用户原话
+                        // ★ v1.212 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 派子Agent真执行用户原话
                         if (continueIntent(content) || isPromiseOnly(content)) {
                             content = promiseFallback(d, userText, msg.from, userId, pSend)
                             break
@@ -964,7 +979,7 @@ object WeixinBotManager {
                     // ★ v1.169 收尾二次解析也带去重（与主调用、calls2 一致）
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty()) break
                 }
-                // ★ v1.209 承诺闭环终极兜底：循环全走完仍没真执行过工具，且最终内容是纯承诺话术 → 派子Agent真执行，结果必达
+                // ★ v1.212 承诺闭环终极兜底：循环全走完仍没真执行过工具，且最终内容是纯承诺话术 → 派子Agent真执行，结果必达
                 if (!executedCalls && content.isNotBlank() && (continueIntent(content) || isPromiseOnly(content)) && userText.isNotBlank()) {
                     content = promiseFallback(d, userText, msg.from, userId, pSend)
                 }
@@ -1022,7 +1037,11 @@ object WeixinBotManager {
                             .put(JSONObject().put("role", "user").put("content", userText))
                             .put(JSONObject().put("role", "assistant").put("content", cleanFunctionTags(content)))
                             .put(JSONObject().put("role", "user").put("content",
-                                "工具结果已经实时推送给用户了（用户已看到原始数据）。现在请给出**完整、有价值的最终答复**，像一个真正聪明的助理那样：该分析就分析、该总结就总结、该给建议就给建议，**把话说完整、说清楚、该长则长（一段写不下就分多段、用列表/条目输出，完全不要担心长度）**，不要人为压缩成一句话。**不要机械照抄**已推送的原始数字/数据，但可以用你自己的语言解读、总结、补充观点。禁止空话（如『已完成请查看』）。"))) .toString()
+                                "你刚才已经**真实调用工具**并完成执行，工具结果也已经实时推送给用户了（用户已看到原始数据/结果）。\n" +
+                                "现在请直接给出**完整、有价值的最终答复**，像一个真正聪明的助理那样：该分析就分析、该总结就总结、该给建议就给建议，" +
+                                "**把话说完整、说清楚、该长则长（一段写不下就分多段、用列表/条目输出）**，不要人为压缩成一句话。" +
+                                "**不要机械照抄**已推送的原始数字/数据，但可以用你自己的语言解读、总结、补充观点。\n" +
+                                "⚠️ 严禁说「我刚才没调用工具」「没有工具结果」「我没真执行」这类否认话术——你确实执行了！直接基于执行结果给最终答复，禁止空话（如『已完成请查看』）。"))) .toString()
                     val closeReq = Request.Builder()
                         .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
                         .addHeader("Content-Type", "application/json")
@@ -1099,24 +1118,31 @@ object WeixinBotManager {
         text.contains("我看", true) || text.contains("我试", true) || text.contains("我查", true) ||
         text.contains("来弄", true) || text.contains("搞定", true)
 
-    /** ★ v1.209 承诺话术检测（对齐 QQ）：模型只输出"我帮你/我看一下"但没真调用工具 = 空承诺 */
+    /** ★ v1.212 承诺话术检测（对齐 QQ）：模型只输出"我帮你/我看一下"但没真调用工具 = 空承诺 */
     private fun isPromiseOnly(text: String): Boolean {
-        val t = text.trim()
-        if (t.length > 60) return false
-        val promise = t.startsWith("我帮你", true) || t.startsWith("我帮您", true) ||
-            t.startsWith("我看一下", true) || t.startsWith("我看下", true) || t.startsWith("我看看", true) ||
-            t.startsWith("我这就", true) || t.startsWith("我马上", true) || t.startsWith("我去查", true) ||
-            t.startsWith("我来查", true) || t.startsWith("我来看看", true) || t.startsWith("我查一下", true) ||
-            t.startsWith("我处理一下", true) || t.startsWith("帮你查", true) || t.startsWith("帮你看看", true) ||
-            t.startsWith("帮你处理", true) || t.startsWith("请稍等", true) || t.startsWith("稍等一下", true) ||
-            t.startsWith("等我一下", true) || t.startsWith("好的我看看", true) || t.startsWith("让我看看", true)
+        // ★ v1.212 修复：原「长度>60 直接放行」漏掉长承诺话术（如「哎，你别急，我这就再帮你仔细看一遍后台…稍等哈，我马上查！」71字）
+        //   先剥语气词/过渡语，再取前 60 字判断；只要无结果特征且表达「要去做/稍等/马上」就判为承诺 → 兜底真执行
+        var t = text.trim()
+            .removePrefix("哎").removePrefix("哎哟").removePrefix("嗯").removePrefix("好的").removePrefix("好嘞")
+            .removePrefix("别急").removePrefix("稍等").removePrefix("emm").removePrefix("emmm").removePrefix("哈")
+            .replace(Regex("[，。！？!?~～、\n]+"), " ").trim()
+        val core = t.take(60)
+        val promise = core.startsWith("我帮你", true) || core.startsWith("我帮您", true) ||
+            core.startsWith("我看一下", true) || core.startsWith("我看下", true) || core.startsWith("我看看", true) ||
+            core.startsWith("我这就", true) || core.startsWith("我马上", true) || core.startsWith("我去查", true) ||
+            core.startsWith("我来查", true) || core.startsWith("我来看看", true) || core.startsWith("我查一下", true) ||
+            core.startsWith("我处理一下", true) || core.startsWith("帮你查", true) || core.startsWith("帮你看看", true) ||
+            core.startsWith("帮你处理", true) || core.startsWith("请稍等", true) || core.startsWith("稍等一下", true) ||
+            core.startsWith("等我一下", true) || core.startsWith("好的我看看", true) || core.startsWith("让我看看", true) ||
+            core.contains("我再", true) && (core.contains("看一遍", true) || core.contains("仔细", true) || core.contains("帮你", true) || core.contains("查一下", true))
         if (!promise) return false
         if (t.contains("✅") || t.contains("结果") || t.contains("已") && t.contains("完成") ||
-            t.contains("http") || Regex("[0-9]").containsMatchIn(t) || t.contains("：") || t.contains(":")) return false
+            t.contains("http") || Regex("[0-9]").containsMatchIn(t) || t.contains("：") || t.contains(":") ||
+            t.contains("\n\n")) return false
         return true
     }
 
-    /** ★ v1.209 承诺闭环兜底（对齐 QQ）：把用户原话派子Agent真执行，结果必达 */
+    /** ★ v1.212 承诺闭环兜底（对齐 QQ）：把用户原话派子Agent真执行，结果必达 */
     private fun promiseFallback(d: Database, userText: String, openid: String, effUserId: Long, pSend: (String) -> Unit): String {
         pSend("⏳ 我这就去处理，稍等片刻…")
         val task = "用户请求：$userText\n请自主拆解并用网关沙盒工具真实执行，干完输出完整结果（含关键数据）。"
