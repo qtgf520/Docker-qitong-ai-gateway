@@ -226,9 +226,9 @@ object WeixinBotManager {
         if (t.isBlank()) return
         val t0 = System.currentTimeMillis()
         val wxSettings = d.getPlatformSettings("weixin")
-        // ★ v1.208 唤醒设置：忽略自己发送的消息（ignoreSelf）
+        // ★ v1.209 唤醒设置：忽略自己发送的消息（ignoreSelf）
         if ((wxSettings["ignoreSelf"] as? Boolean) == true && msg.from == bot.ilinkBotId) return
-        // ★ v1.208 私聊自动回复开关（c2cAuto）：关=不自动 AI 应答（管理/绑定指令仍可用）
+        // ★ v1.209 私聊自动回复开关（c2cAuto）：关=不自动 AI 应答（管理/绑定指令仍可用）
         runCatching {
             if ((wxSettings["c2cAuto"] as? Boolean) != true) {
                 val isMgmt = t.startsWith("绑定", true) || t == "我的账号" || t == "退出账号" || t == "网关状态" ||
@@ -239,9 +239,9 @@ object WeixinBotManager {
                 }
             }
         }
-        // ★ v1.208 消息记录中心：微信入站留存
+        // ★ v1.209 消息记录中心：微信入站留存
         runCatching { d.addPlatformMessage("weixin", bot.id, msg.from, "", "in", t, bot.aiModel) }
-        // ★ v1.208 平台设置：AI 总开关（关=机器人不 AI 应答，由平台设置面板控制）
+        // ★ v1.209 平台设置：AI 总开关（关=机器人不 AI 应答，由平台设置面板控制）
         runCatching {
             val ps = d.getPlatformSettings("weixin")
             if ((ps["aiEnabled"] as? Boolean) != true) {
@@ -606,12 +606,10 @@ object WeixinBotManager {
     /** loopback 调用网关大脑（qtai-sj 走完整沙盒 Agent 循环：思考推送→调工具→结果回填→多轮） */
     private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long, send: (String) -> Unit): String? {
         val d = db ?: return null
-        // ★ v1.208 隐藏步骤语义重构（綦桐 11-12 要求）：quiet 只隐藏【工具调用细节】（🔧/💭调用/⚡/✅完成），
-        //   思考内容（💭 思考中/⏳ 处理中）与执行过程进度必须保留，最终答案必达；verbose 全量（工具细节+思考都有）
+        // ★ v1.206/★v1.209 隐藏步骤仅隐藏机械工具执行细节；思考/计划/进度话术隐藏显示都推
         val quietProgress = d.getUserConfig(userId, "progress_mode", "verbose") == "quiet"
         fun isToolDetailMsg(m: String): Boolean =
-            m.contains("调用", true) || m.contains("正在执行", true) || m.contains("完成：", true) ||
-            m.contains("同时处理", true) || m.contains("确认一下", true) || m.contains("继续查", true)
+            m.contains("正在执行", true) || m.contains("完成：", true) || m.contains("同时处理", true)
         val pSend: (String) -> Unit = { m -> if (!(quietProgress && isToolDetailMsg(m))) send(m) }
         // ★ v1.166 每用户上下文隔离 key 增加 botId：同一个微信联系人被多个 bot 服务时，各 bot 上下文/记忆互不串
         val key = if (bot.id > 0) "${bot.id}:${msg.from}" else msg.from
@@ -716,6 +714,8 @@ object WeixinBotManager {
              // ★ v78 收敛标记：本轮是否真执行过工具（结果已实时推送，最终回复不再复述）
             var executedCalls = false
             var lastProgressAt = System.currentTimeMillis()
+            // ★ v1.209 模型过渡话术去重标记（"嗯嗯好的/我这就去/我正在…"每轮只推一次）
+            var lastSpokenText = ""
             // ★ v74 qtai-sj 完整 Agent 循环：思考推送 → 解析函数 → 执行 → 结果回填 → 再调模型
             // ★ v1.116 多思考不停息：轮数 5→20，只要模型还在输出函数调用就不停；干不完继续干，除非用户说停
             if (sandboxOn && content.isNotBlank()) {
@@ -759,6 +759,19 @@ object WeixinBotManager {
                     }
                     // ★ v1.167 user 已在入口幂等写入，循环内不再补写（避免重复写 user）
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
+                    // ★ v1.209 模型思考话术实时推送：剥掉函数调用标签后的过渡人话推给用户（像真人边想边讲）
+                    //   隐藏/显示步骤都推（思考内容不隐藏）；只在还有工具调用时推（纯聊天直接渐入最终回复）
+                    if (calls.isNotEmpty()) {
+                        val spoken = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim()
+                        val spokenShort = spoken
+                            .replace(Regex("\\s+"), " ")
+                            .removePrefix("好的").removePrefix("嗯").removePrefix("好")
+                            .trim()
+                        if (spokenShort.length in 2..60 && spokenShort != lastSpokenText && !spokenShort.contains("工具执行结果")) {
+                            lastSpokenText = spokenShort
+                            pSend("💭 $spokenShort")
+                        }
+                    }
                     if (calls.isEmpty()) {
                         // ★ v1.191 说要做但没输出标签 → 引导真调用（对齐 QQ：抓取/查看/检查/重新/我来 等做事意图都引导）
                         //   原来只认 5 个词，模型说「我重新抓取一下页面内容」识别不出 → break 返回空话
@@ -790,7 +803,7 @@ object WeixinBotManager {
                                     ?.optString("content")?.trim().orEmpty()
                             }
                             if (guided.isNullOrBlank()) {
-                                // ★ v1.208 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
+                                // ★ v1.209 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
                                 if (continueIntent(content) || isPromiseOnly(content)) {
                                     content = promiseFallback(d, userText, msg.from, userId, pSend)
                                     break
@@ -940,7 +953,7 @@ object WeixinBotManager {
                             }
                         } catch (e: Exception) { null }
                         if (!guided2.isNullOrBlank()) { content = guided2; continue }
-                        // ★ v1.208 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 派子Agent真执行用户原话
+                        // ★ v1.209 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 派子Agent真执行用户原话
                         if (continueIntent(content) || isPromiseOnly(content)) {
                             content = promiseFallback(d, userText, msg.from, userId, pSend)
                             break
@@ -951,7 +964,7 @@ object WeixinBotManager {
                     // ★ v1.169 收尾二次解析也带去重（与主调用、calls2 一致）
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty()) break
                 }
-                // ★ v1.208 承诺闭环终极兜底：循环全走完仍没真执行过工具，且最终内容是纯承诺话术 → 派子Agent真执行，结果必达
+                // ★ v1.209 承诺闭环终极兜底：循环全走完仍没真执行过工具，且最终内容是纯承诺话术 → 派子Agent真执行，结果必达
                 if (!executedCalls && content.isNotBlank() && (continueIntent(content) || isPromiseOnly(content)) && userText.isNotBlank()) {
                     content = promiseFallback(d, userText, msg.from, userId, pSend)
                 }
@@ -1086,7 +1099,7 @@ object WeixinBotManager {
         text.contains("我看", true) || text.contains("我试", true) || text.contains("我查", true) ||
         text.contains("来弄", true) || text.contains("搞定", true)
 
-    /** ★ v1.208 承诺话术检测（对齐 QQ）：模型只输出"我帮你/我看一下"但没真调用工具 = 空承诺 */
+    /** ★ v1.209 承诺话术检测（对齐 QQ）：模型只输出"我帮你/我看一下"但没真调用工具 = 空承诺 */
     private fun isPromiseOnly(text: String): Boolean {
         val t = text.trim()
         if (t.length > 60) return false
@@ -1103,7 +1116,7 @@ object WeixinBotManager {
         return true
     }
 
-    /** ★ v1.208 承诺闭环兜底（对齐 QQ）：把用户原话派子Agent真执行，结果必达 */
+    /** ★ v1.209 承诺闭环兜底（对齐 QQ）：把用户原话派子Agent真执行，结果必达 */
     private fun promiseFallback(d: Database, userText: String, openid: String, effUserId: Long, pSend: (String) -> Unit): String {
         pSend("⏳ 我这就去处理，稍等片刻…")
         val task = "用户请求：$userText\n请自主拆解并用网关沙盒工具真实执行，干完输出完整结果（含关键数据）。"

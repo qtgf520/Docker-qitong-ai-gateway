@@ -51,9 +51,9 @@ object SandboxEngine {
         "backup_list", "backup_create", "backup_restore",
         "kb_list", "kb_search",  // ★ v1.194 知识库
         "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
-        "send_message_to_user",  // ★ v1.208 主动发消息给用户
-        "send_sticker",  // ★ v1.208 万能表情包
-        "platform_settings_get", "platform_settings_set", "platform_messages",  // ★ v1.208 平台设置/消息记录遥控
+        "send_message_to_user",  // ★ v1.209 主动发消息给用户
+        "send_sticker",  // ★ v1.209 万能表情包
+        "platform_settings_get", "platform_settings_set", "platform_messages",  // ★ v1.209 平台设置/消息记录遥控
         "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
         "ssh_list", "ssh_exec",
         "ticket_list", "ticket_create", "ticket_detail",
@@ -611,8 +611,8 @@ $KNOWLEDGE_JSON
             "linux_run", "linux_create",  // ★ v1.175 Linux 执行/创建（admin/modify）
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
             "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn", "skill_add", "skill_del", "skill_toggle",
-            "send_message_to_user" -> "user" to "modify"  // ★ v1.208 主动发消息（user可发给自己/自己的群）
-            "send_sticker" -> "user" to "modify"  // ★ v1.208 万能表情包（user可发给自己/自己的群）
+            "send_message_to_user" -> "user" to "modify"  // ★ v1.209 主动发消息（user可发给自己/自己的群）
+            "send_sticker" -> "user" to "modify"  // ★ v1.209 万能表情包（user可发给自己/自己的群）
             "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
             "provider_sync",  // ★ v1.185 同步服务商模型（admin/modify）
             "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
@@ -628,7 +628,7 @@ $KNOWLEDGE_JSON
             // v1.166 新增：管理员只读
             "price_list", "sys_monitor", "plan_stats", "backup_list", "card_list", "ssh_list", "ticket_detail", "wx_users_list", "wx_user_memory",
             "op_logs", "login_logs", "qq_logs", "wx_logs", "qq_users_list", "memory_list", "notify_config", "rule_list" -> "admin" to "read"
-            // ★ v1.208 平台设置/消息记录遥控（管理员）
+            // ★ v1.209 平台设置/消息记录遥控（管理员）
             "platform_settings_get", "platform_messages" -> "admin" to "read"
             "platform_settings_set" -> "admin" to "modify"
             // v1.166 新增：管理员修改
@@ -659,7 +659,7 @@ $KNOWLEDGE_JSON
                 "git_version" -> {
                     // ★ v1.116 查 Git 版本：当前版本 / 最新提交 / 最近 tag
                     try {
-                        val ver = db.getConfig("app_version", "1.208")
+                        val ver = db.getConfig("app_version", "1.209")
                         val sb = StringBuilder("🔖 【网关 Git 版本】\n")
                         sb.append("• 当前版本：v").append(ver).append("\n")
                         runCatching {
@@ -673,7 +673,7 @@ $KNOWLEDGE_JSON
                             if (out2.isNotBlank()) sb.append("• 最近标签：").append(out2.lines().joinToString("、")).append("\n")
                         }
                         sb.toString().trim()
-                    } catch (e: Exception) { "🔖 当前版本：v1.208（版本信息读取失败：${e.message}）" }
+                    } catch (e: Exception) { "🔖 当前版本：v1.209（版本信息读取失败：${e.message}）" }
                 }
                 "git_log" -> {
                     // ★ v1.116 查 Git 最近提交历史
@@ -1662,7 +1662,7 @@ $KNOWLEDGE_JSON
                 "price_list", "price_get", "price_set", "price_delete", "price_clear",
                 "kb_list", "kb_search",  // ★ v1.194 知识库检索
                 "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
-                "send_message_to_user",  // ★ v1.208 主动发消息
+                "send_message_to_user",  // ★ v1.209 主动发消息
                 "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
                 "backup_list", "backup_create", "backup_restore",
                 "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
