@@ -9,7 +9,7 @@ package com.qitong.gateway
  */
 object WebUi {
 
-    private const val VER = "v1.212"
+    private const val VER = "v1.213"
 
     /** ★ v1.166 官网首页（未登录访问 / 显示；已登录自动跳 /admin） */
     fun landingHtml(): String = """<!DOCTYPE html>
