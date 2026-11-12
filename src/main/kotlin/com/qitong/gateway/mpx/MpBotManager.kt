@@ -72,7 +72,7 @@ object MpBotManager {
             val content = (xml["Content"] ?: "").trim()
             val event = xml["Event"] ?: ""
 
-            // ★ v1.207 消息记录中心：公众号入站留存（文本消息；事件也留一条）
+            // ★ v1.208 消息记录中心：公众号入站留存（文本消息；事件也留一条）
             runCatching {
                 if (msgType == "text" && content.isNotBlank()) db.addPlatformMessage("mp", botId, fromUser, "", "in", content, (bot["aiModel"] as? String) ?: "")
                 else if (msgType == "event") db.addPlatformMessage("mp", botId, fromUser, "", "in", "【事件】$event", "")
@@ -83,7 +83,7 @@ object MpBotManager {
             val encKey = (bot["encodingAesKey"] as? String) ?: ""
             val mpToken = (bot["token"] as? String) ?: ""
             fun replyText(replyContent: String): String {
-                // ★ v1.207 消息记录中心：公众号出站留存（被动回复）
+                // ★ v1.208 消息记录中心：公众号出站留存（被动回复）
                 runCatching { db.addPlatformMessage("mp", botId, fromUser, "", "out", replyContent, (bot["aiModel"] as? String) ?: "") }
                 val plain = makePassiveReply(toUser, fromUser, "text", replyContent)
                 return if (isEncrypted && encKey.isNotBlank() && encryptMode != "plain")
@@ -91,7 +91,7 @@ object MpBotManager {
                 else plain
             }
 
-            // ★ v1.207 平台设置：AI 总开关（关=普通文本直接回默认语，仅拦截 AI 智能回答；关键词回答仍可用）
+            // ★ v1.208 平台设置：AI 总开关（关=普通文本直接回默认语，仅拦截 AI 智能回答；关键词回答仍可用）
             runCatching {
                 val ps = db.getPlatformSettings("mp")
                 val aiEnabled = (ps["aiEnabled"] as? Boolean) ?: true
