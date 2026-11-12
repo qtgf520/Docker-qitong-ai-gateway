@@ -178,7 +178,7 @@ class QqGatewayClient(
                             )
                         )
                     }
-                    // ★ v1.213 群全量消息（不@也推送）：需机器人在开放平台开启「接收所有消息」权限后才会收到
+                    // ★ v1.214 群全量消息（不@也推送）：需机器人在开放平台开启「接收所有消息」权限后才会收到
                     "GROUP_MESSAGE_CREATE" -> {
                         lastDispatchAtMs = System.currentTimeMillis()
                         val d = obj.optJSONObject("d") ?: return
@@ -211,7 +211,7 @@ class QqGatewayClient(
                 lastHeartbeatAckAt = System.currentTimeMillis()
                 heartbeatSentWithoutAck = 0
             }
-            9 -> { // Invalid Session → 强制换新 token 后重连（★v1.213 断登根治：旧 token 已被 QQ 吊销，继续用旧 token identify 会无限 INVALID_SESSION 循环）
+            9 -> { // Invalid Session → 强制换新 token 后重连（★v1.214 断登根治：旧 token 已被 QQ 吊销，继续用旧 token identify 会无限 INVALID_SESSION 循环）
                 System.out.println("[QQBot] ${bot.appid} invalid session，强制刷新 AccessToken 后重连")
                 // 清共享 token 缓存 → 下次 connect() 里 onTokenRefresh 会换新 token（不再拿死 token 反复 identify）
                 runCatching {
