@@ -1,6 +1,6 @@
 package com.qitong.gateway
 
-/** 后台 JS 第六部分：技能库 / 工作流 / MCP 管理（爱马仕式 AI 网关） */
+/** 后台 JS 第六部分：技能库 / 工作流 / MCP 管理（自研多功能 AI 网关） */
 object AdminJs6 {
   fun js(): String = """
 // ===== 技能库（独立管理：触发器 -> 动作，可执行任何网关技能/终端/HTTP/AI） =====

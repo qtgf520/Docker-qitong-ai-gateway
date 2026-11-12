@@ -28,7 +28,7 @@ var tabs = [
   };
 function qqTabHtml(){
  if(qqTab==='overview') return '<div id="qqOverview"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
- if(qqTab==='cmds') return '<div class="action-bar"><button class="btn" onclick="qqCmdForm()">+ 新建指令插件</button><button class="btn-ghost" onclick="qqCmdHelp()">插件开发说明</button><span style="font-size:12px;color:var(--muted)">小栗子式：触发词 -> 回复/HTTP/AI，按优先级匹配，命中即停</span></div><div id="qqCmdList"></div>';
+ if(qqTab==='cmds') return '<div class="action-bar"><button class="btn" onclick="qqCmdForm()">+ 新建指令插件</button><button class="btn-ghost" onclick="qqCmdHelp()">插件开发说明</button><span style="font-size:12px;color:var(--muted)">指令式：触发词 -> 回复/HTTP/AI，按优先级匹配，命中即停</span></div><div id="qqCmdList"></div>';
  if(qqTab==='plugins') return '<div class="action-bar"><button class="btn" onclick="qqPluginUpload()">📦 上传插件包(zip)</button><span style="font-size:12px;color:var(--muted)">上传压缩包安装插件，可起名+菜单；QQ 发「菜单」查看，发插件命令触发</span></div><div id="qqPluginList"></div>';
  if(qqTab==='groups') return '<div id="qqGroupList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';
  if(qqTab==='users') return '<div id="qqUserList"><div style="color:var(--muted);padding:20px">加载中…</div></div>';

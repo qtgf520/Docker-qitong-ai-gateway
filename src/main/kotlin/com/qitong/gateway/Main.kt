@@ -107,7 +107,7 @@ object SpeedTaskRunner {
 }
 
 /**
- * 綦桐AI网关 · Docker 服务器版 v1.214
+ * 綦桐AI网关 · Docker 服务器版 v1.215
  * Web后台(18080) + 网关API(18889)
  */
 fun main(args: Array<String>) {
@@ -119,7 +119,7 @@ fun main(args: Array<String>) {
 
     println("""
         ╔══════════════════════════════════════════╗
-        ║   綦桐AI网关 · Docker Server v1.214   ║
+        ║   綦桐AI网关 · Docker Server v1.215   ║
         ╠══════════════════════════════════════════╣
         ║  Web后台 : :$webPort  |  网关API : :$gatewayPort  ║
         ║  数据库  : $dbPath
@@ -130,13 +130,13 @@ fun main(args: Array<String>) {
     // ★ v1.178 统一消息管道 + 平台适配器：初始化注册（三渠道共用一套管道编排）
     runCatching {
         com.qitong.gateway.pipeline.PipelineSetup.install(database)
-        println("[Gateway] v1.214 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
-    }.onFailure { e -> System.err.println("[Gateway] v1.214 管道初始化失败: ${e.message}") }
-    // ★ v1.214 插件系统初始化（目录扫描 + manifest 加载）
+        println("[Gateway] v1.215 统一消息管道已就绪（白名单→限流→Agent→回复，事件总线已挂载）")
+    }.onFailure { e -> System.err.println("[Gateway] v1.215 管道初始化失败: ${e.message}") }
+    // ★ v1.215 插件系统初始化（目录扫描 + manifest 加载）
     runCatching {
         println("[Gateway] ${com.qitong.gateway.plugin.PluginManager.init()}")
     }.onFailure { e -> System.err.println("[Gateway] 插件系统初始化失败: ${e.message}") }
-    // ★ v1.214 Telegram 平台适配器启动（多平台架构第一站；无配置则不启动）
+    // ★ v1.215 Telegram 平台适配器启动（多平台架构第一站；无配置则不启动）
     runCatching {
         com.qitong.gateway.tg.TgBotManager.startAll(database, 18889)
     }.onFailure { e -> System.err.println("[Gateway] Telegram 适配器启动失败: ${e.message}") }
@@ -230,7 +230,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.214"))
+                put("version", JsonPrimitive("1.215"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1686,7 +1686,7 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, "日志已清空")
         }
 
-        // ===== ★ v1.214 平台设置（QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
+        // ===== ★ v1.215 平台设置（QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候/欢迎语/模型/人设） =====
         get("/api/platform/settings") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
@@ -1725,7 +1725,7 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, database.getPlatformSettings(channel), "设置已保存")
         }
 
-        // ===== ★ v1.214 统一消息记录中心（QQ/微信/公众号 三渠道收发记录查询/清空） =====
+        // ===== ★ v1.215 统一消息记录中心（QQ/微信/公众号 三渠道收发记录查询/清空） =====
         get("/api/platform/messages") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
@@ -1743,7 +1743,7 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, "已清空 $n 条消息记录")
         }
 
-        // ===== ★ v1.214 插件系统（目录扫描/热重载/on_message/市场预留） =====
+        // ===== ★ v1.215 插件系统（目录扫描/热重载/on_message/市场预留） =====
         get("/api/plugins") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
@@ -1785,7 +1785,7 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, null, com.qitong.gateway.plugin.PluginManager.marketPull(url))
         }
 
-        // ===== ★ v1.214 Telegram 平台适配器（多平台架构第一站） =====
+        // ===== ★ v1.215 Telegram 平台适配器（多平台架构第一站） =====
         get("/api/tg/status") {
             val u = call.requireAuth(database) ?: return@get
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
@@ -3006,7 +3006,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.214"))
+                put("version", JsonPrimitive("1.215"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3850,7 +3850,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.214"))
+                    put("version", JsonPrimitive("1.215"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

@@ -51,9 +51,9 @@ object SandboxEngine {
         "backup_list", "backup_create", "backup_restore",
         "kb_list", "kb_search",  // ★ v1.194 知识库
         "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
-        "send_message_to_user",  // ★ v1.214 主动发消息给用户
-        "send_sticker",  // ★ v1.214 万能表情包
-        "platform_settings_get", "platform_settings_set", "platform_messages",  // ★ v1.214 平台设置/消息记录遥控
+        "send_message_to_user",  // ★ v1.215 主动发消息给用户
+        "send_sticker",  // ★ v1.215 万能表情包
+        "platform_settings_get", "platform_settings_set", "platform_messages",  // ★ v1.215 平台设置/消息记录遥控
         "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",
         "ssh_list", "ssh_exec",
         "ticket_list", "ticket_create", "ticket_detail",
@@ -64,7 +64,7 @@ object SandboxEngine {
         "gateway_toggle", "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool", "gateway_auto_speedtest",
         "notify_config", "notify_test",
         "rule_list", "rule_add", "rule_delete", "conversation_list",
-        "weather_now", "translate", "news_top"   // ★ v1.214 实用内置：天气/翻译/新闻（免费无 key，开箱即用）
+        "weather_now", "translate", "news_top"   // ★ v1.215 实用内置：天气/翻译/新闻（免费无 key，开箱即用）
     )
 
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
@@ -608,9 +608,9 @@ $KNOWLEDGE_JSON
         val perm = when (fn) {
             "gateway_status", "speed_ranking", "active_model", "traffic_total", "token_total",
             "user_balance", "qq_points_rank", "help", "web_search", "heartbeat_status", "heartbeat_check", "sys_health",
-            "weather_now", "translate", "news_top",  // ★ v1.214 实用内置：天气/翻译/新闻（user/read）
+            "weather_now", "translate", "news_top",  // ★ v1.215 实用内置：天气/翻译/新闻（user/read）
             "web_browse",  // ★ v1.166 网页浏览（user/read）
-            "mcp_list",  // ★ v1.214 MCP 工具列表（user/read：系统提示承诺 MCP 是用户合法能力，仅查看列表应放开）
+            "mcp_list",  // ★ v1.215 MCP 工具列表（user/read：系统提示承诺 MCP 是用户合法能力，仅查看列表应放开）
             "heartbeat_get", "task_list", "update_logs", "memory_search", "todo_list", "skill_list",
             "git_version", "git_log", "announcement_list", "skill_my" -> "user" to "read"
             "model_batch_test", "model_test_single", "model_get_all", "provider_get_all",
@@ -619,11 +619,11 @@ $KNOWLEDGE_JSON
             "api_key_list", "user_list", "config_get" -> "admin" to "read"
             "model_enable", "model_disable", "user_recharge", "user_deduct", "terminal_run", "terminal_create", "workflow_run",
             "linux_run", "linux_create",  // ★ v1.175 Linux 执行/创建（admin/modify）
-            "mcp_call",  // ★ v1.214 MCP 工具调用（user/modify：用户配置的合法业务工具，普通用户可调；危险操作由 MCP 自身限制）
+            "mcp_call",  // ★ v1.215 MCP 工具调用（user/modify：用户配置的合法业务工具，普通用户可调；危险操作由 MCP 自身限制）
             "heartbeat_start", "heartbeat_stop", "weixin_bot_start", "weixin_bot_stop", "qq_bot_start", "qq_bot_stop", "task_create", "task_cancel", "mail_send",
             "code_run", "todo_add", "todo_done", "todo_del", "file_write", "skill_learn", "image_gen", "cache_stats", "skill_auto_learn", "skill_add", "skill_del", "skill_toggle",
-            "send_message_to_user" -> "user" to "modify"  // ★ v1.214 主动发消息（user可发给自己/自己的群）
-            "send_sticker" -> "user" to "modify"  // ★ v1.214 万能表情包（user可发给自己/自己的群）
+            "send_message_to_user" -> "user" to "modify"  // ★ v1.215 主动发消息（user可发给自己/自己的群）
+            "send_sticker" -> "user" to "modify"  // ★ v1.215 万能表情包（user可发给自己/自己的群）
             "provider_add", "provider_update", "provider_delete", "provider_enable", "provider_disable",
             "provider_sync",  // ★ v1.185 同步服务商模型（admin/modify）
             "model_set_name", "model_set_price", "model_set_public", "model_set_authorized", "model_delete",
@@ -639,7 +639,7 @@ $KNOWLEDGE_JSON
             // v1.166 新增：管理员只读
             "price_list", "sys_monitor", "plan_stats", "backup_list", "card_list", "ssh_list", "ticket_detail", "wx_users_list", "wx_user_memory",
             "op_logs", "login_logs", "qq_logs", "wx_logs", "qq_users_list", "memory_list", "notify_config", "rule_list" -> "admin" to "read"
-            // ★ v1.214 平台设置/消息记录遥控（管理员）
+            // ★ v1.215 平台设置/消息记录遥控（管理员）
             "platform_settings_get", "platform_messages" -> "admin" to "read"
             "platform_settings_set" -> "admin" to "modify"
             // v1.166 新增：管理员修改
@@ -670,7 +670,7 @@ $KNOWLEDGE_JSON
                 "git_version" -> {
                     // ★ v1.116 查 Git 版本：当前版本 / 最新提交 / 最近 tag
                     try {
-                        val ver = db.getConfig("app_version", "1.214")
+                        val ver = db.getConfig("app_version", "1.215")
                         val sb = StringBuilder("🔖 【网关 Git 版本】\n")
                         sb.append("• 当前版本：v").append(ver).append("\n")
                         runCatching {
@@ -684,7 +684,7 @@ $KNOWLEDGE_JSON
                             if (out2.isNotBlank()) sb.append("• 最近标签：").append(out2.lines().joinToString("、")).append("\n")
                         }
                         sb.toString().trim()
-                    } catch (e: Exception) { "🔖 当前版本：v1.214（版本信息读取失败：${e.message}）" }
+                    } catch (e: Exception) { "🔖 当前版本：v1.215（版本信息读取失败：${e.message}）" }
                 }
                 "git_log" -> {
                     // ★ v1.116 查 Git 最近提交历史
@@ -1440,7 +1440,7 @@ $KNOWLEDGE_JSON
                     }
                 }
                 "weather_now" -> {
-                    // ★ v1.214 实用内置：查天气（wttr.in 免费无 key；city 中文/拼音/城市名）
+                    // ★ v1.215 实用内置：查天气（wttr.in 免费无 key；city 中文/拼音/城市名）
                     val city = (args["city"] ?: "").trim().ifBlank { "南京" }
                     try {
                         val http = com.qitong.gateway.network.WebToolClient.http
@@ -1454,7 +1454,7 @@ $KNOWLEDGE_JSON
                     } catch (e: Exception) { "🌤 天气查询失败: ${e.message?.take(100)}" }
                 }
                 "translate" -> {
-                    // ★ v1.214 实用内置：文本翻译（Google 免费接口；text=要翻译的文本, to=目标语言代码 en/zh/ja/ko/ru/fr/de/es 等）
+                    // ★ v1.215 实用内置：文本翻译（Google 免费接口；text=要翻译的文本, to=目标语言代码 en/zh/ja/ko/ru/fr/de/es 等）
                     val text = (args["text"] ?: "").trim()
                     val to = (args["to"] ?: "").trim().ifBlank { "zh" }
                     if (text.isBlank()) "⚠️ 语法：translate(text=要翻译的文字, to=目标语言如 en/zh/ja)"
@@ -1474,7 +1474,7 @@ $KNOWLEDGE_JSON
                     } catch (e: Exception) { "📖 翻译失败: ${e.message?.take(100)}" }
                 }
                 "news_top" -> {
-                    // ★ v1.214 实用内置：今日热点新闻（免费 RSS 聚合，无需 key）
+                    // ★ v1.215 实用内置：今日热点新闻（免费 RSS 聚合，无需 key）
                     try {
                         val http = com.qitong.gateway.network.WebToolClient.http
                         val req = okhttp3.Request.Builder()
@@ -1723,7 +1723,7 @@ $KNOWLEDGE_JSON
                 "price_list", "price_get", "price_set", "price_delete", "price_clear",
                 "kb_list", "kb_search",  // ★ v1.194 知识库检索
                 "subagent_run", "subagent_result",  // ★ v1.195 多子Agent调度
-                "send_message_to_user",  // ★ v1.214 主动发消息
+                "send_message_to_user",  // ★ v1.215 主动发消息
                 "usage_recent", "usage_stats", "overall_stats", "sys_monitor", "plan_stats",
                 "backup_list", "backup_create", "backup_restore",
                 "plan_list", "plan_save", "plan_delete", "card_list", "card_gen", "card_redeem",

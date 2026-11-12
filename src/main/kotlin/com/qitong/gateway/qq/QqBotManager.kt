@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * QQ 机器人统一管理器：多号长连接 + 插件指令引擎 + 独立用户隔离 + 全量日志。
  *
- * 设计对齐"小栗子"式体验，但跑在 QQ 官方开放平台上：
+ * 设计对齐指令式便捷体验，但跑在 QQ 官方开放平台上：
  *  - 插件指令：触发器(exact/contains/regex) -> 回复 / HTTP / AI
  *  - 每用户独立：每人一把 Mutex，互不阻塞；独立冷却；独立人设与记忆
  *  - 大脑：loopback 本机 /v1/chat/completions，复用网关模型/故障转移/qtai-sj/用量
@@ -56,7 +56,7 @@ object QqBotManager {
     private val lastReplyText = ConcurrentHashMap<String, String>()
     // ★ v64 停止信号：用户发「停止/停一下/中断」→ 打断当前 Agent 思考/执行（大模型自由调度感知停止）
     private val stopSignals = ConcurrentHashMap<String, Boolean>()
-    // ★ v1.214 群聊插话冷却：群 openid key -> 最近一次插话时间戳（防刷屏/防主动消息配额耗尽 40034105）
+    // ★ v1.215 群聊插话冷却：群 openid key -> 最近一次插话时间戳（防刷屏/防主动消息配额耗尽 40034105）
     private val groupJoinCooldown = ConcurrentHashMap<String, Long>()
     /** v51 分步绑定状态：openid -> (step, username)；step=1 等用户名，2 等密码 */
     private val pendingBind = ConcurrentHashMap<String, Pair<Int, String>>()
@@ -204,7 +204,7 @@ object QqBotManager {
         } catch (e: Exception) { System.err.println("[QQBot] 主动活跃异常: ${e.message}") }
     }
 
-    /** ★ v1.214 主动发消息：向指定 QQ 用户（C2C 私聊）发送文本（send_message_to_user 沙盒工具用） */
+    /** ★ v1.215 主动发消息：向指定 QQ 用户（C2C 私聊）发送文本（send_message_to_user 沙盒工具用） */
     fun sendToUserC2C(userOpenid: String, text: String): Boolean {
         if (userOpenid.isBlank() || text.isBlank()) return false
         return try {
@@ -436,7 +436,7 @@ object QqBotManager {
 
     private fun handleGroup(bot: QqBot, msg: QqGroupMessage) {
         val isNewGroup = db.getQqGroupConfig(msg.groupOpenid) == null
-        // ★ v1.214 唤醒设置：忽略自己发送的消息（ignoreSelf）
+        // ★ v1.215 唤醒设置：忽略自己发送的消息（ignoreSelf）
         val ps0 = db.getPlatformSettings("qq")
         if ((ps0["ignoreSelf"] as? Boolean) == true && msg.memberOpenid.isNotBlank() && msg.memberOpenid == bot.appid) return
         db.touchQqGroup(msg.groupOpenid, bot.appid)
@@ -449,14 +449,14 @@ object QqBotManager {
             return
         }
 
-        // ★ v1.214 唤醒前缀：消息以配置的前缀开头（如「小桐」）即使没@也视为唤醒 → 必回
+        // ★ v1.215 唤醒前缀：消息以配置的前缀开头（如「小桐」）即使没@也视为唤醒 → 必回
         val wakePrefix = (db.getPlatformSettings("qq")["wakePrefix"] as? String)?.trim() ?: ""
         val isWakePrefix = wakePrefix.isNotEmpty() && stripAt(msg.content).trim().startsWith(wakePrefix)
 
-        // ★ v1.214 @回话开关（atReply）：@消息是否必回；关闭则@也走插话决策（默认开）
+        // ★ v1.215 @回话开关（atReply）：@消息是否必回；关闭则@也走插话决策（默认开）
         val atReplyOn = (db.getPlatformSettings("qq")["atReply"] as? Boolean) ?: true
 
-        // ★ v1.214 黑白名单过滤（命中黑名单直接忽略；白名单非空时仅白名单成员可触发）
+        // ★ v1.215 黑白名单过滤（命中黑名单直接忽略；白名单非空时仅白名单成员可触发）
         runCatching {
             val psBl = db.getPlatformSettings("qq")
             val bl = (psBl["blacklist"] as? String ?: "").split(",").map { it.trim() }.filter { it.isNotBlank() }
@@ -465,9 +465,9 @@ object QqBotManager {
             if (bl.any { txtChk.contains(it, true) || msg.memberOpenid == it }) return
             if (wl.isNotEmpty() && wl.none { msg.memberOpenid == it || txtChk.contains(it, true) }) return
         }
-        // ★ v1.214 插话冷却秒数（参数化，替代写死 20 秒）
+        // ★ v1.215 插话冷却秒数（参数化，替代写死 20 秒）
         val joinCooldownMs = ((db.getPlatformSettings("qq")["joinCooldownSec"] as? Number)?.toLong() ?: 20L) * 1000L
-        // ★ v1.214 群聊自由插话：非@消息（GROUP_MESSAGE_CREATE 全量模式）按决策参与讨论
+        // ★ v1.215 群聊自由插话：非@消息（GROUP_MESSAGE_CREATE 全量模式）按决策参与讨论
         //   @消息（GROUP_AT_MESSAGE_CREATE）在 atReplyOn 时必回；atReply 关时同样走参与决策
         if (!msg.isAt || !atReplyOn) {
             val rawText = stripAt(msg.content).trim()
@@ -478,7 +478,7 @@ object QqBotManager {
                 if (isWakePrefix) {
                     // 直接往下走（不设冷却，唤醒必回）
                 } else {
-                    // ★ v1.214 插话冷却防刷屏：同一群 20 秒内只插一句（QQ 主动消息有配额，频繁插话会触发 40034105 无权限）
+                    // ★ v1.215 插话冷却防刷屏：同一群 20 秒内只插一句（QQ 主动消息有配额，频繁插话会触发 40034105 无权限）
                     val now0 = System.currentTimeMillis()
                     val lastJoinKey = "qq_group_join_${msg.groupOpenid}"
                     val lastJoinAt = groupJoinCooldown[lastJoinKey] ?: 0L
@@ -509,7 +509,7 @@ object QqBotManager {
         val text = stripAt(msg.content).trim()
         if (text.isEmpty()) return
 
-        // ★ v1.214 插件 on_message 钩子：命中插件回复/忽略规则则不再走 AI
+        // ★ v1.215 插件 on_message 钩子：命中插件回复/忽略规则则不再走 AI
         runCatching {
             val pHit = com.qitong.gateway.plugin.PluginManager.onMessage(text, "qq")
             if (pHit != null) {
@@ -524,7 +524,7 @@ object QqBotManager {
             }
         }
 
-        // ★ v1.214 消息记录中心：QQ 群消息入站留存（插话/必回都留）
+        // ★ v1.215 消息记录中心：QQ 群消息入站留存（插话/必回都留）
         runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "in", text, bot.aiModel) }
 
         // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
@@ -542,15 +542,15 @@ object QqBotManager {
         }
 
         withUserLock(key) {
-            // ★ v1.214 @ 消息才允许被动回复（msg_id）；非@全量消息走主动消息（QQ 对非@被动回复返回业务错误码会丢消息）
+            // ★ v1.215 @ 消息才允许被动回复（msg_id）；非@全量消息走主动消息（QQ 对非@被动回复返回业务错误码会丢消息）
             dispatch(bot, key, msg.groupOpenid, msg.memberOpenid, text, msg.msgId, passiveAllowed = msg.isAt,
                 send = { content ->
                     runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "out", content, bot.aiModel) }
-                    // ★ v1.214 群聊回复自动 @ 提问者本人（像真人点名回答）；开关 atAsker 可后台关闭
+                    // ★ v1.215 群聊回复自动 @ 提问者本人（像真人点名回答）；开关 atAsker 可后台关闭
                     val atAsker = (db.getPlatformSettings("qq")["atAsker"] as? Boolean) ?: true
                     val finalContent = if (atAsker && msg.memberOpenid.isNotBlank() && !content.startsWith("<@!"))
                         "<@!${msg.memberOpenid}> $content" else content
-                    // ★ v1.214 只有 @ 消息允许带 msg_id 被动回复；非@走主动（被动回复会被 QQ 业务拒绝丢消息）
+                    // ★ v1.215 只有 @ 消息允许带 msg_id 被动回复；非@走主动（被动回复会被 QQ 业务拒绝丢消息）
                     val sendMsgId = if (msg.isAt) msg.msgId else null
                     api.sendGroupMessage(bot, at, msg.groupOpenid, finalContent, sendMsgId)
                 })
@@ -565,7 +565,7 @@ object QqBotManager {
             System.err.println("[QQBot] ${bot.appid} 私聊消息处理：获取AccessToken失败")
             return
         }
-        // ★ v1.214 消息记录中心：QQ 私聊入站留存
+        // ★ v1.215 消息记录中心：QQ 私聊入站留存
         runCatching { db.addPlatformMessage("qq", bot.id, msg.userOpenid, "", "in", msg.content.trim(), bot.aiModel) }
         // ★ v1.168 会话历史 key 加 botId 维度（对齐微信 ${bot.id}:${from}）：同一用户被多 bot 服务时互不串台/互不抢锁
         val key = "${bot.id}:c:${msg.userOpenid}"
@@ -613,7 +613,7 @@ object QqBotManager {
     }
 
     /** 统一分发：内置指令 > 网关技能 > 插件指令 > 大模型；全程记日志。
-     *  ★ v1.214 passiveAllowed：仅 @ 消息(GROUP_AT_MESSAGE_CREATE) 允许用 msg_id 被动回复；
+     *  ★ v1.215 passiveAllowed：仅 @ 消息(GROUP_AT_MESSAGE_CREATE) 允许用 msg_id 被动回复；
      *    QQ 官方对非@全量消息的被动回复返回业务错误码（HTTP 200 但实际失败）→ 非@直接走主动消息发
      */
     private suspend fun dispatch(
@@ -638,7 +638,7 @@ object QqBotManager {
             db.addQqLog(bot.appid, groupOpenid, userOpenid, "progress", "开启完整模式(verbose)", System.currentTimeMillis() - t0)
             return
         }
-        // ★ v1.214 平台设置：AI 总开关（关=机器人不 AI 应答；仅 admin/绑定管理指令仍可用）
+        // ★ v1.215 平台设置：AI 总开关（关=机器人不 AI 应答；仅 admin/绑定管理指令仍可用）
         runCatching {
             val ps = db.getPlatformSettings("qq")
             if ((ps["aiEnabled"] as? Boolean) != true) {
@@ -713,13 +713,13 @@ object QqBotManager {
         //   → 中途推送全失败、用户看到「机器人突然不说话/只会最后蹦一句」。
         //   方案：单次任务【工具细节】推送（🔧/💭调用/⚡并行/✅完成）默认最多 20 条（可配 qq_progress_budget），
         //   超预算后静默工具细节、把配额留给最终回复（isFinal=true 不受限，必达）。思考/进度类（⏳/🤖）不烧预算。
-        // ★ v1.214 隐藏步骤语义重构（綦桐 11-12 要求）：quiet 只隐藏【工具调用细节】，
+        // ★ v1.215 隐藏步骤语义重构（綦桐 11-12 要求）：quiet 只隐藏【工具调用细节】，
         //   思考内容（💭 思考中/⏳ 处理中）与执行过程进度必须保留，最终答案必达；
         //   verbose 全量推送（工具细节+思考都要有）。预算同理只约束工具细节，思考进度永不被吞。
         val progressBudget = db.getConfig("qq_progress_budget", "20").toIntOrNull() ?: 20
         val quietProgress = db.getUserConfig(db.getQqBoundUser(userOpenid)?.id ?: 0L, "progress_mode", "verbose") == "quiet"
         var progressUsed = 0
-        // ★ v1.206/★v1.214 判断是否为【机械工具执行细节】推送（quiet 只隐藏这部分，思考/计划/进度全推）：
+        // ★ v1.206/★v1.215 判断是否为【机械工具执行细节】推送（quiet 只隐藏这部分，思考/计划/进度全推）：
         //   🔧正在执行/✅完成/⚡同时处理 —— 机械执行消息；"调用/确认一下/继续查" 是思考过渡话术，隐藏/显示都推
         fun isToolDetailMsg(m: String): Boolean =
             m.contains("正在执行", true) || m.contains("完成：", true) || m.contains("同时处理", true)
@@ -730,11 +730,11 @@ object QqBotManager {
             val hideTool = !isFinal && quietProgress && isToolDetail
             if (isFinal || (!hideTool && (!isToolDetail || progressUsed <= progressBudget))) {
                 replyCount++
-                // ★ v1.214 只允许 @ 消息用被动回复（msg_id）；非@全量消息被动回复会被 QQ 业务拒绝 → 走主动消息
+                // ★ v1.215 只允许 @ 消息用被动回复（msg_id）；非@全量消息被动回复会被 QQ 业务拒绝 → 走主动消息
                 val usePassive = isFinal && passiveAllowed
                 val effectiveMsgId = if (usePassive) msgId else null
                 val at2 = api.getAccessToken(bot)
-                // ★ v1.214 群聊回复 @ 提问者本人：只有最终回复点名（过程推送不@防刷屏），像真人分段讲话
+                // ★ v1.215 群聊回复 @ 提问者本人：只有最终回复点名（过程推送不@防刷屏），像真人分段讲话
                 val atAsker = groupOpenid.isNotBlank() && ((db.getPlatformSettings("qq")["atAsker"] as? Boolean) ?: true)
                 val atPrefix = if (isFinal && atAsker && userOpenid.isNotBlank()) "<@!$userOpenid> " else ""
                 // ★ v71 QQ 大消息分段推送：超 1800 字符切多条，不丢信息（只有最终条用被动回复）
@@ -743,7 +743,7 @@ object QqBotManager {
                 pieces.forEachIndexed { idx, piece ->
                     val isLastPiece = idx == pieces.lastIndex
                     val pieceMsgId = if (usePassive && isLastPiece) effectiveMsgId else null
-                    // ★ v1.214 分段讲话：只首段带@点名（真人讲话风格，后续分段自然连续）；已有@则不重复
+                    // ★ v1.215 分段讲话：只首段带@点名（真人讲话风格，后续分段自然连续）；已有@则不重复
                     val finalPiece = if (idx == 0 && atPrefix.isNotEmpty() && !piece.startsWith("<@!")) atPrefix + piece else piece
                     if (groupOpenid.isNotBlank()) {
                         if (cardMode && !at2.isNullOrBlank()) {
@@ -795,7 +795,7 @@ object QqBotManager {
                     send(if (cur.isNullOrBlank()) "当前人格：默认（綦桐小助理）\n发「切换人格 程序员/知心姐姐/翻译官/老师」试试不同角色" else "当前人格：\n$cur\n\n发「切换人格 默认」恢复默认")
                     return
                 }
-                // ★ v1.214 万能表情包：内置表情包池按关键词发一条趣味表情组合（QQ 官方 [face:N] 表情 + emoji）
+                // ★ v1.215 万能表情包：内置表情包池按关键词发一条趣味表情组合（QQ 官方 [face:N] 表情 + emoji）
                 "sticker" -> {
                     val kw = builtin.second.trim()
                     send(buildSticker(kw))
@@ -1374,7 +1374,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             if (attempt < 3) Thread.sleep(1000L * attempt)
         }
         if (!reply.isNullOrBlank()) {
-            // ★ v1.214 修复「空壳回复推给用户」：askModel 收尾失败兜底的空壳占位（✅已完成/结果已实时推送）不给用户
+            // ★ v1.215 修复「空壳回复推给用户」：askModel 收尾失败兜底的空壳占位（✅已完成/结果已实时推送）不给用户
             //   过程已实时推送过（用户已看到工具结果），空壳再发=一条无内容消息（用户 354/409 实锤案例）
             val isEmptyShell = reply.contains("✅ 已完成以上任务") || reply.contains("✅ 已完成，结果已实时推送") || reply.length <= 2
             if (!isEmptyShell) {
@@ -1419,12 +1419,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         text.contains("我查", true) || text.contains("来弄", true) || text.contains("搞定", true)
 
     /**
-     * ★ v1.214 承诺话术检测：模型只输出「我帮你/我看一下/帮你查/我这就去查」这类承诺
+     * ★ v1.215 承诺话术检测：模型只输出「我帮你/我看一下/帮你查/我这就去查」这类承诺
      * 但没有真输出工具调用标签的行为 = 「说了要做 → 没做」→ 必须强制兜底真执行。
      * 返回 true 表示该回复是空承诺（需要派子Agent真执行用户原话）。
      */
     private fun isPromiseOnly(text: String): Boolean {
-        // ★ v1.214 修复：原「长度>60 直接放行」漏掉长承诺话术（如「哎，你别急，我这就再帮你仔细看一遍后台…稍等哈，我马上查！」71字）
+        // ★ v1.215 修复：原「长度>60 直接放行」漏掉长承诺话术（如「哎，你别急，我这就再帮你仔细看一遍后台…稍等哈，我马上查！」71字）
         //   现在先剥语气词/过度语，再取前 60 字判断承诺特征；只要无结果特征且表达「要去做/稍等/马上」就判为承诺 → 兜底真执行
         var t = text.trim()
             .removePrefix("哎").removePrefix("哎哟").removePrefix("嗯").removePrefix("好的").removePrefix("好嘞")
@@ -1447,7 +1447,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return true
     }
 
-    /** ★ v1.214 承诺闭环兜底：把用户原话派子Agent真执行，结果必达（不再放行空承诺） */
+    /** ★ v1.215 承诺闭环兜底：把用户原话派子Agent真执行，结果必达（不再放行空承诺） */
     private fun promiseFallback(userText: String, userOpenid: String, groupOpenid: String, effUserId: Long, channel: String, smartSend: (String, Boolean) -> Boolean): String {
         smartSend("⏳ 我这就去处理，稍等片刻…", false)
         val task = "用户请求：$userText\n请自主拆解并用网关沙盒工具真实执行，干完输出完整结果（含关键数据）。"
@@ -1456,7 +1456,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         else "✅ 任务完成：\n$result"
     }
 
-    /** ★ v1.214 群聊自由插话决策：非@消息是否参与讨论（自主式群聊参与）。
+    /** ★ v1.215 群聊自由插话决策：非@消息是否参与讨论（自主式群聊参与）。
      * 返回 true = 机器人应插话。开启条件：平台设置 qq.groupJoin=true 且该群 ai_enabled。
      * 触发策略：①消息含机器人名/@意向词 ②求助/提问关键词（帮/查/谁/怎么/如何/有没有/知道吗/大家觉得 等）③概率闲聊参与 */
     private fun shouldJoinGroupChat(text: String, groupOpenid: String): Boolean {
@@ -1486,10 +1486,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         return if (joinProb > 0) (0 until 100).random() < joinProb else false
     }
 
-    /** ★ v1.214 QQ 机器人自定义名称列表（群聊提到这些名字触发回应） */
+    /** ★ v1.215 QQ 机器人自定义名称列表（群聊提到这些名字触发回应） */
     private val botNames: List<String> by lazy { listOf("小助手", "小ai", "网关", "助理") }
 
-    /** ★ v1.214 万能表情包：内置表情包池，按关键词挑一句发（好玩、活跃群气氛）
+    /** ★ v1.215 万能表情包：内置表情包池，按关键词挑一句发（好玩、活跃群气氛）
      *  走 QQ 官方文本表情 [face:N] + emoji 组合（比图片素材接口稳，全端可见）
      */
     fun buildSticker(kw: String): String {
@@ -1587,7 +1587,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         // ★ v1.113 人格切换：发「切换人格 助手/程序员/知心姐姐/翻译官/默认」等即可切换 qtai-sj 角色卡
         if (t.startsWith("切换人格", true) || t.startsWith("人格切换", true) || t.startsWith("设置人格", true)) return "persona_switch" to t.substringAfter(" ").trim()
         if (t.equals("查看人格", true) || t.equals("我的人格", true) || t.equals("人格", true)) return "persona_show" to t
-        // ★ v1.214 万能表情包：发「表情包/发个表情/来张图 关键词」→ 服务器表情包池随机一张（好玩）
+        // ★ v1.215 万能表情包：发「表情包/发个表情/来张图 关键词」→ 服务器表情包池随机一张（好玩）
         if (t.startsWith("表情包", true) || t.startsWith("发个表情", true) || t.startsWith("来张表情", true) ||
             t.startsWith("来个表情", true) || t.equals("表情", true) || t.startsWith("发图", true)) return "sticker" to t.substringAfter(" ").trim()
         // ★ v1.114 功能快捷面板：发「功能」看全部快捷指令
@@ -2037,7 +2037,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 // 只推一次「处理中」，中间步骤全部静默（最后结果由外层推）
                 var stepHintSent = false
                 var lastProgressAt = System.currentTimeMillis()
-                // ★ v1.214 模型过渡话术去重标记（"嗯嗯好的/我这就去/我正在…"每轮只推一次）
+                // ★ v1.215 模型过渡话术去重标记（"嗯嗯好的/我这就去/我正在…"每轮只推一次）
                 var lastSpokenText = ""
                 // ★ v1.133 假调用引导计数器（循环外，跨轮累积，最多引导 2 次）
                 var noCallGuide = 0
@@ -2069,7 +2069,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     // ★ v1.169 修复「工具重复执行」：传 executedSigs 做跨轮去重——模型照抄上一轮调用标签/复述描述时，
                     //   同一 fn+参数已执行过 → 解析结果为空 → 循环正常收尾，不再执行第二遍
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
-// ★ v1.209/★v1.214/★v1.214 模型思考话术实时推送：
+// ★ v1.209/★v1.215/★v1.215 模型思考话术实时推送：
                     //   只有【本轮有工具调用】时才推模型过渡话术（剥标签后的话术，≤40字+行动词才推）
                     //   修复：无工具调用时模型话术=最终答案，若当过渡推会造成「同句推两次」（386/387 实锤）
                     if (calls.isNotEmpty()) {
@@ -2093,7 +2093,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             continueIntent(content)
                         if (noCallGuide < 2 && intented) {
                             noCallGuide++
-                            // ★ v1.214 引导推送去重（398/399 实锤连推两条）
+                            // ★ v1.215 引导推送去重（398/399 实锤连推两条）
                             val guideMsg = "💭 我确认一下要调用哪个工具…"
                             if (guideMsg != lastSpokenText) { lastSpokenText = guideMsg; smartSend(guideMsg, false) }
                             val guideBody = JSONObject()
@@ -2125,7 +2125,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                 }
                             } catch (e: Exception) { null }
                             if (guided.isNullOrBlank()) {
-                                // ★ v1.214 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
+                                // ★ v1.215 承诺闭环：模型说过要干活但引导仍不输出标签 → 直接派子Agent真执行用户原话，不再放行空承诺
                                 if (continueIntent(content) || isPromiseOnly(content)) {
                                     content = promiseFallback(userText, userOpenid, groupOpenid, effUserId, "qq", smartSend)
                                     break
@@ -2137,13 +2137,13 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         }
                         break
                     }
-                    // ★ v1.130 龙虾式实时进展：每轮思考→调用→结果→下一步全程推送，不静默
+                    // ★ v1.130 自主实时进展：每轮思考→调用→结果→下一步全程推送，不静默
                     // ★ v1.133 真思考模式：不再预推假的「🎯 正在处理」——有真调用才推进展，无调用直接出答案
-                    // ★ v1.130 实时推送本轮要调用的工具（龙虾式：先讲要干嘛）
-                    // ★ v1.214 修复重复推送：模型过渡话术已表达在干活，这里不再推框架「第N步调用」
+                    // ★ v1.130 实时推送本轮要调用的工具（自主式：先讲要干嘛）
+                    // ★ v1.215 修复重复推送：模型过渡话术已表达在干活，这里不再推框架「第N步调用」
                     //   （401/402 实锤：同一轮推两条💭 = 用户看到重复）只保留 🔧 执行细节
                     val fnNames = calls.map { it.first }.distinct()
-                    // ★ v1.130 长任务进度：每 15s 推一次「还在处理」；★v1.214 收敛：仅第4轮后偶发，与过渡话术去重
+                    // ★ v1.130 长任务进度：每 15s 推一次「还在处理」；★v1.215 收敛：仅第4轮后偶发，与过渡话术去重
                     if (System.currentTimeMillis() - lastProgressAt > 15_000 && loopGuard >= 4) {
                         val progMsg = "⏳ 我还在继续处理中，稍等一下哈～"
                         if (progMsg != lastSpokenText) { lastSpokenText = progMsg; smartSend(progMsg, false) }
@@ -2265,7 +2265,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     val calls2 = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
                     if (calls2.isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
-                        // ★ v1.214 去重：避免「好的，我继续查」与过渡话术重复刷屏
+                        // ★ v1.215 去重：避免「好的，我继续查」与过渡话术重复刷屏
                         val contMsg = "💭 好的，我继续查…"
                         if (contMsg != lastSpokenText) { lastSpokenText = contMsg; smartSend(contMsg, false) }
                         val guideBody2 = JSONObject()
@@ -2299,7 +2299,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             }
                         } catch (e: Exception) { null }
                         if (guided2.isNullOrBlank()) {
-                            // ★ v1.214 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 若本轮还没真执行过工具，则派子Agent真执行用户原话
+                            // ★ v1.215 承诺闭环：模型说继续/要干活但引导仍拿不到下一步 → 若本轮还没真执行过工具，则派子Agent真执行用户原话
                             if (continueIntent(content) || isPromiseOnly(content)) {
                                 content = promiseFallback(userText, userOpenid, groupOpenid, effUserId, "qq", smartSend)
                                 break
@@ -2312,7 +2312,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     if (calls2.isEmpty()) break
                 }
-                // ★ v1.214 承诺闭环终极兜底：循环全部走完仍没真执行过工具，且最终内容是纯承诺话术（"我帮你看一下"等）
+                // ★ v1.215 承诺闭环终极兜底：循环全部走完仍没真执行过工具，且最终内容是纯承诺话术（"我帮你看一下"等）
                 //   → 直接派子Agent真执行用户原话，结果必达，绝不放行空承诺当答案
                 if (!executedCalls && content.isNotBlank() && (continueIntent(content) || isPromiseOnly(content)) && userText.isNotBlank()) {
                     content = promiseFallback(userText, userOpenid, groupOpenid, effUserId, "qq", smartSend)
@@ -2323,7 +2323,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     // ★ v55 返回前必清洗 XML 标签（防畸形格式泄漏给用户）
                     val cleaned = cleanFunctionTags(content)
                     // ★ v1.167 用户原文已在 askModel 入口幂等写入 hist，此处不再重复写（防 user→user 串台）
-                    // ★ v1.133 龙虾式收敛：执行过工具（loopGuard>0）→ 最终强制模型生成简短收尾，绝不复述已推送的结果
+                    // ★ v1.133 自主式收敛：执行过工具（loopGuard>0）→ 最终强制模型生成简短收尾，绝不复述已推送的结果
                     try {
                         val closeBody = JSONObject()
                             .put("model", bot.aiModel)
