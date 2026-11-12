@@ -48,7 +48,7 @@ object V155Ext2 {
                 }
             }
         }
-        // ★ v1.206 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
+        // ★ v1.207 主动发消息给用户（学习一流智能体平台 proactive message，自研实现）
         // 支持三渠道：QQ（group:群号 或 user:openid）/ 微信（openid）/ 公众号（粉丝openid）
         "send_message_to_user" -> {
             val text = (args["text"] ?: "").trim()
@@ -111,7 +111,7 @@ object V155Ext2 {
                 }
             }
         }
-        // ★ v1.206 万能表情包：发一条趣味表情组合（QQ 群/私聊/微信都可用）
+        // ★ v1.207 万能表情包：发一条趣味表情组合（QQ 群/私聊/微信都可用）
         //   kw=关键词（大笑/笑哭/点赞/加油/666/比心…），空=随机；支持 channel 指定（qq/weixin/wx/mp），qq 可带 target group:群号
         "send_sticker" -> {
             val kw = (args["kw"] ?: "").trim()
@@ -412,7 +412,7 @@ object V155Ext2 {
                 "• [${c.id}] ${c.title}"
             }.take(1400)
         }
-        // ★ v1.206 平台设置遥控（智能体可自主读取/修改 QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候）
+        // ★ v1.207 平台设置遥控（智能体可自主读取/修改 QQ/微信/公众号 三渠道 AI开关/消息记录/主动问候）
         "platform_settings_get" -> {
             val channel = (args["channel"] ?: "").trim().lowercase()
             if (channel !in listOf("qq", "weixin", "mp")) "⚠️ 语法：platform_settings_get(channel=qq/weixin/mp)"
@@ -423,11 +423,12 @@ object V155Ext2 {
                     "• 消息记录：${if (ps["msgRecord"] == true) "✅开" else "⛔关"}\n" +
                     "• 主动问候：${if (ps["proactiveEnabled"] == true) "✅开" else "⛔关"}\n" +
                     "• 群聊自动参与：${if (ps["groupJoin"] == true) "✅开" else "⛔关"}${if (channel == "qq") "（参与概率 ${ps["groupJoinProb"] ?: 8}%）" else ""}\n" +
-                    // ★ v1.206 唤醒/回话设置展示
+                    // ★ v1.207 唤醒/回话设置展示
                     "• @必回：${if ((ps["atReply"] as? Boolean) ?: true) "✅开" else "⛔关"}\n" +
                     "• 唤醒前缀：${(ps["wakePrefix"] as? String)?.takeIf { it.isNotBlank() } ?: "(未设置，仅@触发)"}\n" +
                     "• 私聊自动回复：${if ((ps["c2cAuto"] as? Boolean) ?: true) "✅开" else "⛔关"}\n" +
                     "• 忽略自己消息：${if ((ps["ignoreSelf"] as? Boolean) == true) "✅开" else "⛔关"}\n" +
+                    "• 群聊回复@本人：${if ((ps["atAsker"] as? Boolean) ?: true) "✅开（回复自动@提问者）" else "⛔关（不@）"}\n" +
                     "• 引用回复：${if ((ps["quoteReply"] as? Boolean) ?: true) "✅开" else "⛔关"}\n" +
                     "• 默认欢迎语：${(ps["welcome"] as? String)?.takeIf { it.isNotBlank() } ?: "(未设置)"}\n" +
                     "• 模型：${(ps["aiModel"] as? String)?.takeIf { it.isNotBlank() } ?: "(用各机器人默认)"}\n" +
@@ -445,7 +446,7 @@ object V155Ext2 {
                 (args["proactiveEnabled"] ?: "").let { if (it.isNotBlank()) upd["proactiveEnabled"] = it in listOf("on", "true", "1", "开", "启用") }
                 (args["groupJoin"] ?: "").let { if (it.isNotBlank()) upd["groupJoin"] = it in listOf("on", "true", "1", "开", "启用") }
                 (args["groupJoinProb"] ?: "").toIntOrNull()?.let { upd["groupJoinProb"] = it.coerceIn(0, 100) }
-                // ★ v1.206 唤醒/回话字段
+                // ★ v1.207 唤醒/回话字段
                 (args["atReply"] ?: "").let { if (it.isNotBlank()) upd["atReply"] = it in listOf("on", "true", "1", "开", "启用") }
                 (args["wakePrefix"] ?: "").let { if (it.isNotBlank()) upd["wakePrefix"] = it }
                 (args["c2cAuto"] ?: "").let { if (it.isNotBlank()) upd["c2cAuto"] = it in listOf("on", "true", "1", "开", "启用") }
@@ -455,6 +456,7 @@ object V155Ext2 {
                 (args["whitelist"] ?: "").let { if (it.isNotBlank()) upd["whitelist"] = it }
                 (args["joinCooldownSec"] ?: "").toIntOrNull()?.let { upd["joinCooldownSec"] = it.coerceIn(0, 600) }
                 (args["replyFreqLimit"] ?: "").toIntOrNull()?.let { upd["replyFreqLimit"] = it.coerceIn(0, 600) }
+                (args["atAsker"] ?: "").let { if (it.isNotBlank()) upd["atAsker"] = it in listOf("on", "true", "1", "开", "启用") }
                 (args["welcome"] ?: "").let { if (it.isNotBlank()) upd["welcome"] = it }
                 (args["aiModel"] ?: "").let { if (it.isNotBlank()) upd["aiModel"] = it }
                 (args["systemPrompt"] ?: "").let { if (it.isNotBlank()) upd["systemPrompt"] = it }

@@ -30,12 +30,12 @@ class QqApiClient {
     private val jsonCt = "application/json; charset=utf-8".toMediaType()
 
     // ★ v64 令牌缓存：避免每次消息都现取（过夜掉线根因）+ 失败自动重试用旧 token
-    // ★ v1.206 提升为静态伴生共享：QqGatewayClient 的 invalid session 处理器也要能清掉它（否则清的是别的实例缓存，死 token 无限循环）
+    // ★ v1.207 提升为静态伴生共享：QqGatewayClient 的 invalid session 处理器也要能清掉它（否则清的是别的实例缓存，死 token 无限循环）
     private class TokenCache(val token: String, val expireAt: Long)
     companion object {
         private val tokenCache = ConcurrentHashMap<String, TokenCache>()
 
-        /** ★ v1.206 静态强制刷新：清掉指定 bot 的 token 缓存（供 QqGatewayClient invalid session 处理调用） */
+        /** ★ v1.207 静态强制刷新：清掉指定 bot 的 token 缓存（供 QqGatewayClient invalid session 处理调用） */
         @JvmStatic
         fun forceRefreshTokenKey(appid: String, useSandbox: Boolean) {
             tokenCache.remove("$appid:$useSandbox")
@@ -67,7 +67,7 @@ class QqApiClient {
                 val body = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
                     System.err.println("[QQBot] 获取AccessToken失败 ${bot.appid}: HTTP ${resp.code} $body")
-                    // ★ v1.206 断登根治：换 token 失败时绝不降级返回缓存里的死 token！
+                    // ★ v1.207 断登根治：换 token 失败时绝不降级返回缓存里的死 token！
                     //   死 token 会导致 identify 一直 INVALID_SESSION → 无限重连循环（invalid session 265次/READY 3次）
                     //   直接清缓存返回 null，由上层走「换取失败稍后重试」分支（不再拿死 token 反复 identify）
                     tokenCache.remove(key)
@@ -83,7 +83,7 @@ class QqApiClient {
             }
         } catch (e: Exception) {
             System.err.println("[QQBot] 获取AccessToken异常 ${bot.appid}: ${e.message}")
-            // ★ v1.206 网络异常也不降级死 token（同上：避免拿失效 token 死循环 identify）
+            // ★ v1.207 网络异常也不降级死 token（同上：避免拿失效 token 死循环 identify）
             tokenCache.remove(key)
             null
         }
@@ -91,7 +91,7 @@ class QqApiClient {
 
     private fun base(bot: QqBot): String = if (bot.useSandbox) sandboxBase else prodBase
 
-    /** 发送群消息（★v1.186 401 自动刷新 AccessToken 重试；★v1.206 重试次数 1→2 + 二次刷新退避） */
+    /** 发送群消息（★v1.186 401 自动刷新 AccessToken 重试；★v1.207 重试次数 1→2 + 二次刷新退避） */
     fun sendGroupMessage(bot: QqBot, accessToken: String, groupOpenid: String, content: String, msgId: String?): Boolean {
         var code = groupRaw(bot, accessToken, groupOpenid, content, msgId)
         var newTok: String? = null
@@ -104,7 +104,7 @@ class QqApiClient {
                 code = groupRaw(bot, newTok, groupOpenid, content, msgId)
             }
         }
-        // ★ v1.206 二次刷新重试：一次刷新后仍 401（token 缓存竞态/官方未即时生效），再刷一次+更长退避
+        // ★ v1.207 二次刷新重试：一次刷新后仍 401（token 缓存竞态/官方未即时生效），再刷一次+更长退避
         if (code == 401) {
             System.err.println("[QQBot] 群消息发送仍 401，二次刷新 AccessToken 重试 ${bot.appid} -> $groupOpenid")
             forceRefreshToken(bot)
@@ -147,7 +147,7 @@ class QqApiClient {
         }
     }
 
-    /** 发送私聊消息（★v1.186 401 自动刷新 AccessToken 重试；★v1.206 二次刷新重试） */
+    /** 发送私聊消息（★v1.186 401 自动刷新 AccessToken 重试；★v1.207 二次刷新重试） */
     fun sendC2cMessage(bot: QqBot, accessToken: String, userOpenid: String, content: String, msgId: String?): Boolean {
         var code = c2cRaw(bot, accessToken, userOpenid, content, msgId)
         var newTok: String? = null
@@ -203,7 +203,7 @@ class QqApiClient {
         }
     }
 
-    /** ★v1.186 强制清除 token 缓存（401 兜底用，下次 getAccessToken 真正换新）；★v1.206 改走静态共享缓存 */
+    /** ★v1.186 强制清除 token 缓存（401 兜底用，下次 getAccessToken 真正换新）；★v1.207 改走静态共享缓存 */
     fun forceRefreshToken(bot: QqBot) {
         forceRefreshTokenKey(bot.appid, bot.useSandbox)
     }
@@ -262,7 +262,7 @@ class QqApiClient {
         }
     }
 
-    /** ★v1.206 发送群图片（富媒体 msg_type=1）；file_url 传图床地址（无则返回失败）
+    /** ★v1.207 发送群图片（富媒体 msg_type=1）；file_url 传图床地址（无则返回失败）
      * QQ 官方机器人 API：POST /v2/groups/{group_openid}/messages
      * {"msg_type":1,"msg_id":"...","media":{"file_info":"..."}}
      * 注：官方要求 file_info 是上传素材/图片消息后返回的 file_info；直接给 URL 需先走上传接口。
@@ -297,7 +297,7 @@ class QqApiClient {
         }
     }
 
-    /** ★v1.206 群消息表态（表情包/比心）：POST /v2/groups/{group_openid}/messages/{message_id}/reaction
+    /** ★v1.207 群消息表态（表情包/比心）：POST /v2/groups/{group_openid}/messages/{message_id}/reaction
      * QQ 官方机器人 API（表情表态，类似发个表情包回应），emojiType 1-5
      */
     fun sendGroupReaction(bot: QqBot, accessToken: String, groupOpenid: String, messageId: String, emojiType: Int = 1): Boolean {
