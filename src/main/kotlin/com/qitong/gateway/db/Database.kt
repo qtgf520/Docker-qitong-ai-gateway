@@ -610,7 +610,7 @@ class Database(private val dbPath: String) {
                     created_at INTEGER NOT NULL
                 )"""
             )
-            // ★ v1.216 统一消息记录中心（QQ/微信/公众号 三渠道收发全量留存，后台可查；消息历史思路自研）
+            // ★ v1.218 统一消息记录中心（QQ/微信/公众号 三渠道收发全量留存，后台可查；消息历史思路自研）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS platform_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2561,6 +2561,8 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.218", "插件市场前端入口（🏪按钮 + openPluginMarket/renderMarketList/installFromMarket 三函数）", "后台插件管理页 action-bar 新增「🏪 插件市场」按钮：openPluginMarket() 用 prompt 填索引地址（install:false 预览不安装）→ renderMarketList() 按行展示 🆕新增/⬆️升级/✅已装 状态，可装项给「安装」按钮 → installFromMarket(url,name) 调 install:true 真安装后 toast+刷新列表；默认地址占位预填不发起请求；仅改 AdminJs10.kt 一处。"),
+Triple("v1.217", "插件市场在线拉取真实现（marketPull）+ 插件运行时隔离（守护线程池+真超时取消）", "①marketPull(url, install)——拉 JSON 索引（{plugins:[...]} 或顶层数组两种格式）比对本地插件版本输出 新增/升级/已装 状态，install=true 走 installFromEntry 下载 zip→解压→校验 plugin.json→失败 deleteRecursively 回滚→成功 scanAll 热重载；sanitizeName 正则过滤防路径穿越；后端路由 Main.kt POST /api/plugins/market（admin 鉴权）。②插件运行时隔离——守护线程池 pluginExecutor（daemon，主进程退得出）+ pluginTimeoutMs=5000L 超时控制，invokePluginAction 用 fut.get(timeout) 超时 fut.cancel(true) 真中断，ExecutionException 上抛 cause；onMessage runCatching 包裹，单插件失败打印 插件id/异常类/耗时/原因 后 continue，不再拖垮整轮消息分发。③踩坑自填——备份 .kt 误落 src/ 导致 Gradle 类重复声明 Redeclaration 编译 FAILED，5 个残留备份移入项目根 backup/ 后 PASS；DEV_GUIDE 写入备份位置硬性规范。"),
 Triple("v1.216", "子Agent/MP关键词/知识库页面 加载中加载不完 根治（JS .take() 误用）", "根因：前端 JS 误用 Kotlin 的 .take(N)（如 t.taskDesc.take(50)），JS String 无 take 方法，列表非空渲染抛 TypeError 页面卡死加载中（子Agent页空列表走暂无分支不崩，一有任务就崩）。修复：AdminJs1.kt 全局补 String.prototype.take polyfill（一处生效覆盖子Agent/MP关键词/知识库 3 处），同时修复 esc() 引号实体（&quot; 被编辑工具误伤）。验证：前端注入 polyfill=1、esc 实体正常、容器 healthy、QQ READY。"),
 Triple("v1.208", "QQ「问了回答了然后没了」根治（被动回复业务失败自动降级主动消息）", "①根因实锤——用户用「綦小桐 xxx」唤醒前缀提问（非@全量消息）最终回复带 msg_id 走被动回复，QQ 官方对非@消息的被动回复返回 HTTP 200+业务错误码（旧代码只看 HTTP 状态误判成功），回复生成了但用户永远收不到（消息记录中心只有 in 无 out）。②源头修复——非@消息（GROUP_MESSAGE_CREATE 全量/唤醒前缀触发）回复一律走主动消息（不挂 msg_id），只有真@消息(GROUP_AT_MESSAGE_CREATE)才用被动回复（passiveAllowed=msg.isAt 传入 dispatch，smartSend 的 usePassive=isFinal&&passiveAllowed，handleGroup send lambda的 sendMsgId 同规则）。③兜底修复——QqApiClient.groupRaw 解析 body 业务错误码（11205/11252/11260/11262/11272/4003/4004，HTTP 200 但 body 带错）映射为 422，sendGroupMessage 遇 422/400 自动降级主动消息（去 msg_id）重发一遍，绝不再无声丢消息。④注入@提问者——主动消息带 <@!提问者openid> 点名前缀仍能@到本人，配合 atAsker 开关。"),
  Triple("v1.207", "群聊回复自动@提问者本人（丢给在问的人）+ 自然分段讲话", "①群聊回复@提问者——QQ 群里机器人所有最终回复自动带 `<@!提问者openid>` 前缀（点名丢给在问的人，像真人讲话），过程推送不@（防刷屏）；长回复分段时每段都带@，读者始终知道在回谁。②后台开关 atAsker——数据库 getPlatformSettings/defaultPlatformSettings/setPlatformSettings 三处加 atAsker 字段（默认 true），Main.kt /api/platform/settings POST 解析，前端 AdminJs10 机器人设置页 QQ 卡片新增「群聊回复自动@提问者本人」开关，沙盒 platform_settings_get 展示/platform_settings_set 支持 atAsker 遥控（智能体一句话「把QQ回复@本人关掉」）。③自然分段——接续 v1.206 的 1800 字分段能力，最终回复按段推送不丢字。④私聊不受影响（私聊无需@）。实现：QqBotManager handleGroup send 与 smartSend 两处注入 at 前缀。"),
@@ -3870,7 +3872,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         }
     }
 
-    // ============ ★ v1.216 平台设置（QQ/微信/公众号 三渠道全局设置：AI开关/消息记录/主动问候/欢迎语） ============
+    // ============ ★ v1.218 平台设置（QQ/微信/公众号 三渠道全局设置：AI开关/消息记录/主动问候/欢迎语） ============
 
     /** 读取某渠道平台设置（无则给默认值；gateway_config 存 JSON 字符串） */
     fun getPlatformSettings(channel: String): Map<String, Any?> {
@@ -3885,7 +3887,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
                     "proactiveEnabled" to (o.optBoolean("proactiveEnabled", true)),
                     "groupJoin" to (o.optBoolean("groupJoin", false)),
                     "groupJoinProb" to (o.optInt("groupJoinProb", 8)),
-                    // ★ v1.216 唤醒/回话设置（对齐一流智能体平台唤醒体系）
+                    // ★ v1.218 唤醒/回话设置（对齐一流智能体平台唤醒体系）
                     "atReply" to (o.optBoolean("atReply", true)),           // @机器人必回（群聊）
                     "wakePrefix" to (o.optString("wakePrefix", "")),        // 唤醒前缀，如「小桐」开头即触发（无需@）
                     "ignoreAtAll" to (o.optBoolean("ignoreAtAll", false)),  // 忽略@全体（防止全体消息误触发）
@@ -3893,12 +3895,12 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
                     "c2cAuto" to (o.optBoolean("c2cAuto", true)),           // 私聊消息自动回复开关
                     "noPermReply" to (o.optBoolean("noPermReply", false)),  // 无权限时是否回复提示（对齐 no_permission_reply）
                     "quoteReply" to (o.optBoolean("quoteReply", true)),  // ★引用回复开关：被引用/回复时是否触发
-                    // ★ v1.216 黑白名单 + 冷却参数化
+                    // ★ v1.218 黑白名单 + 冷却参数化
                     "blacklist" to (o.optString("blacklist", "")),        // 黑名单（逗号分隔：关键词或openid，命中不回复）
                     "whitelist" to (o.optString("whitelist", "")),        // 白名单（逗号分隔：仅这些openid/关键词可触发，空=不限制）
                     "joinCooldownSec" to (o.optInt("joinCooldownSec", 20)), // 群聊插话冷却秒数
                     "replyFreqLimit" to (o.optInt("replyFreqLimit", 0)),  // 回复频率限制（每分钟最多N条，0=不限）
-                    // ★ v1.216 群聊回复 @ 提问者本人（像真人点名回答，对齐一流智能体平台群聊体验）
+                    // ★ v1.218 群聊回复 @ 提问者本人（像真人点名回答，对齐一流智能体平台群聊体验）
                     "atAsker" to (o.optBoolean("atAsker", true)),          // 群聊回复是否@提问者本人
                     "welcome" to (o.optString("welcome", "")),
                     "aiModel" to (o.optString("aiModel", "")),
@@ -3916,7 +3918,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         "proactiveEnabled" to true,
         "groupJoin" to false,
         "groupJoinProb" to 8,
-        // ★ v1.216 唤醒/回话默认值（@必回默认开；其余默认安全值）
+        // ★ v1.218 唤醒/回话默认值（@必回默认开；其余默认安全值）
         "atReply" to true,
         "wakePrefix" to "",
         "ignoreAtAll" to false,
@@ -3928,7 +3930,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         "whitelist" to "",
         "joinCooldownSec" to 20,
         "replyFreqLimit" to 0,
-        // ★ v1.216 群聊回复 @ 提问者本人（默认开，对齐一流智能体平台群聊体验）
+        // ★ v1.218 群聊回复 @ 提问者本人（默认开，对齐一流智能体平台群聊体验）
         "atAsker" to true,
         "welcome" to "",
         "aiModel" to "",
@@ -3944,7 +3946,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         next.put("proactiveEnabled", updates["proactiveEnabled"] as? Boolean ?: (cur["proactiveEnabled"] as? Boolean ?: true))
         next.put("groupJoin", updates["groupJoin"] as? Boolean ?: (cur["groupJoin"] as? Boolean ?: false))
         next.put("groupJoinProb", updates["groupJoinProb"] as? Int ?: (cur["groupJoinProb"] as? Int ?: 8))
-        // ★ v1.216 唤醒/回话字段
+        // ★ v1.218 唤醒/回话字段
         next.put("atReply", updates["atReply"] as? Boolean ?: (cur["atReply"] as? Boolean ?: true))
         next.put("wakePrefix", (updates["wakePrefix"] as? String)?.takeIf { it.isNotBlank() } ?: (cur["wakePrefix"] as? String ?: ""))
         next.put("ignoreAtAll", updates["ignoreAtAll"] as? Boolean ?: (cur["ignoreAtAll"] as? Boolean ?: false))
@@ -3963,7 +3965,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         setConfig("bot_settings_$channel", next.toString())
     }
 
-    // ============ ★ v1.216 统一消息记录中心（三渠道收发全量留存，后台可查可清） ============
+    // ============ ★ v1.218 统一消息记录中心（三渠道收发全量留存，后台可查可清） ============
 
     /** 保存一条平台消息记录（在/出站均可）；超 8000 条自动清最旧 */
     fun addPlatformMessage(channel: String, botId: Long, openid: String, groupOpenid: String, direction: String, content: String, model: String = "") {

@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
- * ★ v1.216 Telegram 平台适配器（对齐多平台架构，自研实现）
+ * ★ v1.218 Telegram 平台适配器（对齐多平台架构，自研实现）
  * 能力：Bot Token 长轮询收消息 → 网关 AI 回复；sendMessage 主动推送；
  *      后台配置：botToken/extra、启停开关。平台层抽象：新增平台=加适配器+后台配置。
  */

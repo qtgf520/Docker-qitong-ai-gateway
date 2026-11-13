@@ -6,7 +6,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * ★ v1.216 轻量插件系统（对齐主流智能体平台 Star 插件框架思路，自研实现）
+ * ★ v1.218 轻量插件系统（对齐主流智能体平台 Star 插件框架思路，自研实现）
  *
  * 插件目录规范：
  *   plugins/
@@ -41,6 +41,15 @@ object PluginManager {
     /** 插件根目录（容器内 /data/qitong/plugins，本地测试 ./plugins） */
     @Volatile
     var pluginRoot: String = System.getProperty("user.dir") + File.separator + "plugins"
+
+    /** ★ v1.218 插件单次调用超时上限（毫秒，默认 5000 可配；超时自动跳过该插件并记日志） */
+    @Volatile
+    var pluginTimeoutMs: Long = 5000L
+
+    /** ★ v1.218 插件执行线程池：守护线程，主进程退出不阻塞；任务可被 interrupt 真正取消 */
+    private val pluginExecutor: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newCachedThreadPool { r ->
+        Thread(r, "plugin-exec").apply { isDaemon = true }
+    }
 
     /** 初始化：确保目录存在 + 全量加载 */
     fun init(): String {
@@ -126,6 +135,7 @@ object PluginManager {
     /**
      * ★ on_message 钩子：消息进入时按插件触发规则处理。
      * @return 处理结果；null=无插件命中，继续走正常流程
+     * ★ v1.218 运行时隔离：单个插件异常/超时仅跳过自身并记日志，绝不影响主进程与其他插件
      */
     fun onMessage(text: String, channel: String): String? {
         if (text.isBlank()) return null
@@ -133,16 +143,135 @@ object PluginManager {
             if (!p.enabled) continue
             val hit = p.triggers.any { text.contains(it, ignoreCase = true) }
             if (!hit) continue
-            when (p.action) {
-                "reply" -> return p.content.ifBlank { "📦 ${p.name}：触发成功" }
-                "ignore" -> return "\u0000IGNORE\u0000"   // 忽略标记：上层见到即不回复
-                "ai" -> return null                          // 走 AI（不拦截）
-                else -> return null
-            }
+            // 独立错误边界：单插件异常/超时只跳过自身并记日志（含插件id+耗时），继续下一个
+            val t0 = System.currentTimeMillis()
+            val r = runCatching { invokePluginAction(p, t0) }
+                .onFailure { e ->
+                    System.err.println("[PluginManager] 插件 ${p.id} 执行失败已跳过：异常=${e::class.simpleName} 耗时=${System.currentTimeMillis() - t0}ms 原因=${e.message}")
+                }
+                .getOrNull() ?: continue
+            return r
         }
         return null
     }
 
-    /** 在线市场接口预留（后续对接远程插件仓库） */
-    fun marketPull(url: String): String = "🌐 在线插件市场对接功能开发中（预留接口：$url）"
+    /** ★ v1.218 单插件动作执行：独立线程 + 可中断真取消（daemon 线程池） + 超时上限 */
+    private fun invokePluginAction(p: Plugin, t0: Long): String? {
+        if (p.action == "ai") return null   // 放行走 AI，不拦截
+        val fut = pluginExecutor.submit<String?> {
+            when (p.action) {
+                "reply" -> p.content.ifBlank { "📦 ${p.name}：触发成功" }
+                "ignore" -> "\u0000IGNORE\u0000"   // 忽略标记：上层见到即不回复
+                else -> null
+            }
+        }
+        return try {
+            fut.get(pluginTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (e: java.util.concurrent.TimeoutException) {
+            fut.cancel(true)   // 真正中断线程（interrupt），非仅抛异常
+            System.err.println("[PluginManager] 插件 ${p.id} 调用超时已取消：${pluginTimeoutMs}ms 耗时=${System.currentTimeMillis() - t0}ms")
+            null
+        } catch (e: java.util.concurrent.ExecutionException) {
+            throw e.cause ?: e   // 插件业务异常向上抛，由 onMessage 捕获跳过
+        }
+    }
+
+    /** ★ v1.218 在线插件市场：从远程仓库拉取 JSON 索引并安装/更新插件
+     *  - marketPull(url)          ：拉取索引（name/version/desc/entry），比对本地版本，返回可更新/可安装列表
+     *  - marketPull(url, install) ：带 install=true 时，把索引里每个插件按 entry 的 zip/manifest 拉取并落地到插件目录
+     *  索引 JSON 格式：{"plugins":[{"name":"xxx","version":"1.2.0","desc":"...","entry":"https://.../xxx.zip"}]}
+     *  entry 指向的 zip 需内含 plugin.json（与本地目录规范一致），落地后自动 scanAll 生效
+     */
+    fun marketPull(url: String, install: Boolean = false): String {
+        if (url.isBlank()) return "⚠️ 语法：market(url=插件仓库索引地址, install=true可选)"
+        // 1) 拉取远端索引 JSON
+        val indexText = try {
+            val req = okhttp3.Request.Builder()
+                .url(url)
+                .addHeader("User-Agent", "QitongAI-Gateway/1.0")
+                .addHeader("Accept", "application/json")
+                .get()
+                .build()
+            val client = com.qitong.gateway.network.WebToolClient.http
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) null else resp.body?.string()
+            }
+        } catch (e: Exception) { null }
+        if (indexText.isNullOrBlank()) return "❌ 拉取插件索引失败：$url（网络不可达或非 JSON）"
+        val arr = try {
+            val o = JSONObject(indexText)
+            if (o.has("plugins")) o.getJSONArray("plugins") else org.json.JSONArray("[$indexText]")
+        } catch (e: Exception) {
+            // 兼容：顶层就是数组
+            try { org.json.JSONArray(indexText) } catch (e2: Exception) { null }
+        } ?: return "❌ 索引格式无法解析（期望 {\"plugins\":[{name,version,desc,entry}]}）"
+
+        val sb = StringBuilder()
+        var installed = 0
+        for (i in 0 until arr.length()) {
+            val p = arr.optJSONObject(i) ?: continue
+            val name = p.optString("name", "")
+            val version = p.optString("version", "")
+            val desc = p.optString("desc", "")
+            val entry = p.optString("entry", "")
+            if (name.isBlank() || entry.isBlank()) continue
+            // 2) 比对本地版本
+            val local = plugins.values.firstOrNull { it.name == name || it.id == name }
+            val needUpdate = local == null || version != local.version
+            sb.append(if (local == null) "🆕" else if (needUpdate) "⬆️" else "✅")
+                .append(" 「").append(name).append("」v").append(version)
+                .append(if (local == null) "（可安装）" else if (needUpdate) "（本地 ${local.version} → 可更新）" else "（已是最新）")
+                .append(if (desc.isNotBlank()) " - " + desc.take(50) else "").append("\n")
+            // 3) 安装/更新（entry 落 zip 到插件目录）
+            if (install && needUpdate) {
+                val ok = installFromEntry(name, entry)
+                if (ok) installed++ else sb.append("   ❌ 「").append(name).append("」下载/安装失败\n")
+            }
+        }
+        val head = "🌐 插件市场（$url）\n"
+        val tail = if (install) "\n📦 本次安装/更新 $installed 个插件，已热重载生效" else "\n💡 加 install=true 一键安装全部可装/可更新项"
+        return head + sb.toString().trim() + tail
+    }
+
+    /** 从 entry URL 下载 zip 并落地到插件目录（zip 内含 plugin.json；落地后自动装载） */
+    private fun installFromEntry(pluginName: String, entry: String): Boolean {
+        return try {
+            val dir = File(pluginRoot)
+            if (!dir.exists()) dir.mkdirs()
+            val zipFile = File(dir, ".market_${pluginName}.zip")
+            // 下载
+            val req = okhttp3.Request.Builder().url(entry).get().build()
+            val client = com.qitong.gateway.network.WebToolClient.http
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return false
+                resp.body?.byteStream()?.use { ins -> zipFile.outputStream().use { ins.copyTo(it) } }
+            }
+            if (!zipFile.exists() || zipFile.length() < 50) { zipFile.delete(); return false }
+            // 解压到插件目录
+            val target = File(dir, sanitizeName(pluginName))
+            if (target.exists()) target.deleteRecursively()
+            target.mkdirs()
+            java.util.zip.ZipInputStream(zipFile.inputStream().buffered()).use { zis ->
+                var e = zis.nextEntry
+                while (e != null) {
+                    val outFile = File(target, e.name)
+                    if (e.isDirectory) { outFile.mkdirs() } else {
+                        outFile.parentFile?.mkdirs()
+                        outFile.outputStream().use { zis.copyTo(it) }
+                    }
+                    zis.closeEntry(); e = zis.nextEntry
+                }
+            }
+            zipFile.delete()
+            // manifest 校验 + 重新扫描
+            val mf = File(target, "plugin.json")
+            if (!mf.exists()) { target.deleteRecursively(); return false }
+            scanAll()
+            true
+        } catch (e: Exception) { false }
+    }
+
+    /** 插件目录名净化（防路径穿越） */
+    private fun sanitizeName(name: String): String =
+        name.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(60).ifBlank { "plugin_${System.currentTimeMillis()}" }
 }

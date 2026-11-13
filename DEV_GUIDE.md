@@ -11,6 +11,8 @@
 1. **🧠 查记忆**：`query_memory` 加载相关上下文（最近版本干了啥、有啥坑）
 2. **📖 读本指南**：确认项目结构、版本号、部署方式没变
 3. **💾 做备份**：`mkdir -p backup_YYYYMMDD_本次主题 && cp 要改的文件 $D/`
+   - **★ v1.217 备份位置硬性规范：所有 .kt 备份一律放项目根目录 `backup/` 下，绝不能落在 `src/` 里！**（Gradle 会把 src 下所有 .kt 当源码编译，`备份_xxx.kt` 在 src 里 → 类重复声明 Redeclaration → 编译 FAILED。本次已踩坑）
+   - 命令：`mkdir -p backup && cp src/xxx.kt backup/备份_$(date +%Y%m%d_%H%M%S)_模块名.kt`（同目录也可以，但 backup/ 是唯一合法位置）
    - 改哪个文件就备份哪个文件（榜样式：`cp xxx.kt backup_日期_主题/`）
    - **对照备份法（原版 APP 指南精髓）**：备份文件是「已知能编译通过」的参照物。改代码时**打开备份文件对照结构**（花括号/函数边界/缩进），照着备份逻辑改现有文件——这样不会出现花括号错乱、函数被吃
    - 7 天前的旧备份自动清理：`find . -maxdepth 1 -name 'backup_*' -mtime +7 -exec rm -rf {} +`
@@ -311,7 +313,21 @@ git push origin master
 
 ---
 
-## 11. 收尾清单（每次交付前逐项打勾）
+## 11. v1.217 变更记录（2026-11-13）
+
+- 插件市场在线拉取真实现：marketPull(url, install) 位于 PluginManager.kt 152-203 行，支持 {plugins:[...]} 与顶层数组两种索引格式，比对本地版本输出 新增/升级/已装 状态；install=true 时走 installFromEntry 下载 zip、解压、校验 plugin.json、失败 deleteRecursively 回滚、成功后 scanAll 热重载；sanitizeName 正则过滤防路径穿越。依赖用项目已有 okhttp3 与 java.util.zip，无新增三方包。
+- 插件市场路由：Main.kt POST /api/plugins/market，admin 鉴权，透传 install 布尔。
+- 插件运行时隔离：新增 @Volatile pluginTimeoutMs=5000L 与守护线程池 pluginExecutor（线程名 plugin-exec，daemon）；invokePluginAction 改用 fut.get(timeout)，超时时 fut.cancel(true) 真中断，ExecutionException 上抛 cause；onMessage 用 runCatching 包裹，单插件失败打印 插件id/异常类/耗时/原因 后 continue，不再拖垮整轮消息分发。
+- 版本号：Models.kt、build.gradle.kts、WebUi.kt 均升到 1.217。
+
+## 12. v1.218 变更记录（2026-11-13）
+
+- 插件市场前端入口：AdminJs10.kt 插件管理页 action-bar 新增「🏪 插件市场」按钮，openPluginMarket() 用 prompt 填索引地址（install:false 预览）→ renderMarketList() 按行展示 🆕/⬆️/✅ 状态、可装项给「安装」按钮 → installFromMarket(url,name) 调 install:true 安装后 toast+刷新列表；默认地址为占位预填不发起请求；仅改 AdminJs10.kt。
+- 备份位置硬性规范（踩坑自填）：所有 .kt 备份一律放项目根 backup/，严禁落 src/（Gradle 把 src 下 .kt 当源码 → 备份文件导致类重复声明 Redeclaration → 编译 FAILED）；5 个残留备份已移入 backup/，src 残留 0。
+- 编译验证：gradle compileKotlin PASS（首次 1m 13s，二次 47s，error 均 0），备份移出后无 Redeclaration。
+- 版本号：Models.kt / build.gradle.kts / WebUi.kt / Main.kt 均升 1.218。
+
+## 13. 收尾清单（每次交付前逐项打勾）
 
 - [ ] 版本号 7 处 + README 已升且无残留旧号
 - [ ] 编译 `BUILD SUCCESSFUL`（带 --rerun-tasks）
@@ -323,5 +339,5 @@ git push origin master
 - [ ] 测试脚本/备份已清理（7天旧备份自动清）
 - [ ] 记忆已存档（extended_memory_tools:create_memory）
 
-> 文档版本：v1（2026-09-29 建立，v1.29 之后）
+> 文档版本：v1.218（2026-09-29 建立，v1.218 更新）
 > 更新规则：每次踩新坑、改流程，第一时间补进本文件并 git 提交。

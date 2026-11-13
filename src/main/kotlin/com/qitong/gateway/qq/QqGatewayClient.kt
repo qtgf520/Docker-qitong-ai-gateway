@@ -178,18 +178,25 @@ class QqGatewayClient(
                             )
                         )
                     }
-                    // ★ v1.216 群全量消息（不@也推送）：需机器人在开放平台开启「接收所有消息」权限后才会收到
+                    // ★ v1.218 群全量消息（不@也推送）：需机器人在开放平台开启「接收所有消息」权限后才会收到
                     "GROUP_MESSAGE_CREATE" -> {
                         lastDispatchAtMs = System.currentTimeMillis()
                         val d = obj.optJSONObject("d") ?: return
-                        // 全量消息里也可能夹带@机器人的内容（author 是发言者而非@者，这里 content 若去除@后为空也照常推）
+                        // ★ v1.219 全量消息里若 content 含 <@32位hex>（@某人语法）→ 视为被@必回；
+                        //   排除发送者自己 @ 自己的情况（memberOpenid 不在 content 的 <@...> 里则视为 @ 了别人/机器人）
+                        val contentRaw = d.optString("content")
+                        val memberOpenid = d.optJSONObject("author")?.optString("member_openid") ?: ""
+                        val atMention = Regex("<@[0-9A-Fa-f]{32}>").containsMatchIn(contentRaw)
+                        val atSelf = contentRaw.contains("<@$memberOpenid>")
+                        // 有 @ 某人且不是 @ 自己 → 认定为被@消息（机器人是群里成员之一，@ 群成员通常含机器人）
+                        val isAtMsg = atMention && !atSelf
                         onGroupMessage(
                             QqGroupMessage(
                                 msgId = d.optString("id"),
                                 groupOpenid = d.optString("group_openid"),
-                                content = d.optString("content"),
-                                memberOpenid = d.optJSONObject("author")?.optString("member_openid") ?: "",
-                                isAt = false,
+                                content = contentRaw,
+                                memberOpenid = memberOpenid,
+                                isAt = isAtMsg,
                                 memberName = d.optJSONObject("author")?.optString("member_name") ?: ""
                             )
                         )
@@ -211,7 +218,7 @@ class QqGatewayClient(
                 lastHeartbeatAckAt = System.currentTimeMillis()
                 heartbeatSentWithoutAck = 0
             }
-            9 -> { // Invalid Session → 强制换新 token 后重连（★v1.216 断登根治：旧 token 已被 QQ 吊销，继续用旧 token identify 会无限 INVALID_SESSION 循环）
+            9 -> { // Invalid Session → 强制换新 token 后重连（★v1.218 断登根治：旧 token 已被 QQ 吊销，继续用旧 token identify 会无限 INVALID_SESSION 循环）
                 System.out.println("[QQBot] ${bot.appid} invalid session，强制刷新 AccessToken 后重连")
                 // 清共享 token 缓存 → 下次 connect() 里 onTokenRefresh 会换新 token（不再拿死 token 反复 identify）
                 runCatching {
