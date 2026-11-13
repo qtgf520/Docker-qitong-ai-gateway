@@ -118,7 +118,7 @@ object LinuxSystemManager {
                 conn.connectTimeout = 20_000
                 conn.readTimeout = 120_000
                 conn.instanceFollowRedirects = true
-                conn.setRequestProperty("User-Agent", "QiTongGateway/1.219")
+                conn.setRequestProperty("User-Agent", "QiTongGateway/1.220")
                 conn.connect()
                 if (conn.responseCode !in 200..399) {
                     installStates[distroId] = InstallState(distroId, "failed", 0, "下载失败 HTTP ${conn.responseCode}")

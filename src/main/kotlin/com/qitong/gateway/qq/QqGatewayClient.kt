@@ -27,7 +27,9 @@ class QqGatewayClient(
     private val onGroupMessage: (QqGroupMessage) -> Unit,
     private val onC2cMessage: (QqC2cMessage) -> Unit,
     private val onStatusChange: (QqBotStatus, String) -> Unit,
-    private val onTokenRefresh: () -> String? = { null }
+    private val onTokenRefresh: () -> String? = { null },
+    /** ★ v1.219 握手 READY 时回调机器人自身 openid（供上层持久化） */
+    private val onBotOpenid: (String) -> Unit = {}
 ) {
     private val client = OkHttpClient.Builder()
         .pingInterval(0, TimeUnit.SECONDS) // 用业务心跳，不用 OkHttp ping
@@ -157,12 +159,20 @@ class QqGatewayClient(
                 when (obj.optString("t")) {
                     "READY" -> {
                         sessionId = obj.optJSONObject("d")?.optString("session_id")
+                        // ★ v1.219 握手 READY 时解析机器人自身 openid 并回调上层持久化（重连不丢，入站@精确匹配用）
+                        val dReady = obj.optJSONObject("d")
+                        val myOpenid = dReady?.optJSONObject("user")?.optString("id")
+                            ?: dReady?.optJSONObject("user")?.optString("openid")
+                            ?: ""
+                        if (myOpenid.isNotBlank() && myOpenid != bot.botOpenid) {
+                            runCatching { onBotOpenid(myOpenid) }
+                        }
                         backoffMs = 2000L
                         consecutiveFailures = 0   // ★ v1.166 连上即复位，下次掉线从 2s 重新退避
                         readyAtMs = System.currentTimeMillis()
                         lastDispatchAtMs = System.currentTimeMillis()  // READY 本身也算通道活性
                         onStatusChange(QqBotStatus.ONLINE, "上线 session=$sessionId")
-                        System.out.println("[QQBot] ${bot.appid} READY，机器人上线")
+                        System.out.println("[QQBot] ${bot.appid} READY，机器人上线 botOpenid=$myOpenid")
                     }
                     "GROUP_AT_MESSAGE_CREATE" -> {
                         lastDispatchAtMs = System.currentTimeMillis()
@@ -183,13 +193,14 @@ class QqGatewayClient(
                         lastDispatchAtMs = System.currentTimeMillis()
                         val d = obj.optJSONObject("d") ?: return
                         // ★ v1.219 全量消息里若 content 含 <@32位hex>（@某人语法）→ 视为被@必回；
-                        //   排除发送者自己 @ 自己的情况（memberOpenid 不在 content 的 <@...> 里则视为 @ 了别人/机器人）
+                        //   改为精确匹配机器人自身 openid（READY 握手持久化到 bot.botOpenid）；
+                        //   未拿到 openid 时退化为「有@且非@发送者本人」近似判断
                         val contentRaw = d.optString("content")
                         val memberOpenid = d.optJSONObject("author")?.optString("member_openid") ?: ""
+                        val botOpenid = bot.botOpenid
                         val atMention = Regex("<@[0-9A-Fa-f]{32}>").containsMatchIn(contentRaw)
-                        val atSelf = contentRaw.contains("<@$memberOpenid>")
-                        // 有 @ 某人且不是 @ 自己 → 认定为被@消息（机器人是群里成员之一，@ 群成员通常含机器人）
-                        val isAtMsg = atMention && !atSelf
+                        val isAtMsg = if (botOpenid.isNotBlank()) contentRaw.contains("<@$botOpenid>")
+                            else atMention && !contentRaw.contains("<@$memberOpenid>")
                         onGroupMessage(
                             QqGroupMessage(
                                 msgId = d.optString("id"),

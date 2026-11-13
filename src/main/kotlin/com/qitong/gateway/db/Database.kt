@@ -504,6 +504,7 @@ class Database(private val dbPath: String) {
                     app_secret TEXT NOT NULL DEFAULT '',
                     use_sandbox INTEGER NOT NULL DEFAULT 0,
                     name TEXT NOT NULL DEFAULT '',
+                    bot_openid TEXT NOT NULL DEFAULT '',
                     enabled INTEGER NOT NULL DEFAULT 1,
                     ai_model TEXT NOT NULL DEFAULT 'qtai-sj',
                     system_prompt TEXT NOT NULL DEFAULT '',
@@ -514,6 +515,8 @@ class Database(private val dbPath: String) {
             // 旧库迁移：补 app_secret / use_sandbox 列（已存在则忽略）
             runCatching { st.executeUpdate("ALTER TABLE qq_bots ADD COLUMN app_secret TEXT NOT NULL DEFAULT ''") }
             runCatching { st.executeUpdate("ALTER TABLE qq_bots ADD COLUMN use_sandbox INTEGER NOT NULL DEFAULT 0") }
+            // ★ v1.219 机器人自身 openid 持久化（握手 READY 写入；入站@精确匹配用）平滑升级
+            runCatching { st.executeUpdate("ALTER TABLE qq_bots ADD COLUMN bot_openid TEXT NOT NULL DEFAULT ''") }
             // ★ v69 微信 ilink 机器人（多号管理，对齐 qq_bots）
             st.executeUpdate(
                 """CREATE TABLE IF NOT EXISTS weixin_bots (
@@ -3135,6 +3138,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
                 "appSecret" to (row["app_secret"] as? String ?: ""),
                 "useSandbox" to ((row["use_sandbox"] as? Number)?.toInt() == 1),
                 "name" to (row["name"] as? String ?: ""),
+                "botOpenid" to (row["bot_openid"] as? String ?: ""),
                 "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
                 "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
                 "systemPrompt" to (row["system_prompt"] as? String ?: ""),
@@ -3152,6 +3156,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
                 "appSecret" to (row["app_secret"] as? String ?: ""),
                 "useSandbox" to ((row["use_sandbox"] as? Number)?.toInt() == 1),
                 "name" to (row["name"] as? String ?: ""),
+                "botOpenid" to (row["bot_openid"] as? String ?: ""),
                 "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
                 "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
                 "systemPrompt" to (row["system_prompt"] as? String ?: ""),
@@ -3168,6 +3173,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
                 "appSecret" to (row["app_secret"] as? String ?: ""),
                 "useSandbox" to ((row["use_sandbox"] as? Number)?.toInt() == 1),
                 "name" to (row["name"] as? String ?: ""),
+                "botOpenid" to (row["bot_openid"] as? String ?: ""),
                 "enabled" to ((row["enabled"] as? Number)?.toInt() == 1),
                 "aiModel" to (row["ai_model"] as? String ?: "qtai-sj"),
                 "systemPrompt" to (row["system_prompt"] as? String ?: ""),
@@ -3191,6 +3197,12 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
             appid, token, appSecret, if (useSandbox) 1 else 0, name, if (enabled) 1 else 0, aiModel, systemPrompt, welcome, System.currentTimeMillis()
         )
         return queryOne("SELECT id FROM qq_bots WHERE appid=?", appid) ?: 0
+    }
+
+    fun updateQqBotOpenid(id: Long, botOpenid: String) {
+        if (id <= 0 || botOpenid.isBlank()) return
+        try { stmt("UPDATE qq_bots SET bot_openid=? WHERE id=?", botOpenid, id) }
+        catch (e: Exception) { System.err.println("[DB] updateQqBotOpenid 失败: ${e.message}") }
     }
 
     fun deleteQqBot(id: Long) {

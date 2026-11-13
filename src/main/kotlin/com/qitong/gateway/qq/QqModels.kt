@@ -19,7 +19,9 @@ data class QqBot(
     val enabled: Boolean,
     val aiModel: String,
     val systemPrompt: String,
-    val welcome: String
+    val welcome: String,
+    /** ★ v1.219 机器人自身 openid（握手 READY 时写入持久化；入站@精确匹配用） */
+    val botOpenid: String = ""
 ) {
     /** 鉴权头（新版 AccessToken 方式） */
     fun authHeader(accessToken: String? = null): String {

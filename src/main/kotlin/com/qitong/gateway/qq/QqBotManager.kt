@@ -360,7 +360,9 @@ object QqBotManager {
         enabled = (row["enabled"] as? Boolean) ?: true,
         aiModel = row["aiModel"] as? String ?: "qtai-sj",
         systemPrompt = row["systemPrompt"] as? String ?: "",
-        welcome = row["welcome"] as? String ?: ""
+        welcome = row["welcome"] as? String ?: "",
+        // ★ v1.219 机器人自身 openid（READY 握手持久化；入站@精确匹配用）
+        botOpenid = row["botOpenid"] as? String ?: ""
     )
 
     /** ★ v76 公开版 botFromRow（沙盒启停 QQ 机器人用） */
@@ -401,7 +403,15 @@ object QqBotManager {
                 } catch (e: Exception) { /* 日志失败不影响状态 */ }
             },
             // ★ 掉线自动重登：重连时用 AppID+AppSecret 重新换 AccessToken，防止 token 过期后永远连不上
-            onTokenRefresh = { api.getAccessToken(bot) }
+            onTokenRefresh = { api.getAccessToken(bot) },
+            // ★ v1.219 握手 READY 时持久化机器人自身 openid（重连不丢；入站@精确匹配用）
+            onBotOpenid = { myOpenid ->
+                if (myOpenid.isNotBlank() && myOpenid != bot.botOpenid) {
+                    runCatching { db.updateQqBotOpenid(bot.id, myOpenid) }
+                    runCatching { db.addQqLog(bot.appid, "", "", "bot_status", "✅ 已记录机器人 openid: $myOpenid", 0) }
+                    System.out.println("[QQBot] ${bot.appid} 持久化 botOpenid=$myOpenid")
+                }
+            }
         )
         clients[bot.id] = client
         // 新版鉴权：先换 AccessToken（AppID+AppSecret），失败则直接报错不连接
