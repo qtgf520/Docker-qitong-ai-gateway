@@ -7,7 +7,9 @@ var token = localStorage.getItem('qt_token') || '';
 if(!token){ location.href='/login'; }
 var state = { providers: [], models: [], keys: [], rules: [], conversations: [], currentChatConv: 0 };
 function $(id){ return document.getElementById(id); }
-function esc(s){ if(s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
+function esc(s){ if(s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;').replace(/\"/g,'&quot;'); }
+// ★ v1.216 修复「页面加载中…加载不完」：JS 误用 Kotlin 的 .take(N)——String 无此方法，渲染列表抛 TypeError 卡死；补 polyfill 全局生效（subagent/MP关键词/知识库 3 处）
+String.prototype.take = function(n){ return this.length > n ? this.slice(0, n) : this; };
 function toast(msg, ok){ var t=$('toast'); t.textContent=msg; t.className='toast show '+(ok?'ok':'err'); setTimeout(function(){ t.className='toast'; }, 2600); }
 function fmtBytes(b){ b=b||0; if(b<1024)return b+'B'; if(b<1048576)return(b/1024).toFixed(1)+'KB'; if(b<1073741824)return(b/1048576).toFixed(1)+'MB'; return(b/1073741824).toFixed(2)+'GB'; }
 function fmtNum(n){ n=n||0; return n.toLocaleString?n.toLocaleString():String(n); }
@@ -62,7 +64,7 @@ function api(url, opts){
  var headers = { 'Authorization': 'Bearer ' + token };
  var body = opts.body;
  if(body && typeof body === 'object'){ headers['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
- // ★ v1.215 修复「加载中一直显示」：fetch 默认无超时，网络挂起时 promise 永不 resolve → 占位加载文案永不替换
+ // ★ v1.216 修复「加载中一直显示」：fetch 默认无超时，网络挂起时 promise 永不 resolve → 占位加载文案永不替换
  //   加 15s 超时 AbortController，超时返回明确的网络错误标志（调用方可自行判断展示错误占位）
  return new Promise(function(resolve){
   var ctrl = null;
@@ -82,7 +84,7 @@ function api(url, opts){
   });
  });
 }
-/** ★ v1.215 带加载态控制的统一请求：setLoading 可传函数或元素ID；失败自动替换"加载中"为错误提示 */
+/** ★ v1.216 带加载态控制的统一请求：setLoading 可传函数或元素ID；失败自动替换"加载中"为错误提示 */
 function apiL(url, opts, loadingEl){
  var el = typeof loadingEl === 'string' ? document.getElementById(loadingEl) : loadingEl;
  var setLoading = function(txt){ if(el) el.innerHTML = txt; };
