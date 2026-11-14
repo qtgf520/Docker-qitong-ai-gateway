@@ -384,7 +384,7 @@ loaders.mp = function(){
   }).join('');
   el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>公众号</th><th>状态</th><th>能力</th><th>AI模型</th><th>Webhook 地址（微信公众平台填这个）</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
    '<div style="font-size:11px;color:var(--muted);margin-top:8px">📌 配置步骤：① 填好 AppID/AppSecret/Token → ② 复制 Webhook 地址到微信公众平台「设置→公众号设置→功能设置→服务器配置」→ ③ URL 填该地址、Token 填你上面填的、加密方式选「明文模式」（本期推荐）→ 提交即完成对接</div>';
-  $('#mpWebHint').textContent = '已配置 ' + list.length + ' 个公众号';
+  $('mpWebHint').textContent = '已配置 ' + list.length + ' 个公众号';
  });
  loaders.mpLogs(0);
 };
@@ -519,7 +519,7 @@ loaders.kb = function(){
  api('/api/kb/bases').then(function(r){
   var list = r.data || [];
   var el = $('kbList'); if(!el) return;
-  if(!list.length){ el.innerHTML = '<div style="color:var(--muted)">暂无知识库。点击「+ 新建知识库」创建，然后在详情里上传文档（txt/md 内容），AI 将能基于你的资料智能回答。</div>'; $('#kbHint').textContent='未创建'; return; }
+  if(!list.length){ el.innerHTML = '<div style="color:var(--muted)">暂无知识库。点击「+ 新建知识库」创建，然后在详情里上传文档（txt/md 内容），AI 将能基于你的资料智能回答。</div>'; $('kbHint').textContent='未创建'; return; }
   var rows = list.map(function(b){
    return '<tr>' +
     '<td><b>'+esc(b.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(b.description||'')+'</div></td>' +
@@ -531,7 +531,7 @@ loaders.kb = function(){
   }).join('');
   el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>知识库</th><th>可见性</th><th>文档</th><th>分块</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>' +
    '<div style="font-size:11px;color:var(--muted);margin-top:8px">💡 使用：上传你的资料（如产品说明/操作手册/业务规范）→ 在 QQ/微信/公众号/内置聊天里问相关问题时，智能体会自动检索知识库回答，基于文档内容精准回复。</div>';
-  $('#kbHint').textContent = '共 ' + list.length + ' 个知识库';
+  $('kbHint').textContent = '共 ' + list.length + ' 个知识库';
  });
 };
 window.kbShow = function(id, name){
@@ -635,7 +635,7 @@ function loadSubagentTasks(){
  api('/api/subagent/tasks').then(function(r){
   var list = r.data || [];
   var el = $('subAgentList'); if(!el) return;
-  $('#subAgentHint').textContent = '共 ' + list.length + ' 个任务';
+  $('subAgentHint').textContent = '共 ' + list.length + ' 个任务';
   if(!list.length){ el.innerHTML = '<div style="color:var(--muted)">暂无子任务。主 Agent（智能体）在处理复杂任务时会派发子 Agent 后台并行执行，这里可查看结果。</div>'; return; }
   var rows = list.map(function(t){
    var stBadge = t.status==='done' ? '<span class="badge green">完成</span>' : (t.status==='failed' ? '<span class="badge red">失败</span>' : '<span class="badge cyan">运行中</span>');
