@@ -95,14 +95,15 @@ object MpBrain {
                     break
                 }
 
-                // 有调用 → 推模型思考话术(剥标签后的人话，不再限行动词)
-                val rawSpoken = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(modelOut).trim().replace(Regex("\\s+"), " ")
-                val spokenShort = rawSpoken.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
-                if (spokenShort.length in 2..60 && spokenShort != lastSpoken &&
-                    !spokenShort.contains("工具执行结果") && !spokenShort.contains("调用结果") &&
-                    !spokenShort.startsWith("第") && !spokenShort.contains("步执行") && !spokenShort.contains("已完成")) {
-                    lastSpoken = spokenShort
-                    pSend("💭 $spokenShort")
+                // ★ v1.226 学 AstrBot：真实思考由 reasoning_content 推理链提供（对齐 QQ/微信）
+                //   正文不再当思考推（避免重复/假思考）；有调用轮次的正文仅用于解析工具
+                val reasonTxt = com.qitong.gateway.sandbox.SandboxEngine.parseReasoningFromContent(modelOut) ?: ""
+                if (reasonTxt.isNotBlank()) {
+                    val r2 = reasonTxt.replace(Regex("\\s+"), " ").take(200)
+                    if (r2.length >= 2 && r2 != lastSpoken && !r2.contains("工具执行结果")) {
+                        lastSpoken = r2
+                        pSend("💭 $r2")
+                    }
                 }
 
                 val fn = calls.first().first

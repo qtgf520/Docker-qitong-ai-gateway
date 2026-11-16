@@ -512,6 +512,7 @@ $KNOWLEDGE_JSON
      * 必须从回传模型的上下文里抹掉，否则模型下一轮照抄 → parseCalls 再次命中 → 工具被执行第二遍）。
      * 保留其余正文文本。
      */
+    /** 清洗 [[沙盒:...]]、<dots_function_call>/<function_call>/<invoke> 标签与自然语言调用描述，保留正文 */
     fun cleanCallTags(text: String): String {
         if (text.isBlank()) return text
         var out = text
@@ -536,6 +537,39 @@ $KNOWLEDGE_JSON
         out = out.replace(Regex("""(?:调用|执行|使用|准备调用)\s+(?:了)?\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)"""), "")
         out = out.replace(Regex("""我需要调用\s*([a-zA-Z_][a-zA-Z0-9_]*)\([^)]*\)"""), "")
         return out.trim()
+    }
+
+    /**
+     * ★ v1.226 学 AstrBot：从模型输出里提取真实推理链（reasoning_content / reasoning / think 标签）。
+     *   DeepSeek R1/Qwen3 等推理模型在返回正文前会输出独立思考链；AstrBot 将其作为独立事件流推送。
+     *   兼容两种形态：
+     *   1) 内嵌标签：<reasoning>...</reasoning> / <think>...</think> / ```reasoning...```
+     *   2) OpenAI 扩展字段（流式 delta.reasoning_content / 非流式 message.reasoning_content）
+     * @return 推理文本；无则返回 null
+     */
+    fun parseReasoningFromContent(text: String?): String? {
+        if (text.isNullOrBlank()) return null
+        // 1) 内嵌标签形态
+        val tagPattern = Regex("<(?:reasoning|think|thinking|推理)>([\\s\\S]*?)</(?:reasoning|think|thinking|推理)>", RegexOption.IGNORE_CASE)
+        val tagMatch = tagPattern.find(text)
+        if (tagMatch != null) {
+            val inner = tagMatch.groupValues[1].trim()
+            if (inner.isNotBlank()) return inner
+        }
+        // 2) 代码块 ```reasoning ... ``` 形态
+        val fencePattern = Regex("```(?:reasoning|think|thinking)\\s*\\n([\\s\\S]*?)```", RegexOption.IGNORE_CASE)
+        val fenceMatch = fencePattern.find(text)
+        if (fenceMatch != null) {
+            val inner = fenceMatch.groupValues[1].trim()
+            if (inner.isNotBlank()) return inner
+        }
+        // 3) "reasoning_content" 前缀形态（容错：模型直接输出 reasoning_content: xxx）
+        if (text.startsWith("reasoning_content", true) || text.startsWith("reasoning:", true) || text.startsWith("思考：", true)) {
+            val colon = text.indexOf(':')
+            val inner = text.substring(if (colon >= 0) colon + 1 else text.length).trim()
+            if (inner.isNotBlank()) return inner
+        }
+        return null
     }
 
     /** 解析 参数名=值, 参数名=值 格式 */

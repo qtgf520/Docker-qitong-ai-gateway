@@ -758,6 +758,16 @@ object WeixinBotManager {
                         break
                     }
                     loop++
+                    // ★ v1.226 学 AstrBot：抓模型真实推理链 reasoning_content（DeepSeek R1/Qwen3 等）
+                    //   真实思考单独推送，与正文完全分离（对齐 QQ）；每轮都检查新推理
+                    val curReasoning = com.qitong.gateway.sandbox.SandboxEngine.parseReasoningFromContent(content)
+                    if (curReasoning != null && curReasoning.isNotBlank()) {
+                        val r2 = curReasoning.replace(Regex("\\s+"), " ").take(200)
+                        if (r2.length >= 2 && r2 != lastSpokenText && !r2.contains("工具执行结果")) {
+                            lastSpokenText = r2
+                            pSend("💭 $r2")
+                        }
+                    }
                     // ★ v1.133 修复双递增 bug：每轮只 +1，真正能跑满 20 轮（原来两个 loop++ → 每轮 +2 只跑 10 轮就被截断=「任务做一半卡住」元凶）
                     // ★ v1.130 长任务进度：每 15s 推一次「还在处理」；★v1.218 收敛：仅第5分钟偶发，且与过渡话术去重（避免401-406乱序刷屏）
                     if (System.currentTimeMillis() - lastProgressAt > 15_000 && loop >= 4) {
@@ -771,18 +781,7 @@ object WeixinBotManager {
                     //   只有【本轮有工具调用】时才推模型过渡话术（剥标签后的话术，≤40字+行动词才推）
                     //   修复：无工具调用时模型话术=最终答案，若当过渡推会造成「同句推两次」（386/387 实锤）
                     if (calls.isNotEmpty()) {
-                        // ★ v1.223 思考话术实时推送（用户要求：想了啥都要反馈）：
-                        //   剥掉工具标签后剩余的人话 = 模型思考，只要不是工具结果/最终答案就推（不再限行动词）
-                        val rawSpoken = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
-                        val spokenClean = rawSpoken.removePrefix("💭").removePrefix("💬").trim()
-                        val spokenShort = spokenClean.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
-                        // 过滤程序化结果/太长废话/重复；真实思考话术（含问句/陈述）都推
-                        if (spokenShort.length in 2..60 && spokenShort != lastSpokenText &&
-                            !spokenShort.contains("工具执行结果") && !spokenShort.contains("调用结果") &&
-                            !spokenShort.startsWith("第") && !spokenShort.contains("步执行") && !spokenShort.contains("已完成")) {
-                            lastSpokenText = spokenShort
-                            pSend("💭 $spokenShort")
-                        }
+                        // ★ v1.226 学 AstrBot：正文不再当"思考"推（思考由上方 reasoning_content 真实推理链提供）
                     }
                     if (calls.isEmpty()) {
                         // ★ v1.225 移除无调用分支的"思考推送"（对齐 QQ）：模型无工具调用时输出即最终答案，

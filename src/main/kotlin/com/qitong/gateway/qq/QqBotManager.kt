@@ -2092,6 +2092,24 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     loopGuard++
                     com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loopGuard, action = "第 $loopGuard 轮 · 等模型回复中…")
+                    // ★ v1.226 学 AstrBot：抓模型真实推理链 reasoning_content（DeepSeek R1/Qwen3 等）
+                    //   真实思考单独推送，与正文完全分离（用户要的是"真的想了啥"，不是正文硬套💭）
+                    //   首轮优先读响应 JSON 的 message.reasoning_content 字段；后续轮次从 content 标签提取
+                    val curReasoning = if (loopGuard == 1) {
+                        val jsonReasoning = obj.optJSONArray("choices")
+                            ?.optJSONObject(0)
+                            ?.optJSONObject("message")
+                            ?.optString("reasoning_content")?.trim() ?: ""
+                        if (jsonReasoning.isNotBlank()) jsonReasoning
+                        else com.qitong.gateway.sandbox.SandboxEngine.parseReasoningFromContent(content) ?: ""
+                    } else com.qitong.gateway.sandbox.SandboxEngine.parseReasoningFromContent(content) ?: ""
+                    if (curReasoning.isNotBlank()) {
+                        val r2 = curReasoning.replace(Regex("\\s+"), " ").take(200)
+                        if (r2.length >= 2 && r2 != lastSpokenText && !r2.contains("工具执行结果")) {
+                            lastSpokenText = r2
+                            smartSend("💭 $r2", false)
+                        }
+                    }
                     // ★ v64 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考
                     if (stopSignals[userOpenid] == true) {
                         stopSignals.remove(userOpenid)
@@ -2101,22 +2119,10 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     // ★ v1.169 修复「工具重复执行」：传 executedSigs 做跨轮去重——模型照抄上一轮调用标签/复述描述时，
                     //   同一 fn+参数已执行过 → 解析结果为空 → 循环正常收尾，不再执行第二遍
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
-// ★ v1.209/★v1.218/★v1.218 模型思考话术实时推送：
-                    //   只有【本轮有工具调用】时才推模型过渡话术（剥标签后的话术，≤40字+行动词才推）
-                    //   修复：无工具调用时模型话术=最终答案，若当过渡推会造成「同句推两次」（386/387 实锤）
+// ★ v1.226 学 AstrBot：正文不再当"思考"推——思考由 reasoning_content 真实推理链提供
+                    //   （上方已推）；正文 content 只有两种用途：①解析工具调用 ②最终答案（循环结束由外层推）
                     if (calls.isNotEmpty()) {
-                        // ★ v1.223 思考话术实时推送（用户要求：想了啥都要反馈）：
-                        //   剥掉工具标签后剩余的人话 = 模型思考，只要不是工具结果/最终答案就推（不再限行动词）
-                        val rawSpoken = cleanFunctionTags(content).trim().replace(Regex("\\s+"), " ")
-                        val spokenClean = rawSpoken.removePrefix("💭").removePrefix("💬").trim()
-                        val spokenShort = spokenClean.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
-                        // 过滤程序化结果/太长废话/重复；真实思考话术（含问句/陈述）都推
-                        if (spokenShort.length in 2..60 && spokenShort != lastSpokenText &&
-                            !spokenShort.contains("工具执行结果") && !spokenShort.contains("调用结果") &&
-                            !spokenShort.startsWith("第") && !spokenShort.contains("步执行") && !spokenShort.contains("已完成")) {
-                            lastSpokenText = spokenShort
-                            smartSend("💭 $spokenShort", false)
-                        }
+                        // 工具调用轮次的正文（剥标签后）仅作内部决策，不推送（避免与推理链重复/假思考）
                     }
                     if (calls.isEmpty()) {
                         // ★ v1.225 移除无调用分支的"思考推送"：模型无工具调用时输出即最终答案
