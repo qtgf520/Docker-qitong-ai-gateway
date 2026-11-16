@@ -3913,7 +3913,7 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
                     "joinCooldownSec" to (o.optInt("joinCooldownSec", 20)), // 群聊插话冷却秒数
                     "replyFreqLimit" to (o.optInt("replyFreqLimit", 0)),  // 回复频率限制（每分钟最多N条，0=不限）
                     // ★ v1.218 群聊回复 @ 提问者本人（像真人点名回答，对齐一流智能体平台群聊体验）
-                    "atAsker" to (o.optBoolean("atAsker", true)),          // 群聊回复是否@提问者本人
+                    "atAsker" to (o.optBoolean("atAsker", false)),          // ★ v1.223 群聊回复不再自动@提问者（默认关，可后台开启）
                     "welcome" to (o.optString("welcome", "")),
                     "aiModel" to (o.optString("aiModel", "")),
                     "systemPrompt" to (o.optString("systemPrompt", ""))
@@ -3942,8 +3942,8 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         "whitelist" to "",
         "joinCooldownSec" to 20,
         "replyFreqLimit" to 0,
-        // ★ v1.218 群聊回复 @ 提问者本人（默认开，对齐一流智能体平台群聊体验）
-        "atAsker" to true,
+        // ★ v1.223 群聊回复不再自动@提问者（默认关，可后台开启）
+        "atAsker" to false,
         "welcome" to "",
         "aiModel" to "",
         "systemPrompt" to ""

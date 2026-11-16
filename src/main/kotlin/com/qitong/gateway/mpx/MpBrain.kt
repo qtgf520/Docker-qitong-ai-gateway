@@ -6,15 +6,15 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * ★ v1.193 公众号 AI 智能回答
- * - 复用网关大模型（本机 /v1/chat/completions，走 loopback，跟 QQ/微信同链路）
- * - 每粉丝 openid 独立多轮上下文（保留最近 20 条，与 QQ/微信一致）
- * - 步骤显示：默认 quiet（不推过程），用户发「显示步骤」→ verbose（Agent 干活过程实时客服消息推送）
- * - 完整沙盒 Agent 循环：复用 SandboxEngine（能自主调工具，跟 QQ/微信一个体验）（本期先做纯对话 + 步骤开关，Agent 调度下一版增强）
+ * v1.193 公众号 AI 智能回答
+ * - 复用网关大模型(本机 /v1/chat/completions loopback，跟 QQ/微信同链路)
+ * - 每粉丝 openid 独立多轮上下文(保留最近 20 条)
+ * - v1.223 完整沙盒 Agent 循环: 复用 SandboxEngine 自主调工具；模型思考话术实时客服消息推送；
+ *   工具执行细节按 mp_progress_mode: quiet(默认)=只推思考、verbose=思考+步骤都推
  */
 object MpBrain {
 
-    /** 会话历史：key = botId:openid → List<Pair<role, content>> */
+    /** 会话历史: key = botId:openid */
     private val history = ConcurrentHashMap<String, MutableList<Pair<String, String>>>()
 
     private val http = okhttp3.OkHttpClient.Builder()
@@ -22,69 +22,111 @@ object MpBrain {
         .readTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
-    /**
-     * AI 智能回答（阻塞调用，返回最终回复文本）
-     * @param boundUserId 粉丝已绑定网关账号的 userId（0=未绑定，聊天仍可用但无账号权限）
-     * @param bindAccountId 公众号配置的默认绑定账号（粉丝未绑定时用这个身份）
-     */
+    private val jsonCt = "application/json".toMediaType()
+
+    private fun chatLoopback(model: String, messages: List<Map<String, String>>): String {
+        val bodyJson = org.json.JSONObject().apply {
+            put("model", model)
+            put("messages", org.json.JSONArray().apply {
+                messages.forEach { m -> put(org.json.JSONObject().put("role", m["role"]).put("content", m["content"])) }
+            })
+            put("stream", false)
+        }.toString()
+        val req = okhttp3.Request.Builder()
+            .url("http://127.0.0.1:18889/v1/chat/completions")
+            .post(bodyJson.toRequestBody(jsonCt))
+            .build()
+        return http.newCall(req).execute().use { resp ->
+            val bodyStr = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) "⚠️ AI 服务暂不可用(HTTP ${resp.code})，请稍后再试"
+            else {
+                try {
+                    org.json.JSONObject(bodyStr)
+                        .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+                        ?.takeIf { it.isNotBlank() }
+                        ?: "🤔 我还没想好怎么回答，换个问法试试？"
+                } catch (_: Exception) { "⚠️ AI 响应解析失败，请稍后再试" }
+            }
+        }
+    }
+
     fun ask(
         db: Database, bot: Map<String, Any?>, openid: String, userText: String,
         aiModel: String, systemPrompt: String, boundUserId: Long, bindAccountId: Long
     ): String {
         val botId = (bot["id"] as? Number)?.toLong() ?: 0L
         val key = "$botId:$openid"
-
-        // 每粉丝上下文（保留最近 20 条）
         val hist = history.getOrPut(key) { mutableListOf() }
         hist.add("user" to userText)
         while (hist.size > 20) hist.removeAt(0)
 
-        // ★ 步骤模式：跟随用户配置（默认 quiet）
         val effUserId = if (boundUserId > 0) boundUserId else bindAccountId
+        // v1.223 默认 quiet(只推思考)；verbose=思考+步骤都推
         val verbose = db.getUserConfig(effUserId, "mp_progress_mode", "quiet") == "verbose"
+        val pSend = { m: String ->
+            val isToolDetail = m.contains("正在执行", true) || m.contains("完成：", true) || m.contains("同时处理", true)
+            if (verbose || !isToolDetail) runCatching { MpPush.sendText(db, bot, openid, m) }
+        }
 
         try {
-            if (verbose) MpPush.sendText(db, bot, openid, "🤔 收到，开始处理…")
+            val sandboxPrompt = com.qitong.gateway.sandbox.SandboxEngine.SYSTEM_PROMPT
+            val sysFull = if (systemPrompt.isNotBlank()) "$sandboxPrompt\n\n【公众号人设】$systemPrompt" else sandboxPrompt
 
-            // 调本机网关大模型（跟 QQ/微信同一链路：自动故障转移/用量/计费）
-            val messages = mutableListOf<Map<String, String>>()
-            if (systemPrompt.isNotBlank()) messages.add(mapOf("role" to "system", "content" to systemPrompt))
-            hist.forEach { (role, content) -> messages.add(mapOf("role" to role, "content" to content)) }
+            var content = userText
+            val effUser = if (effUserId > 0) db.getUserById(effUserId) else null
+            val isAdmin = effUser?.role == "admin" || effUser?.role == "agent"
+            var reply = ""
+            var loopGuard = 0
+            val executedSigs = mutableSetOf<String>()
+            var lastSpoken = ""
 
-            val bodyJson = org.json.JSONObject().apply {
-                put("model", aiModel)
-                put("messages", org.json.JSONArray().apply {
-                    messages.forEach { m ->
-                        put(org.json.JSONObject().put("role", m["role"]).put("content", m["content"]))
-                    }
-                })
-                put("stream", false)
-            }.toString()
+            // v1.223 Agent 循环: 模型输出沙盒调用 → 真执行 → 结果回填 → 再想，最多 8 轮
+            while (loopGuard < 8) {
+                loopGuard++
+                val msgs = mutableListOf<Map<String, String>>()
+                msgs.add(mapOf("role" to "system", "content" to sysFull))
+                msgs.add(mapOf("role" to "user", "content" to content))
+                val modelOut = chatLoopback(aiModel, msgs)
+                if (modelOut.startsWith("⚠️ AI") || modelOut.startsWith("🤔 我还没")) { reply = modelOut; break }
 
-            val req = okhttp3.Request.Builder()
-                .url("http://127.0.0.1:18889/v1/chat/completions")
-                .post(bodyJson.toRequestBody("application/json".toMediaType()))
-                .build()
-
-            val reply = http.newCall(req).execute().use { resp ->
-                val bodyStr = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) "⚠️ AI 服务暂不可用（HTTP ${resp.code}），请稍后再试"
-                else {
-                    try {
-                        val json = org.json.JSONObject(bodyStr)
-                        json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
-                            ?.takeIf { it.isNotBlank() }
-                            ?: "🤔 我还没想好怎么回答，换个问法试试？"
-                    } catch (_: Exception) { "⚠️ AI 响应解析失败，请稍后再试" }
+                val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(modelOut, executedSigs)
+                if (calls.isEmpty()) {
+                    reply = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(modelOut).trim()
+                    break
                 }
+
+                // 有调用 → 推模型思考话术(剥标签后的人话，不再限行动词)
+                val rawSpoken = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(modelOut).trim().replace(Regex("\\s+"), " ")
+                val spokenShort = rawSpoken.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
+                if (spokenShort.length in 2..60 && spokenShort != lastSpoken &&
+                    !spokenShort.contains("工具执行结果") && !spokenShort.contains("调用结果") &&
+                    !spokenShort.startsWith("第") && !spokenShort.contains("步执行") && !spokenShort.contains("已完成")) {
+                    lastSpoken = spokenShort
+                    pSend("💭 $spokenShort")
+                }
+
+                val fn = calls.first().first
+                val args = calls.first().second
+                val argShow = args.entries.joinToString(",") { "${it.key}=${it.value}" }.take(80)
+                pSend("🔧 正在执行：$fn($argShow)")
+                val r = try {
+                    com.qitong.gateway.sandbox.SandboxEngine.execute(fn, args, isAdmin, effUserId, db)
+                } catch (e: Exception) {
+                    "❌ 工具执行异常($fn)：${e.message}"
+                }
+                executedSigs.add(com.qitong.gateway.sandbox.SandboxEngine.callSignature(fn, args))
+                pSend("✅ $fn 完成")
+                content = "【$fn 执行结果】\n$r"
             }
+            if (reply.isBlank()) reply = content
+            reply = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(reply).trim()
 
             hist.add("assistant" to reply)
             while (hist.size > 20) hist.removeAt(0)
             return reply
         } catch (e: Exception) {
             System.err.println("[MpBrain] AI 回答异常: ${e.message}")
-            return "⚠️ AI 服务暂时出了点问题（${e.message}），请稍后再试"
+            return "⚠️ AI 服务暂时出了点问题(${e.message})，请稍后再试"
         }
     }
 }

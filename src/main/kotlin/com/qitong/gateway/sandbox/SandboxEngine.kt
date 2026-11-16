@@ -58,7 +58,7 @@ object SandboxEngine {
         "ssh_list", "ssh_exec",
         "ticket_list", "ticket_create", "ticket_detail",
         "op_logs", "login_logs", "qq_logs", "wx_logs",
-        "memory_list", "memory_add", "memory_clear",
+        "memory_list", "memory_add", "memory_delete", "memory_clear",
         "qq_users_list", "qq_point_adjust",
         "wx_users_list", "wx_user_memory", "wx_user_memory_clear",
         "gateway_toggle", "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool", "gateway_auto_speedtest",
@@ -212,6 +212,7 @@ object SandboxEngine {
             .put(func("memory_list", "查看记忆库全部（管理员）", "admin", "read", emptyList(), "记忆标题/摘要/来源"))
             .put(func("memory_add", "手动添加一条记忆（需绑定账号）", "user", "modify", listOf(param("title", true, "标题"), param("content", true, "内容")), "保存结果"))
             .put(func("memory_clear", "清空全部记忆（管理员）", "admin", "modify", emptyList(), "清空条数"))
+            .put(func("memory_delete", "删除指定记忆（id=记忆ID；普通用户只能删自己，管理员可删任意）", "user", "modify", listOf(param("id", true, "记忆ID")), "删除结果"))
             .put(func("qq_users_list", "查看QQ用户列表（管理员）", "admin", "read", emptyList(), "昵称/积分/权限"))
             .put(func("qq_point_adjust", "调整QQ用户积分（管理员）", "admin", "modify", listOf(param("openid", true, "QQ用户openid"), param("delta", true, "积分增减")), "调整结果"))
             .put(func("gateway_toggle", "网关全局启停（管理员；action=start/stop/toggle）", "admin", "modify", listOf(param("action", false, "start/stop/toggle默认toggle")), "启停结果"))
@@ -1730,7 +1731,7 @@ $KNOWLEDGE_JSON
                 "ssh_list", "ssh_exec",
                 "ticket_list", "ticket_create", "ticket_detail",
                 "op_logs", "login_logs", "qq_logs", "wx_logs",
-                "memory_list", "memory_add", "memory_clear",
+                "memory_list", "memory_add", "memory_delete", "memory_clear",
                 "qq_users_list", "qq_point_adjust",
                 "gateway_toggle", "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool", "gateway_auto_speedtest",
                 "notify_config", "notify_test",

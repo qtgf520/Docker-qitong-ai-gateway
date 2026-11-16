@@ -613,8 +613,8 @@ object WeixinBotManager {
     /** loopback 调用网关大脑（qtai-sj 走完整沙盒 Agent 循环：思考推送→调工具→结果回填→多轮） */
     private fun askModel(bot: WeixinBot, msg: WeixinMessage, userText: String, userId: Long, send: (String) -> Unit): String? {
         val d = db ?: return null
-        // ★ v1.206/★v1.218 隐藏步骤仅隐藏机械工具执行细节；思考/计划/进度话术隐藏显示都推
-        val quietProgress = d.getUserConfig(userId, "progress_mode", "verbose") == "quiet"
+        // ★ v1.223 默认隐藏步骤（用户要求）：progress_mode 默认 quiet；发「显示步骤」切 verbose
+        val quietProgress = d.getUserConfig(userId, "progress_mode", "quiet") == "quiet"
         fun isToolDetailMsg(m: String): Boolean =
             m.contains("正在执行", true) || m.contains("完成：", true) || m.contains("同时处理", true)
         val pSend: (String) -> Unit = { m -> if (!(quietProgress && isToolDetailMsg(m))) send(m) }
@@ -771,14 +771,15 @@ object WeixinBotManager {
                     //   只有【本轮有工具调用】时才推模型过渡话术（剥标签后的话术，≤40字+行动词才推）
                     //   修复：无工具调用时模型话术=最终答案，若当过渡推会造成「同句推两次」（386/387 实锤）
                     if (calls.isNotEmpty()) {
+                        // ★ v1.223 思考话术实时推送（用户要求：想了啥都要反馈）：
+                        //   剥掉工具标签后剩余的人话 = 模型思考，只要不是工具结果/最终答案就推（不再限行动词）
                         val rawSpoken = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
                         val spokenClean = rawSpoken.removePrefix("💭").removePrefix("💬").trim()
                         val spokenShort = spokenClean.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
-                        val actionWords = listOf("我这就", "我去", "我来", "我查", "我看", "我看看", "稍等", "马上",
-                            "正在", "翻翻", "找找", "处理", "等一下", "这就去", "帮你")
-                        val isActionSpoken = actionWords.any { spokenShort.contains(it) }
-                        if (spokenShort.length in 2..40 && isActionSpoken && spokenShort != lastSpokenText &&
-                            !spokenShort.contains("工具执行结果") && !spokenShort.contains("\n\n") && !spokenShort.contains("？") && !spokenShort.contains("?")) {
+                        // 过滤程序化结果/太长废话/重复；真实思考话术（含问句/陈述）都推
+                        if (spokenShort.length in 2..60 && spokenShort != lastSpokenText &&
+                            !spokenShort.contains("工具执行结果") && !spokenShort.contains("调用结果") &&
+                            !spokenShort.startsWith("第") && !spokenShort.contains("步执行") && !spokenShort.contains("已完成")) {
                             lastSpokenText = spokenShort
                             pSend("💭 $spokenShort")
                         }

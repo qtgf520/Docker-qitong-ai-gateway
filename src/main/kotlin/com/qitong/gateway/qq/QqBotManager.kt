@@ -563,14 +563,11 @@ object QqBotManager {
             dispatch(bot, key, msg.groupOpenid, msg.memberOpenid, text, msg.msgId, passiveAllowed = msg.isAt,
                 send = { content ->
                     runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "out", content, bot.aiModel) }
-                    // ★ v1.219 修复出站@乱码：不再拼 <@!openid> 纯文本前缀（QQ msg_type:0 不解析会原样吐给用户），
-                    //   改官方 markdown @ 语法 <at id="openid"></at>，发送时走 msg_type:2 卡片通道
-                    val atAsker = (db.getPlatformSettings("qq")["atAsker"] as? Boolean) ?: true
-                    val finalContent = if (atAsker && msg.memberOpenid.isNotBlank() && !content.contains("<at id="))
-                        "<at id=\"${msg.memberOpenid}\"></at> $content" else content
+                    // ★ v1.223 去掉自动@提问者（用户要求群回复不再点名）；内容原样发送
+                    val finalContent = content
                     // ★ v1.218 只有 @ 消息允许带 msg_id 被动回复；非@走主动（被动回复会被 QQ 业务拒绝丢消息）
                     val sendMsgId = if (msg.isAt) msg.msgId else null
-                    // ★ v1.219 含 <at 的走 markdown 卡片通道（官方 @ 语法）；失败回退纯文本（去@保送达）
+                    // ★ v1.219 兼容历史：若内容残留 <at 标记（如模型自吐），走卡片通道才有 @ 效果
                     if (finalContent.contains("<at id=")) {
                         val mdOk = api.sendGroupCardMessage(bot, at, msg.groupOpenid, finalContent, sendMsgId)
                         if (!mdOk) api.sendGroupMessage(bot, at, msg.groupOpenid, finalContent.replace(Regex("<at id=\"[^\"]*\"></at> ?"), ""), sendMsgId) else mdOk
@@ -741,7 +738,8 @@ object QqBotManager {
         //   思考内容（💭 思考中/⏳ 处理中）与执行过程进度必须保留，最终答案必达；
         //   verbose 全量推送（工具细节+思考都要有）。预算同理只约束工具细节，思考进度永不被吞。
         val progressBudget = db.getConfig("qq_progress_budget", "20").toIntOrNull() ?: 20
-        val quietProgress = db.getUserConfig(db.getQqBoundUser(userOpenid)?.id ?: 0L, "progress_mode", "verbose") == "quiet"
+        // ★ v1.223 默认隐藏步骤：progress_mode 默认 quiet（只推思考，不推工具细节）；发「显示步骤」切 verbose
+        val quietProgress = db.getUserConfig(db.getQqBoundUser(userOpenid)?.id ?: 0L, "progress_mode", "quiet") == "quiet"
         var progressUsed = 0
         // ★ v1.206/★v1.218 判断是否为【机械工具执行细节】推送（quiet 只隐藏这部分，思考/计划/进度全推）：
         //   🔧正在执行/✅完成/⚡同时处理 —— 机械执行消息；"调用/确认一下/继续查" 是思考过渡话术，隐藏/显示都推
@@ -758,9 +756,8 @@ object QqBotManager {
                 val usePassive = isFinal && passiveAllowed
                 val effectiveMsgId = if (usePassive) msgId else null
                 val at2 = api.getAccessToken(bot)
-                // ★ v1.219 出站@改官方 markdown 语法（<at id>. 不再拼 <@!openid> 防乱码）
-                val atAsker = groupOpenid.isNotBlank() && ((db.getPlatformSettings("qq")["atAsker"] as? Boolean) ?: true)
-                val atMention = if (isFinal && atAsker && userOpenid.isNotBlank()) "<at id=\"$userOpenid\"></at> " else ""
+                // ★ v1.223 群回复不再自动@提问者（用户要求）；atMention 恒空
+                val atMention = ""
                 // ★ v71 QQ 大消息分段推送：超 1800 字符切多条，不丢信息（只有最终条用被动回复）
                 val pieces = splitText(content, 1800)
                 var anyOk = false
@@ -2108,14 +2105,15 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     //   只有【本轮有工具调用】时才推模型过渡话术（剥标签后的话术，≤40字+行动词才推）
                     //   修复：无工具调用时模型话术=最终答案，若当过渡推会造成「同句推两次」（386/387 实锤）
                     if (calls.isNotEmpty()) {
+                        // ★ v1.223 思考话术实时推送（用户要求：想了啥都要反馈）：
+                        //   剥掉工具标签后剩余的人话 = 模型思考，只要不是工具结果/最终答案就推（不再限行动词）
                         val rawSpoken = cleanFunctionTags(content).trim().replace(Regex("\\s+"), " ")
                         val spokenClean = rawSpoken.removePrefix("💭").removePrefix("💬").trim()
                         val spokenShort = spokenClean.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
-                        val actionWords = listOf("我这就", "我去", "我来", "我查", "我看", "我看看", "稍等", "马上",
-                            "正在", "翻翻", "找找", "处理", "等一下", "这就去", "帮你")
-                        val isActionSpoken = actionWords.any { spokenShort.contains(it) }
-                        if (spokenShort.length in 2..40 && isActionSpoken && spokenShort != lastSpokenText &&
-                            !spokenShort.contains("工具执行结果") && !spokenShort.contains("\n\n") && !spokenShort.contains("？") && !spokenShort.contains("?")) {
+                        // 过滤程序化结果/太长废话/重复；真实思考话术（含问句/陈述）都推
+                        if (spokenShort.length in 2..60 && spokenShort != lastSpokenText &&
+                            !spokenShort.contains("工具执行结果") && !spokenShort.contains("调用结果") &&
+                            !spokenShort.startsWith("第") && !spokenShort.contains("步执行") && !spokenShort.contains("已完成")) {
                             lastSpokenText = spokenShort
                             smartSend("💭 $spokenShort", false)
                         }

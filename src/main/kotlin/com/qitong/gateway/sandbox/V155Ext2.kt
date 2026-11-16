@@ -230,6 +230,14 @@ object V155Ext2 {
                 "✅ 记忆已保存「$title」"
             }
         }
+        "memory_delete" -> {
+            val id = args["id"]?.trim()?.toLongOrNull()
+            if (id == null) "⚠️ 语法：memory_delete(id=记忆ID)"
+            else {
+                val ok = if (isAdmin) db.deleteMemoryAny(id) else { db.deleteMemory(id, userId); true }
+                if (ok) "✅ 记忆 #$id 已删除" else "❌ 未找到该记忆（或无权删除）"
+            }
+        }
         "memory_clear" -> {
             if (!isAdmin) return "⛔ 仅管理员"
             val n = db.clearAllMemories()
