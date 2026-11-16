@@ -785,14 +785,8 @@ object WeixinBotManager {
                         }
                     }
                     if (calls.isEmpty()) {
-                        // ★ v1.224 无调用时也要推真实思考（对齐 QQ）：模型纯输出人话还没带标签也先推
-                        val noCallRaw = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
-                            .removePrefix("💭").removePrefix("💬").trim()
-                        val noCallSpoken = noCallRaw.length in 2..60 && noCallRaw != lastSpokenText &&
-                            !noCallRaw.contains("✅") && !noCallRaw.contains("http") &&
-                            !noCallRaw.contains("已完成") && !noCallRaw.contains("工具执行结果") &&
-                            !noCallRaw.startsWith("第") && !noCallRaw.contains("步执行") && !noCallRaw.contains("\n\n")
-                        if (noCallSpoken) { lastSpokenText = noCallRaw; pSend("💭 $noCallRaw") }
+                        // ★ v1.225 移除无调用分支的"思考推送"（对齐 QQ）：模型无工具调用时输出即最终答案，
+                        //   v1.224 误当思考推一遍导致同句发两次；真实过渡思考只在有工具轮次时已推
                         // ★ v1.191 说要做但没输出标签 → 引导真调用（对齐 QQ：抓取/查看/检查/重新/我来 等做事意图都引导）
                         //   原来只认 5 个词，模型说「我重新抓取一下页面内容」识别不出 → break 返回空话
                         val intented = content.contains("正在调用", true) || content.contains("调用沙盒", true) ||

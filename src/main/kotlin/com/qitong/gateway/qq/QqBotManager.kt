@@ -2119,15 +2119,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         }
                     }
                     if (calls.isEmpty()) {
-                        // ★ v1.224 无调用时也要推真实思考：模型纯输出人话（如「好的我来帮你看一下」还没带标签）
-                        //   剥标签后 ≤60 字、不含结果特征（✅/数字/http/完成）→ 是过渡思考，先推（隐藏/显示都推）
-                        val noCallRaw = cleanFunctionTags(content).trim().replace(Regex("\\s+"), " ")
-                            .removePrefix("💭").removePrefix("💬").trim()
-                        val noCallSpoken = noCallRaw.length in 2..60 && noCallRaw != lastSpokenText &&
-                            !noCallRaw.contains("✅") && !noCallRaw.contains("http") &&
-                            !noCallRaw.contains("已完成") && !noCallRaw.contains("工具执行结果") &&
-                            !noCallRaw.startsWith("第") && !noCallRaw.contains("步执行") && !noCallRaw.contains("\n\n")
-                        if (noCallSpoken) { lastSpokenText = noCallRaw; smartSend("💭 $noCallRaw", false) }
+                        // ★ v1.225 移除无调用分支的"思考推送"：模型无工具调用时输出即最终答案
+                        //   （纯聊天/直接回答），此前 v1.224 误把它当思考推一遍 → 同句发两次（用户实锤）
+                        //   真实过渡思考只在有工具轮次(calls非空)时出现，那里已推；此处不再重复
                         // ★ v1.191 说要做但没输出标签 → 引导真调用（不止"正在调用"，抓取/查看/检查/重新/我来 等做事意图都引导）
                         //   原来只认 5 个词，用户案例「我重新抓取一下页面内容」识别不出 → 直接 break 返回空话还标完成（说了不做）
                         val intented = content.contains("正在调用", true) || content.contains("调用沙盒", true) ||
