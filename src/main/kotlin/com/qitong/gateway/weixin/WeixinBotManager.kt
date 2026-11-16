@@ -785,6 +785,14 @@ object WeixinBotManager {
                         }
                     }
                     if (calls.isEmpty()) {
+                        // ★ v1.224 无调用时也要推真实思考（对齐 QQ）：模型纯输出人话还没带标签也先推
+                        val noCallRaw = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
+                            .removePrefix("💭").removePrefix("💬").trim()
+                        val noCallSpoken = noCallRaw.length in 2..60 && noCallRaw != lastSpokenText &&
+                            !noCallRaw.contains("✅") && !noCallRaw.contains("http") &&
+                            !noCallRaw.contains("已完成") && !noCallRaw.contains("工具执行结果") &&
+                            !noCallRaw.startsWith("第") && !noCallRaw.contains("步执行") && !noCallRaw.contains("\n\n")
+                        if (noCallSpoken) { lastSpokenText = noCallRaw; pSend("💭 $noCallRaw") }
                         // ★ v1.191 说要做但没输出标签 → 引导真调用（对齐 QQ：抓取/查看/检查/重新/我来 等做事意图都引导）
                         //   原来只认 5 个词，模型说「我重新抓取一下页面内容」识别不出 → break 返回空话
                         val intented = content.contains("正在调用", true) || content.contains("调用沙盒", true) ||
@@ -793,9 +801,11 @@ object WeixinBotManager {
                         // ★ v77 假调用修复：模型只输出了"正在调用 xxx"描述但没输出严格标签 → 引导它输出真标签再执行
                         if (noCallGuide < 2 && intented) {
                             noCallGuide++
-                            // ★ v1.130 引导前推送：让用户知道「模型假思考了，正在纠正」；v1.218 加去重防连推两条（398/399 实锤）
-                            val guideMsg = "💭 我确认一下要调用哪个工具…"
-                            if (guideMsg != lastSpokenText) { lastSpokenText = guideMsg; pSend(guideMsg) }
+                            // ★ v1.224 修复假思考：不再推硬编码「我确认一下要调用哪个工具…」，改推模型真实话术
+                            val realSpoken = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
+                                .removePrefix("💭").removePrefix("💬").trim()
+                            val guideMsg = if (realSpoken.length in 2..60 && realSpoken != lastSpokenText && !realSpoken.contains("工具执行结果")) "💭 $realSpoken" else ""
+                            if (guideMsg.isNotEmpty()) { lastSpokenText = guideMsg; pSend(guideMsg) }
                             val guideBody = JSONObject()
                                 .put("model", bot.aiModel)
                                 .put("messages", JSONArray()
@@ -934,9 +944,11 @@ object WeixinBotManager {
                     // ★ v1.166 自主式「没干完绝不听」：模型说「继续查/接着/下一步」但没输出调用标签 → 引导继续执行，不半途而废
                     if (com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs).isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
-                        // ★ v1.218 去重：避免「好的，我继续查」与过渡话术重复刷屏（401-406 实锤乱序）
-                        val contMsg = "💭 好的，我继续查…"
-                        if (contMsg != lastSpokenText) { lastSpokenText = contMsg; pSend(contMsg) }
+                        // ★ v1.224 修复假思考：不再推硬编码「好的，我继续查…」，改推模型真实话术（剥标签）
+                        val realSpoken2 = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
+                            .removePrefix("💭").removePrefix("💬").trim()
+                        val contMsg = if (realSpoken2.length in 2..60 && realSpoken2 != lastSpokenText && !realSpoken2.contains("工具执行结果")) "💭 $realSpoken2" else ""
+                        if (contMsg.isNotEmpty()) { lastSpokenText = contMsg; pSend(contMsg) }
                         val guideBody2 = JSONObject()
                             .put("model", bot.aiModel)
                             .put("messages", JSONArray()
