@@ -758,18 +758,8 @@ object WeixinBotManager {
                         break
                     }
                     loop++
-                    // ★ v1.226 学 AstrBot：抓模型真实推理链 reasoning_content（DeepSeek R1/Qwen3 等）
-                    //   真实思考单独推送，与正文完全分离（对齐 QQ）；每轮都检查新推理
-                    val curReasoning = com.qitong.gateway.sandbox.SandboxEngine.parseReasoningFromContent(content)
-                    var curReasoningKnownToBeNonBlank = false
-                    if (curReasoning != null && curReasoning.isNotBlank()) {
-                        val r2 = curReasoning.replace(Regex("\\s+"), " ").take(200)
-                        if (r2.length >= 2 && r2 != lastSpokenText && !r2.contains("工具执行结果")) {
-                            lastSpokenText = r2
-                            curReasoningKnownToBeNonBlank = true
-                            pSend("💭 $r2")
-                        }
-                    }
+                    // ★ v1.228 思考只推「人话过渡语」，不推 reasoning_content 原始推理链（对齐 QQ）：
+                    //   reasoning_content 是模型自语（闲聊也输出冗长推理），不适合展示；仅后台参考
                     // ★ v1.133 修复双递增 bug：每轮只 +1，真正能跑满 20 轮（原来两个 loop++ → 每轮 +2 只跑 10 轮就被截断=「任务做一半卡住」元凶）
                     // ★ v1.130 长任务进度：每 15s 推一次「还在处理」；★v1.218 收敛：仅第5分钟偶发，且与过渡话术去重（避免401-406乱序刷屏）
                     if (System.currentTimeMillis() - lastProgressAt > 15_000 && loop >= 4) {
@@ -783,25 +773,23 @@ object WeixinBotManager {
                     //   只有【本轮有工具调用】时才推模型过渡话术（剥标签后的话术，≤40字+行动词才推）
                     //   修复：无工具调用时模型话术=最终答案，若当过渡推会造成「同句推两次」（386/387 实锤）
                     if (calls.isNotEmpty()) {
-                        // ★ v1.227 思考双通道（对齐 QQ）：推理链已推过则跳过；否则正文带行动词的过渡语也是真实思考
-                        if (!curReasoningKnownToBeNonBlank) {
-                            val actedWx = content.contains("我来", true) || content.contains("我去", true) ||
-                                content.contains("我查", true) || content.contains("我看", true) ||
-                                content.contains("我看看", true) || content.contains("稍等", true) ||
-                                content.contains("正在", true) || content.contains("这就", true) ||
-                                content.contains("帮你", true) || content.contains("先", true) ||
-                                content.contains("继续", true) || content.contains("再试", true) ||
-                                content.contains("看一下", true) || content.contains("查一下", true) ||
-                                content.contains("试试", true) || content.contains("马上", true) ||
-                                content.contains("处理", true) || content.contains("重新", true)
-                            if (actedWx) {
-                                val rawWx = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
-                                val spWx = rawWx.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim().take(60)
-                                if (spWx.length >= 2 && spWx != lastSpokenText &&
-                                    !spWx.contains("工具执行结果") && !spWx.contains("调用结果")) {
-                                    lastSpokenText = spWx
-                                    pSend("💭 $spWx")
-                                }
+                        // ★ v1.228 有工具调用 → 推正文剥标签后的简短过渡语（"好的我来帮你看一下"一刀切到位）
+                        val actedWx = content.contains("我来", true) || content.contains("我去", true) ||
+                            content.contains("我查", true) || content.contains("我看", true) ||
+                            content.contains("我看看", true) || content.contains("稍等", true) ||
+                            content.contains("正在", true) || content.contains("这就", true) ||
+                            content.contains("帮你", true) || content.contains("先", true) ||
+                            content.contains("继续", true) || content.contains("再试", true) ||
+                            content.contains("看一下", true) || content.contains("查一下", true) ||
+                            content.contains("试试", true) || content.contains("马上", true) ||
+                            content.contains("处理", true) || content.contains("重新", true)
+                        if (actedWx) {
+                            val rawWx = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
+                            val spWx = rawWx.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim().take(60)
+                            if (spWx.length >= 2 && spWx != lastSpokenText &&
+                                !spWx.contains("工具执行结果") && !spWx.contains("调用结果")) {
+                                lastSpokenText = spWx
+                                pSend("💭 $spWx")
                             }
                         }
                     }

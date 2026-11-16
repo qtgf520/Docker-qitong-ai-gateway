@@ -2092,27 +2092,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     loopGuard++
                     com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loopGuard, action = "第 $loopGuard 轮 · 等模型回复中…")
-                    // ★ v1.226 学 AstrBot：抓模型真实推理链 reasoning_content（DeepSeek R1/Qwen3 等）
-                    //   真实思考单独推送，与正文完全分离（用户要的是"真的想了啥"，不是正文硬套💭）
-                    //   首轮优先读响应 JSON 的 message.reasoning_content 字段；后续轮次从 content 标签提取
-                    val curReasoning = if (loopGuard == 1) {
-                        val jsonReasoning = obj.optJSONArray("choices")
-                            ?.optJSONObject(0)
-                            ?.optJSONObject("message")
-                            ?.optString("reasoning_content")?.trim() ?: ""
-                        if (jsonReasoning.isNotBlank()) jsonReasoning
-                        else com.qitong.gateway.sandbox.SandboxEngine.parseReasoningFromContent(content) ?: ""
-                    } else com.qitong.gateway.sandbox.SandboxEngine.parseReasoningFromContent(content) ?: ""
-                    // 本轮是否已推过推理链（正文过渡语不再重复推，避免双重💭）
-                    var curReasoningKnownToBeNonBlank = false
-                    if (curReasoning.isNotBlank()) {
-                        val r2 = curReasoning.replace(Regex("\\s+"), " ").take(200)
-                        if (r2.length >= 2 && r2 != lastSpokenText && !r2.contains("工具执行结果")) {
-                            lastSpokenText = r2
-                            curReasoningKnownToBeNonBlank = true
-                            smartSend("💭 $r2", false)
-                        }
-                    }
+                    // ★ v1.228 思考只推「人话过渡语」，不推 reasoning_content 原始推理链：
+                    //   实锤问题（用户 11-16 反馈）：R1 对闲聊也输出冗长推理链（"作为鲸鱼娘我得..."），
+                    //   直接推给用户=闲聊刷屏+自言自语长文。正确做法（对齐你原始需求）：
+                    //   ①纯闲聊（calls 为空）→ 不推任何思考，直接出答案
+                    //   ②有工具调用 → 推正文剥标签后的简短过渡语（"好的我来帮你看一下"）
+                    //   reasoning_content 仅作后台参考，不展示给用户
                     // ★ v64 停止信号：用户已发「停止」→ 立即断开循环，不再继续执行/思考
                     if (stopSignals[userOpenid] == true) {
                         stopSignals.remove(userOpenid)
@@ -2122,11 +2107,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     // ★ v1.169 修复「工具重复执行」：传 executedSigs 做跨轮去重——模型照抄上一轮调用标签/复述描述时，
                     //   同一 fn+参数已执行过 → 解析结果为空 → 循环正常收尾，不再执行第二遍
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
-// ★ v1.227 思考双通道（对齐 AstrBot + 你原始需求）：
-                    //   reasoning_content（推理模型真实思考）优先推（上方已推）；
-                    //   若没有推理链但有工具调用 → 正文里的过渡语（「好的我来帮你看一下」这类带行动词的短话）
-                    //   也是真实思考，推出来（这正是你最早举的示例）；避免把最终答案当思考（v1.224 教训）
-                    if (calls.isNotEmpty() && !curReasoningKnownToBeNonBlank) {
+// ★ v1.228 有工具调用 → 推正文剥标签后的简短过渡语（"好的我来帮你看一下"一类人话思考）
+                    if (calls.isNotEmpty()) {
                         val acted = content.contains("我来", true) || content.contains("我去", true) ||
                             content.contains("我查", true) || content.contains("我看", true) ||
                             content.contains("我看看", true) || content.contains("稍等", true) ||
