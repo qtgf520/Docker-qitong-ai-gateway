@@ -761,10 +761,12 @@ object WeixinBotManager {
                     // ★ v1.226 学 AstrBot：抓模型真实推理链 reasoning_content（DeepSeek R1/Qwen3 等）
                     //   真实思考单独推送，与正文完全分离（对齐 QQ）；每轮都检查新推理
                     val curReasoning = com.qitong.gateway.sandbox.SandboxEngine.parseReasoningFromContent(content)
+                    var curReasoningKnownToBeNonBlank = false
                     if (curReasoning != null && curReasoning.isNotBlank()) {
                         val r2 = curReasoning.replace(Regex("\\s+"), " ").take(200)
                         if (r2.length >= 2 && r2 != lastSpokenText && !r2.contains("工具执行结果")) {
                             lastSpokenText = r2
+                            curReasoningKnownToBeNonBlank = true
                             pSend("💭 $r2")
                         }
                     }
@@ -781,7 +783,27 @@ object WeixinBotManager {
                     //   只有【本轮有工具调用】时才推模型过渡话术（剥标签后的话术，≤40字+行动词才推）
                     //   修复：无工具调用时模型话术=最终答案，若当过渡推会造成「同句推两次」（386/387 实锤）
                     if (calls.isNotEmpty()) {
-                        // ★ v1.226 学 AstrBot：正文不再当"思考"推（思考由上方 reasoning_content 真实推理链提供）
+                        // ★ v1.227 思考双通道（对齐 QQ）：推理链已推过则跳过；否则正文带行动词的过渡语也是真实思考
+                        if (!curReasoningKnownToBeNonBlank) {
+                            val actedWx = content.contains("我来", true) || content.contains("我去", true) ||
+                                content.contains("我查", true) || content.contains("我看", true) ||
+                                content.contains("我看看", true) || content.contains("稍等", true) ||
+                                content.contains("正在", true) || content.contains("这就", true) ||
+                                content.contains("帮你", true) || content.contains("先", true) ||
+                                content.contains("继续", true) || content.contains("再试", true) ||
+                                content.contains("看一下", true) || content.contains("查一下", true) ||
+                                content.contains("试试", true) || content.contains("马上", true) ||
+                                content.contains("处理", true) || content.contains("重新", true)
+                            if (actedWx) {
+                                val rawWx = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
+                                val spWx = rawWx.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim().take(60)
+                                if (spWx.length >= 2 && spWx != lastSpokenText &&
+                                    !spWx.contains("工具执行结果") && !spWx.contains("调用结果")) {
+                                    lastSpokenText = spWx
+                                    pSend("💭 $spWx")
+                                }
+                            }
+                        }
                     }
                     if (calls.isEmpty()) {
                         // ★ v1.225 移除无调用分支的"思考推送"（对齐 QQ）：模型无工具调用时输出即最终答案，

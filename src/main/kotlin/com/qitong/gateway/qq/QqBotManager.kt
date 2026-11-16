@@ -2103,10 +2103,13 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         if (jsonReasoning.isNotBlank()) jsonReasoning
                         else com.qitong.gateway.sandbox.SandboxEngine.parseReasoningFromContent(content) ?: ""
                     } else com.qitong.gateway.sandbox.SandboxEngine.parseReasoningFromContent(content) ?: ""
+                    // 本轮是否已推过推理链（正文过渡语不再重复推，避免双重💭）
+                    var curReasoningKnownToBeNonBlank = false
                     if (curReasoning.isNotBlank()) {
                         val r2 = curReasoning.replace(Regex("\\s+"), " ").take(200)
                         if (r2.length >= 2 && r2 != lastSpokenText && !r2.contains("工具执行结果")) {
                             lastSpokenText = r2
+                            curReasoningKnownToBeNonBlank = true
                             smartSend("💭 $r2", false)
                         }
                     }
@@ -2119,10 +2122,29 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     // ★ v1.169 修复「工具重复执行」：传 executedSigs 做跨轮去重——模型照抄上一轮调用标签/复述描述时，
                     //   同一 fn+参数已执行过 → 解析结果为空 → 循环正常收尾，不再执行第二遍
                     val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
-// ★ v1.226 学 AstrBot：正文不再当"思考"推——思考由 reasoning_content 真实推理链提供
-                    //   （上方已推）；正文 content 只有两种用途：①解析工具调用 ②最终答案（循环结束由外层推）
-                    if (calls.isNotEmpty()) {
-                        // 工具调用轮次的正文（剥标签后）仅作内部决策，不推送（避免与推理链重复/假思考）
+// ★ v1.227 思考双通道（对齐 AstrBot + 你原始需求）：
+                    //   reasoning_content（推理模型真实思考）优先推（上方已推）；
+                    //   若没有推理链但有工具调用 → 正文里的过渡语（「好的我来帮你看一下」这类带行动词的短话）
+                    //   也是真实思考，推出来（这正是你最早举的示例）；避免把最终答案当思考（v1.224 教训）
+                    if (calls.isNotEmpty() && !curReasoningKnownToBeNonBlank) {
+                        val acted = content.contains("我来", true) || content.contains("我去", true) ||
+                            content.contains("我查", true) || content.contains("我看", true) ||
+                            content.contains("我看看", true) || content.contains("稍等", true) ||
+                            content.contains("正在", true) || content.contains("这就", true) ||
+                            content.contains("帮你", true) || content.contains("先", true) ||
+                            content.contains("继续", true) || content.contains("再试", true) ||
+                            content.contains("看一下", true) || content.contains("查一下", true) ||
+                            content.contains("试试", true) || content.contains("马上", true) ||
+                            content.contains("处理", true) || content.contains("重新", true)
+                        if (acted) {
+                            val rawS = cleanFunctionTags(content).trim().replace(Regex("\\s+"), " ")
+                            val sp = rawS.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim().take(60)
+                            if (sp.length >= 2 && sp != lastSpokenText &&
+                                !sp.contains("工具执行结果") && !sp.contains("调用结果")) {
+                                lastSpokenText = sp
+                                smartSend("💭 $sp", false)
+                            }
+                        }
                     }
                     if (calls.isEmpty()) {
                         // ★ v1.225 移除无调用分支的"思考推送"：模型无工具调用时输出即最终答案
