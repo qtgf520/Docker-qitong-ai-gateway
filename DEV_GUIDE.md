@@ -328,7 +328,6 @@ git push origin master
 - 版本号：Models.kt / build.gradle.kts / WebUi.kt / Main.kt 均升 1.218。
 
 ## 13. 收尾清单（每次交付前逐项打勾）
-
 - [ ] 版本号 7 处 + README 已升且无残留旧号
 - [ ] 编译 `BUILD SUCCESSFUL`（带 --rerun-tasks）
 - [ ] jar 已 scp 到服务器并 `docker compose up -d --build`
@@ -336,8 +335,13 @@ git push origin master
 - [ ] 前端静态 HTML grep 验证（新增类>0 / 删除类=0 / 菜单入口=1）
 - [ ] 服务器备份 tgz 已生成
 - [ ] Git 提交 + push 成功（无敏感文件）
+- [ ] Git tag + GitHub Release 已建（发布规范：commit/tag/push 后必须建 Release，不积压）
 - [ ] 测试脚本/备份已清理（7天旧备份自动清）
 - [ ] 记忆已存档（extended_memory_tools:create_memory）
-
-> 文档版本：v1.218（2026-09-29 建立，v1.218 更新）
+> 文档版本：v1.230（2026-09-29 建立，v1.230 更新）
 > 更新规则：每次踩新坑、改流程，第一时间补进本文件并 git 提交。
+
+## 14. v1.230 变更记录（2026-11-20）
+- 六问题大修：模型试用 20s 超时兜底 / 终端文件管理器 listFiles=null 不再假空 / QQ+微信每次问答关键词查记忆注入【相关回忆】（Database 新增 searchQqBrainMemories/searchWxBrainMemories public 方法） / 模型单价 -1=永久免费（GatewayProxy 4 处） / 测速排行页「失败自动停用」「可用自动启用」两开关（speedTestOneModel 加 autoClose/autoEnable） / Key 默认隐藏 sk-****末尾4位
+- v1.229 流式引擎 StreamChatEngine.kt 随本版一起上线（QQ/微信/公众号三端首调 stream=true）
+- 到账规范：AdminJs 改动必须过 `python3 scripts/check_adminjs.py`；跨类访问 Database 私有 query 会被 Kotlin 编译拦截，需在 Database 加 public 包装方法（本次踩坑：QQ/微信记忆检索直接调用私有 query 编译 13 错，已收敛为 public 方法）
