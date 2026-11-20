@@ -345,3 +345,9 @@ git push origin master
 - 六问题大修：模型试用 20s 超时兜底 / 终端文件管理器 listFiles=null 不再假空 / QQ+微信每次问答关键词查记忆注入【相关回忆】（Database 新增 searchQqBrainMemories/searchWxBrainMemories public 方法） / 模型单价 -1=永久免费（GatewayProxy 4 处） / 测速排行页「失败自动停用」「可用自动启用」两开关（speedTestOneModel 加 autoClose/autoEnable） / Key 默认隐藏 sk-****末尾4位
 - v1.229 流式引擎 StreamChatEngine.kt 随本版一起上线（QQ/微信/公众号三端首调 stream=true）
 - 到账规范：AdminJs 改动必须过 `python3 scripts/check_adminjs.py`；跨类访问 Database 私有 query 会被 Kotlin 编译拦截，需在 Database 加 public 包装方法（本次踩坑：QQ/微信记忆检索直接调用私有 query 编译 13 错，已收敛为 public 方法）
+
+## 15. v1.231 变更记录（2026-11-21）
+- 测速自动启停失效根因：后端 boolOf 只认 JsonPrimitive.isString，前端传 JSON 布尔 true 落入 else 永远 false → 统一改按 JsonPrimitive.content 判断（布尔 true 的 content 也是字符串 "true"）
+- 停用模型进测速队列：getSpeedTestModels 由 getEnabledModels() 改 getModels() 全量；speedTestOneModel 停用模型也真测（只要求服务商启用），autoEnable 才有机
+- 测速排行保留上次状况：getSpeedTestModels 带 healthCache 上次结果，前端 loadSpeedModels 直接渲染上次 正常/失败 + TTFT/TPS/总耗时 + 时间
+- 模型页移除「自动全部测速」按钮 +「自动关闭失败模型」复选框 + runBatchSpeedTest/pollMdProgress 函数，批量测速统一到「测速排行」页；模型页保留每行健康展示
