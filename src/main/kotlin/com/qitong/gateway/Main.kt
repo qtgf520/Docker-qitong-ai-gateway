@@ -230,7 +230,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.230"))
+                put("version", JsonPrimitive("1.231"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -758,8 +758,12 @@ fun Application.moduleWeb(database: Database) {
             val models = AdminApi.getSpeedTestModels(database, u)
             if (models.isEmpty()) { AdminApi.fail(call, "暂无待测速的模型", 400); return@post }
             val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            // ★ v1.231 统一用 content 判断：JSON 布尔 true 的 content="true"、字符串 "true" 也是 "true"、数字 1 是 "1"
             fun boolOf(k: String, def: Boolean): Boolean = body[k]?.let {
-                when { it is JsonPrimitive && it.isString -> it.content == "true" || it.content == "1"; else -> false }
+                when {
+                    it is JsonPrimitive -> it.content == "true" || it.content == "1"
+                    else -> def
+                }
             } ?: def
             val autoClose = boolOf("autoClose", false)
             val autoEnable = boolOf("autoEnable", true)
@@ -3013,7 +3017,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.230"))
+                put("version", JsonPrimitive("1.231"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3857,7 +3861,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.230"))
+                    put("version", JsonPrimitive("1.231"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

@@ -38,10 +38,8 @@ loaders.models = function(){
    box.innerHTML = [
 '<div class="action-bar">',
       '<button class="btn" onclick="editModel(0)">手动添加模型</button>',
-      '<button class="btn" id="batchSpeedBtn" onclick="runBatchSpeedTest()">自动全部测速</button>',
       '<button class="btn" style="color:#fff" onclick="loadModelAliases()">🏷️ 显示名管理</button>',
       '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted);cursor:pointer" title="显示你已隐藏的模型"><input type="checkbox" id="mdShowHidden" '+(incHidden?'checked':'')+' onchange="mdToggleShowHidden()">显示已隐藏</label>',
-      '<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)"><input type="checkbox" id="batchAutoClose" checked>自动关闭失败模型</label>',
      // ★ v1.166 多选批量操作（下拉式）
      '<span style="border-left:1px solid var(--border);padding-left:10px;display:inline-flex;gap:6px;align-items:center">' +
       '<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)"><input type="checkbox" id="mdChkAll" onclick="mdSelAll(this.checked)">全选</label>' +
@@ -49,16 +47,13 @@ loaders.models = function(){
       '<button class="btn btn-sm" onclick="mdBatchAction()">执行</button>' +
       '<span id="mdSelCount" style="font-size:11px;color:var(--muted)"></span>' +
      '</span>',
-     '<span style="color:var(--muted);font-size:12px">点每行「测速」单测该模型；批量测速通过自动启用 / 失败自动关闭</span>',
-    '</div><div class="card" id="batchSpeedCard" style="display:none"></div>',
+     '<span style="color:var(--muted);font-size:12px">点每行「测速」单测该模型；批量测速请到「测速排行」页（含自动启停）</span>',
+    '</div>',
     '<div class="card"><div class="table-wrap"><table><thead><tr><th style="width:28px"><input type="checkbox" id="mdChkAllH" onclick="mdSelAll(this.checked)"></th><th>状态</th><th>模型ID</th><th>显示名</th><th>服务商</th><th>归属</th><th>属主</th><th>价格</th><th>默认</th><th>上下文</th><th>授权用户</th><th>健康</th><th>启停</th><th>操作</th></tr></thead><tbody>' +
     rows + '<tr><td colspan="14" style="text-align:center;color:var(--muted)">' + (state.models.length ? '' : '暂无模型') + '</td></tr>' +
     '</tbody></table></div></div>'
    ].join('');
-// 接续后台批量测速任务：高亮正在被测的那一行
-   api('/api/speedtest/progress').then(function(r){
-    if(r.code===0 && r.data && r.data.running){ pollMdProgress(); }
-   });
+   // ★ v1.231 批量测速统一到「测速排行」页，模型页不再轮询进度
    // 加载已有健康缓存显示到每行（测过的不再显示"未测"）
    api('/api/speedtest/health').then(function(rr){
     if(rr.code!==0 || !rr.data) return;
@@ -205,50 +200,7 @@ window.testOneModel = function(providerId, modelId, key){
    }
   });
 };
-// 模型页轮询后台批量测速进度，高亮当前被测行 + 完成行回填状态
-var mdPollTimer = null;
-function pollMdProgress(){
- if(mdPollTimer) clearInterval(mdPollTimer);
- mdPollTimer = setInterval(function(){
-  if(!$('view-models')){ clearInterval(mdPollTimer); return; }
-  api('/api/speedtest/progress').then(function(r){
-   if(r.code!==0 || !r.data){ return; }
-   var d = r.data;
-   if(d.currentKey){
-    var row = document.getElementById('mdRow-' + d.currentKey);
-    if(row){
-     var h = row.querySelector('.md-health');
-     if(h) h.innerHTML = '<span class="badge amber">测速中… '+(d.progress||0)+'%</span>';
-    }
-    var tx = $('mdProgTxt'); if(tx) tx.textContent = '进度 '+(d.done||0)+'/'+(d.total||0)+' · 通过 '+(d.passed||0);
-   }
-   // 完成后：回填健康状态到每行 + 恢复按钮
-   if(!d.running){
-    clearInterval(mdPollTimer);
-    if(mdPollTimer){ clearInterval(mdPollTimer); mdPollTimer=null; }
-    var btn = $('batchSpeedBtn'); if(btn) btn.disabled = false;
-    api('/api/speedtest/health').then(function(rr){
-     if(rr.code!==0 || !rr.data) return;
-     var hmap={}; (rr.data||[]).forEach(function(h){ hmap[h.providerId+'::'+h.modelId]=h; });
-     state.models.forEach(function(m){
-      var key=m.providerId+'::'+m.modelId; var h=hmap[key]; if(!h) return;
-      var row=document.getElementById('mdRow-'+key); if(!row) return;
-      var health=row.querySelector('.md-health'); if(!health) return;
-      if(h.isHealthy){
-       var tps=h.tps>0?h.tps.toFixed(1)+'t/s ':'';
-       health.innerHTML='<span class="badge green" title="TTFT '+(h.ttftMs||0)+'ms / 总 '+(h.totalMs||0)+'ms">正常 '+tps+(h.totalMs||0)+'ms</span>';
-      } else {
-       health.innerHTML='<span class="badge red">失败</span>';
-      }
-     });
-    });
-    var card=$('batchSpeedCard');
-    if(card) card.innerHTML='<div style="text-align:center;color:var(--green);padding:20px">✅ 批量测速完成：通过 '+d.passed+'/'+d.total+' 个</div>';
-    toast('批量测速完成：'+d.passed+'/'+d.total+' 正常', true);
-   }
-  });
- },1200);
-};
+// ★ v1.231 模型页轮询已移除（批量测速统一到「测速排行」页，模型页仅保留每行健康展示）
 // ★ v1.166 模型多选批量操作（下拉式：选操作→执行）
 function mdSelAll(checked){
  var chks = document.querySelectorAll('.md-chk');
@@ -322,24 +274,7 @@ window.mdToggleShowHidden = function(){
  localStorage.setItem('qt_models_includeHidden', cb && cb.checked ? '1' : '0');
  loaders.models();
 };
-// 自动全部测速（对齐原APP batchTestAllModels）：后台任务逐个测 + 前端轮询逐步更新每行状态
-window.runBatchSpeedTest = function(){
- var card = $('batchSpeedCard');
- var autoClose = $('batchAutoClose') ? $('batchAutoClose').checked : true;
- card.style.display = 'block';
- card.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px">🚀 正在启动后台批量测速...<br><span style="font-size:12px">逐个串行测速全部模型（TTFT/TPS/总耗时），下方模型行会逐步更新状态</span></div>';
- $('batchSpeedBtn').disabled = true;
- // 用后台任务接口（不阻塞请求，前端轮询 progress 逐步显示）
- api('/api/speedtest/start', { method:'POST', body: {} }).then(function(r){
-  if(r.code !== 0){
-   $('batchSpeedBtn').disabled = false;
-   card.innerHTML = '<div style="color:var(--red);padding:20px;text-align:center">' + esc(r.msg||'启动失败') + '</div>';
-   return;
-  }
-  card.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px">后台测速已启动...<span id="mdProgTxt" style="font-size:12px;display:block;margin-top:8px"></span></div>';
-  pollMdProgress(); // 轮询逐步高亮当前行
- });
-};
+// ★ v1.231 模型页「自动全部测速」已移除（统一到测速排行页，含自动启停开关）
 window.editModel = function(id){
  var m = state.models.find(function(x){ return x.id===id; }) || {};
  var opts = state.providers.map(function(p){ return '<option value="'+p.id+'"'+(p.id===m.providerId?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('');
@@ -408,17 +343,26 @@ function checkSpeedTask(){
     }
   });
 }
-// 加载待测模型列表（默认全部显示为"待测速"）
+// 加载待测模型列表（默认全部显示为"待测速"；★v1.231 有上次测速结果直接显示，保留上次状况）
 function loadSpeedModels(){
   api('/api/speedtest/models').then(function(r){
     if(r.code !== 0){ toast(r.msg, false); return; }
     var models = r.data || [];
     var rows = models.map(function(m){
       var key = m.providerId + '::' + m.modelId;
-      return '<tr id="stRow-'+esc(key)+'" data-key="'+esc(key)+'"><td>'+esc(m.displayName||m.modelId)+'</td><td>'+esc(m.modelId)+'</td><td><span class="badge blue">'+esc(m.providerName||('P'+m.providerId))+'</span></td><td>'+(m.enabled?'<span class="badge green">已启用</span>':'<span class="badge gray">停用</span>')+'</td><td class="st-state" style="color:var(--muted)">待测速</td><td class="st-ttft">—</td><td class="st-tps">—</td><td class="st-total">—</td></tr>';
+      var last = m.lastCheckTime > 0;
+      var lastSt = '';
+      if(last){
+        lastSt = (m.lastHealthy
+          ? '<span class="badge green" title="上次 '+new Date(m.lastCheckTime).toLocaleString()+'">正常'+(m.lastTotalMs>0?' '+m.lastTotalMs+'ms':'')+'</span>'
+          : '<span class="badge red" title="上次 '+new Date(m.lastCheckTime).toLocaleString()+'">失败</span>');
+      } else {
+        lastSt = '<span class="badge gray">未测过</span>';
+      }
+      return '<tr id="stRow-'+esc(key)+'" data-key="'+esc(key)+'"><td>'+esc(m.displayName||m.modelId)+'</td><td>'+esc(m.modelId)+'</td><td><span class="badge blue">'+esc(m.providerName||('P'+m.providerId))+'</span></td><td>'+(m.enabled?'<span class="badge green">已启用</span>':'<span class="badge gray">停用</span>')+'</td><td>'+lastSt+'</td><td class="st-ttft">'+(last&&m.lastHealthy&&m.lastTtftMs>0?m.lastTtftMs+'ms':'—')+'</td><td class="st-tps">'+(last&&m.lastHealthy&&m.lastTps>0?m.lastTps.toFixed(2)+' tok/s':'—')+'</td><td class="st-total">'+(last&&m.lastHealthy&&m.lastTotalMs>0?m.lastTotalMs+'ms':'—')+'</td></tr>';
     }).join('');
-    $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>显示名</th><th>模型ID</th><th>服务商</th><th>状态</th><th>测试状态</th><th>TTFT</th><th>TPS</th><th>总耗时</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (models.length ? '' : '暂无已启用模型，请先在模型页启用或添加') + '</td></tr>' +
+    $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>显示名</th><th>模型ID</th><th>服务商</th><th>状态</th><th>上次测速</th><th>TTFT</th><th>TPS</th><th>总耗时</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (models.length ? '' : '暂无模型，请先在模型页启用或添加') + '</td></tr>' +
       '</tbody></table></div>';
   });
 }

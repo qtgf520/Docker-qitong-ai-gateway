@@ -504,8 +504,8 @@ private fun providerToMap(p: Provider) = mapOf(
             ?: return mapOf("modelId" to modelId, "providerId" to providerId,
                 "isHealthy" to false, "ttftMs" to -1L, "tps" to 0.0, "totalMs" to -1L,
                 "displayName" to model.displayName, "msg" to "服务商不存在")
-        // 测速：服务商或模型未启用则直接失败
-        val h = if (provider.isEnabled && model.isEnabled) GatewayScheduler.measureModel(model, provider)
+        // 测速：★v1.231 停用模型也真测（只要求服务商启用），否则 autoEnable 永远没机会把停用模型启用
+        val h = if (provider.isEnabled) GatewayScheduler.measureModel(model, provider)
             else GatewayScheduler.ModelHealth(model.modelId, model.providerId, Long.MAX_VALUE, -1, 0.0, -1, 0, System.currentTimeMillis(), false)
         // 立即写入健康缓存（排行榜即时刷新）
         synchronized(GatewayScheduler.healthCache) {
@@ -535,14 +535,15 @@ private fun providerToMap(p: Provider) = mapOf(
         )
     }
 
-    /** 待测速模型列表（当前已启用且对当前用户可见的模型：admin=全部；普通用户=公用+自己的，用于测速页默认渲染"待测速"状态） */
+    /** 待测速模型列表（全部模型：启用+停用都测，admin=全部；普通用户=公用+自己的；★v1.231 停用模型也进测速队列，方便 autoEnable 可用自动启用；★v1.231 带上次测速结果（healthCache），前端直接渲染保留上次状况） */
     fun getSpeedTestModels(database: Database, user: com.qitong.gateway.model.User?): List<Map<String, Any?>> {
-        val all = database.getEnabledModels()
+        val all = database.getModels()
         val visible = if (user?.role == "admin") all
         else if (user != null) all.filter { m -> m.isPublic || m.ownerId == user.id }
         else all.filter { it.isPublic }
         return visible.map { m ->
             val p = database.getProviderById(m.providerId)
+            val h = GatewayScheduler.healthCache[GatewayScheduler.routeKey(m.providerId, m.modelId)]
             mapOf(
                 "id" to m.id,
                 "modelId" to m.modelId,
@@ -550,7 +551,13 @@ private fun providerToMap(p: Provider) = mapOf(
                 "displayName" to m.displayName.ifBlank { m.modelId },
                 "providerName" to (p?.name ?: "P${m.providerId}"),
                 "enabled" to m.isEnabled,
-                "customAlias" to m.customAlias
+                "customAlias" to m.customAlias,
+                // 上次测速结果（无测速记录时 h 为 null）
+                "lastHealthy" to (h?.isHealthy ?: false),
+                "lastTtftMs" to (h?.ttftMs ?: -1L),
+                "lastTps" to (h?.tps ?: 0.0),
+                "lastTotalMs" to (h?.totalMs ?: -1L),
+                "lastCheckTime" to (h?.lastCheckTime ?: 0L)
             )
         }
     }
