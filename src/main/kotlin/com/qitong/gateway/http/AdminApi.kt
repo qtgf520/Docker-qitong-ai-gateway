@@ -494,7 +494,8 @@ private fun providerToMap(p: Provider) = mapOf(
      * 单模型测速（对齐原APP：测一个测一个，前端逐个调用逐个显示）
      * 测完立即写入 healthCache + 更新排行榜
      */
-    suspend fun speedTestOneModel(database: Database, providerId: Long, modelId: String): Map<String, Any?> {
+    suspend fun speedTestOneModel(database: Database, providerId: Long, modelId: String,
+                                  autoClose: Boolean = false, autoEnable: Boolean = true): Map<String, Any?> {
         val model = database.getModelByKey(providerId, modelId)
             ?: return mapOf("modelId" to modelId, "providerId" to providerId,
                 "isHealthy" to false, "ttftMs" to -1L, "tps" to 0.0, "totalMs" to -1L,
@@ -510,8 +511,15 @@ private fun providerToMap(p: Provider) = mapOf(
         synchronized(GatewayScheduler.healthCache) {
             GatewayScheduler.healthCache[GatewayScheduler.routeKey(model.providerId, model.modelId)] = h
         }
-        // 通过→自动启用；失败→保持原状态
-        if (h.isHealthy && !model.isEnabled) database.updateModel(model.copy(isEnabled = true))
+        // ★ v1.230 测速自动启停：两个独立开关（由测速排行页配置）
+        //   autoEnable=true（默认，兼容旧行为）：测速通过且当前停用 → 自动启用
+        //   autoClose=true：测速失败且当前启用 → 自动停用（防故障模型继续被路由）
+        var finalEnabled = model.isEnabled
+        if (h.isHealthy && !model.isEnabled && autoEnable) {
+            database.updateModel(model.copy(isEnabled = true)); finalEnabled = true
+        } else if (!h.isHealthy && model.isEnabled && autoClose) {
+            database.updateModel(model.copy(isEnabled = false)); finalEnabled = false
+        }
         return mapOf(
             "id" to model.id,
             "modelId" to model.modelId,
@@ -522,7 +530,7 @@ private fun providerToMap(p: Provider) = mapOf(
             "totalMs" to h.totalMs,
             "latencyMs" to (if (h.isHealthy) h.totalMs else -1),
             "isHealthy" to h.isHealthy,
-            "enabled" to model.isEnabled,
+            "enabled" to finalEnabled,
             "msg" to (if (h.isHealthy) "测速通过" else "测速失败")
         )
     }

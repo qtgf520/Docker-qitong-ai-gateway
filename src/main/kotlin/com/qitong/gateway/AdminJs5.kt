@@ -693,6 +693,8 @@ function fmLoad(){
   // 渲染成可点击列表（目录可进、文件可预览）
   var lines=(r.data.output||'').split('\n').filter(function(l){return l.trim();});
   if(!lines.length){ el.textContent='（空目录）'; return; }
+  // ★ v1.230 修复假空：后端返回的「（空目录）/path」整行是提示不是文件，直接展示，不渲染成可点击项
+  if(lines.length===1 && lines[0].indexOf('（空目录）')===0){ el.textContent=lines[0]; return; }
   el.innerHTML=lines.map(function(l){
    var isDir=l.startsWith('📁');
    var name=l.substring(2).split('\t')[0];

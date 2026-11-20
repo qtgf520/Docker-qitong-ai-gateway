@@ -685,6 +685,26 @@ object WeixinBotManager {
                 }
             }
         }
+        // ★ v1.230 每次问答自动关键词检索记忆（对齐 QQ 侧）：用 userText 关键词精准搜历史记忆，
+        //   命中与本次话题相关的记忆注入（不只取最近N条），让 AI 更聪明、对话更连贯。
+        runCatching {
+            val kw = userText.trim().filter { it.isLetterOrDigit() || it == ' ' || it == '，' || it == '。' || it == '？' }
+                .replace(Regex("\\s+"), " ").trim().take(30)
+            val kwList = kw.split(Regex("[，。？\\s]+")).filter { it.length >= 2 }.distinct()
+            val hints = mutableListOf<String>()
+            if (userId > 0) {
+                kwList.forEach { k -> runCatching { d.searchMemories(userId, k, limit = 3) }?.getOrNull()?.forEach { hints.add((it["content"] as? String).orEmpty()) } }
+            } else {
+                // 未绑定用户走微信独立记忆通道的关键词检索（Database public 方法，多 bot 隔离）
+                kwList.forEach { k -> hints.addAll(runCatching { d.searchWxBrainMemories(msg.from, k, limit = 3, botId = bot.id) }.getOrDefault(emptyList())) }
+            }
+            val seen = mutableSetOf<String>()
+            hints.filter { it.isNotBlank() }.forEach { c ->
+                if (seen.add(c)) {
+                    baseSys += "\n【相关回忆】" + c.take(80)
+                }
+            }
+        }
         val hist = history.getOrPut(key) { mutableListOf() }
         return try {
             val msgs = JSONArray().put(JSONObject().put("role", "system").put("content", baseSys))
@@ -697,27 +717,26 @@ object WeixinBotManager {
                 msgs.put(JSONObject().put("role", "user").put("content", userText))
                 while (hist.size > 20) hist.removeAt(0)
             }
-            val body = JSONObject()
-                .put("model", bot.aiModel)
-                .put("messages", msgs)
-                .put("stream", false)
-                .put("temperature", 0.8).put("max_tokens", 4096)
-                .toString()
-            val req = Request.Builder()
-                .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
-                .addHeader("Content-Type", "application/json")
-                .post(body.toRequestBody(jsonCt))
-                .build()
-            // ★ v1.116 注册当前调用到 activeCalls（可被「停止」即时 cancel）
-            val firstCall = http.newCall(req)
-            activeCalls[msg.from] = firstCall
-            var content = firstCall.execute().use { resp ->
-                activeCalls.remove(msg.from)
-                if (!resp.isSuccessful) return null
-                JSONObject(resp.body?.string().orEmpty())
-                    .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
-                    ?.optString("content")?.trim().orEmpty()
+            // ★ v1.229 学 AstrBot：微信首调改流式（stream=true），AI 边想边说边推人话过渡语
+            //   reasoning_content 仅后台参考不展示；纯闲聊（无行动词）不推任何💭
+            val streamResult = com.qitong.gateway.sandbox.StreamChatEngine.chatStream(
+                model = bot.aiModel,
+                messages = msgs,
+                gatewayPort = gatewayPort,
+                onHumanLine = { line ->
+                    val cur2 = com.qitong.gateway.sandbox.StreamChatEngine.isHumanActionLine(line)
+                    if (cur2) {
+                        val sp2 = line.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
+                        if (sp2.isNotEmpty()) pSend("💭 $sp2")
+                    }
+                },
+                onCancel = { stopSignals[msg.from] == true }
+            )
+            if (streamResult.content.isBlank()) {
+                System.err.println("[WeixinBot] ${bot.id} 模型调用失败：流式返回空")
+                return null
             }
+            var content = streamResult.content.trim()
              // ★ v78 收敛标记：本轮是否真执行过工具（结果已实时推送，最终回复不再复述）
             var executedCalls = false
             var lastProgressAt = System.currentTimeMillis()

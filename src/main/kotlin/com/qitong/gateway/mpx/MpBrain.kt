@@ -24,30 +24,25 @@ object MpBrain {
 
     private val jsonCt = "application/json".toMediaType()
 
-    private fun chatLoopback(model: String, messages: List<Map<String, String>>): String {
-        val bodyJson = org.json.JSONObject().apply {
-            put("model", model)
-            put("messages", org.json.JSONArray().apply {
-                messages.forEach { m -> put(org.json.JSONObject().put("role", m["role"]).put("content", m["content"])) }
-            })
-            put("stream", false)
-        }.toString()
-        val req = okhttp3.Request.Builder()
-            .url("http://127.0.0.1:18889/v1/chat/completions")
-            .post(bodyJson.toRequestBody(jsonCt))
-            .build()
-        return http.newCall(req).execute().use { resp ->
-            val bodyStr = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) "⚠️ AI 服务暂不可用(HTTP ${resp.code})，请稍后再试"
-            else {
-                try {
-                    org.json.JSONObject(bodyStr)
-                        .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
-                        ?.takeIf { it.isNotBlank() }
-                        ?: "🤔 我还没想好怎么回答，换个问法试试？"
-                } catch (_: Exception) { "⚠️ AI 响应解析失败，请稍后再试" }
-            }
+    private fun chatLoopback(model: String, messages: List<Map<String, String>>, openid: String, pSend: (String) -> Unit): String {
+        val msgsArr = org.json.JSONArray().apply {
+            messages.forEach { m -> put(org.json.JSONObject().put("role", m["role"]).put("content", m["content"])) }
         }
+        // ★ v1.229 学 AstrBot：公众号模型调用同样切流式（stream=true），AI 边想边说边推人话过渡语
+        val sr = com.qitong.gateway.sandbox.StreamChatEngine.chatStream(
+            model = model,
+            messages = msgsArr,
+            gatewayPort = 18889,
+            onHumanLine = { line ->
+                if (com.qitong.gateway.sandbox.StreamChatEngine.isHumanActionLine(line)) {
+                    val sp = line.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
+                    if (sp.isNotEmpty()) pSend("💭 $sp")
+                }
+            }
+        )
+        val content = sr.content.trim()
+        return if (content.isEmpty()) "⚠️ AI 服务暂不可用（流式空返回），请稍后再试"
+        else content
     }
 
     fun ask(
@@ -86,7 +81,7 @@ object MpBrain {
                 val msgs = mutableListOf<Map<String, String>>()
                 msgs.add(mapOf("role" to "system", "content" to sysFull))
                 msgs.add(mapOf("role" to "user", "content" to content))
-                val modelOut = chatLoopback(aiModel, msgs)
+                val modelOut = chatLoopback(aiModel, msgs, openid, pSend)
                 if (modelOut.startsWith("⚠️ AI") || modelOut.startsWith("🤔 我还没")) { reply = modelOut; break }
 
                 val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(modelOut, executedSigs)

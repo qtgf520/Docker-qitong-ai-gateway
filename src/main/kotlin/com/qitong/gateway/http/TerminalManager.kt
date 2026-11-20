@@ -201,10 +201,14 @@ object TerminalManager {
     fun listDir(path: String): Pair<Boolean, String> {
         return try {
             val base = java.io.File(path)
-            if (!base.exists() || !base.isDirectory) return false to "目录不存在：$path"
-            val sb = StringBuilder()
-            val items = base.listFiles()?.sortedWith(compareBy({ it.isFile }, { it.name.lowercase() })) ?: emptyList()
+            if (!base.exists()) return false to "目录不存在：$path"
+            if (!base.isDirectory) return false to "不是目录：$path"
+            // ★ v1.230 修复假空：listFiles() 在无权限目录会返回 null，不能再当空目录
+            val files = base.listFiles()
+            if (files == null) return false to "无权限读取该目录（容器内无访问权限）：$path"
+            val items = files.sortedWith(compareBy({ it.isFile }, { it.name.lowercase() }))
             if (items.isEmpty()) return true to "（空目录）$path"
+            val sb = StringBuilder()
             items.forEach { f ->
                 val name = f.name
                 val type = if (f.isDirectory) "📁" else "📄"

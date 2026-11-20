@@ -230,7 +230,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.228"))
+                put("version", JsonPrimitive("1.230"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -751,12 +751,18 @@ fun Application.moduleWeb(database: Database) {
             if (!visible) { AdminApi.fail(call, "无权限测速该模型", 403); return@post }
             AdminApi.ok(call, AdminApi.speedTestOneModel(database, providerId, modelId), "ok")
         }
-        // 启动后台批量测速（离开页面也在跑，回来看进度/结果）
+        // 启动后台批量测速（离开页面也在跑，回来看进度/结果；★v1.230 支持两个自动启停开关）
         post("/api/speedtest/start") {
             val u = call.requireAuth(database) ?: return@post
             if (SpeedTaskRunner.state.running) { AdminApi.ok(call, SpeedTaskRunner.snapshot(), "测速已在运行中"); return@post }
             val models = AdminApi.getSpeedTestModels(database, u)
             if (models.isEmpty()) { AdminApi.fail(call, "暂无待测速的模型", 400); return@post }
+            val body = runCatching { call.receive<JsonObject>() }.getOrElse { buildJsonObject { } }
+            fun boolOf(k: String, def: Boolean): Boolean = body[k]?.let {
+                when { it is JsonPrimitive && it.isString -> it.content == "true" || it.content == "1"; else -> false }
+            } ?: def
+            val autoClose = boolOf("autoClose", false)
+            val autoEnable = boolOf("autoEnable", true)
             SpeedTaskRunner.start(models.size)
             // 后台协程逐个测速（不阻塞请求，前端轮询进度）
             kotlinx.coroutines.GlobalScope.launch {
@@ -765,7 +771,7 @@ fun Application.moduleWeb(database: Database) {
                         SpeedTaskRunner.markCurrent(i, "${m["providerId"]}::${m["modelId"]}", (m["displayName"] as? String) ?: "")
                         val providerId = (m["providerId"] as? Number)?.toLong() ?: -1
                         val modelId = m["modelId"] as? String ?: ""
-                        val r = AdminApi.speedTestOneModel(database, providerId, modelId)
+                        val r = AdminApi.speedTestOneModel(database, providerId, modelId, autoClose, autoEnable)
                         SpeedTaskRunner.addResult(r)
                         kotlinx.coroutines.delay(150) // 轻微间隔，避免上游风暴
                     }
@@ -3007,7 +3013,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.228"))
+                put("version", JsonPrimitive("1.230"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3851,7 +3857,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.228"))
+                    put("version", JsonPrimitive("1.230"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

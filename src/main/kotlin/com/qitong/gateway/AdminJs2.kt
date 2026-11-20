@@ -81,6 +81,7 @@ loaders.models = function(){
   });
  };
 // ★ v1.166 Playground 在线试用：选模型→输入→流式试玩
+// ★ v1.230 修复试用卡死：fetch 加 20s 超时（AbortController），请求挂起不再永远"正在请求模型"
 var tryModelAbort = null;
 window.tryModel = function(id, modelId, displayName){
   var mid = modelId;
@@ -91,11 +92,14 @@ window.tryModel = function(id, modelId, displayName){
   openModal('🧪 在线试用 · '+esc(displayName||mid), html, function(){
    var inp = $('tryInput'); if(!inp){ toast('输入框不存在', false); return; }
    var msg = inp.value.trim(); if(!msg){ toast('请输入内容', false); return; }
-   var out = $('tryResult'); if(out) out.innerHTML = '⏳ 正在请求模型…';
+   var out = $('tryResult'); if(out) out.innerHTML = '⏳ 正在请求模型…（20秒无响应将自动超时）';
    var body = JSON.stringify({ model: mid, messages: [{role:'user', content: msg}], stream: true });
     // 用 fetch 流式读取 /api/chat/stream（已登录鉴权 + SSE 透传）
     // ★ v1.170 修复 401：该接口强制 requireAuth，必须带 Bearer token（与聊天页一致），否则 401
-    fetch('/api/chat/stream', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token}, body: body })
+    // ★ v1.230 加 20s AbortController：试用请求挂起时不再无限等"正在请求模型"，超时明确报错
+    tryModelAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var tryTimer = tryModelAbort ? setTimeout(function(){ try{ tryModelAbort.abort(); }catch(e){} }, 20000) : null;
+    fetch('/api/chat/stream', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token}, body: body, signal: tryModelAbort ? tryModelAbort.signal : undefined })
     .then(function(res){
      if(!res.ok){ out.innerHTML = '❌ HTTP '+res.status; return; }
      var reader = res.body.getReader();
@@ -122,7 +126,13 @@ window.tryModel = function(id, modelId, displayName){
       }).catch(function(e){ out.innerHTML += '\\n❌ 流读取失败：'+esc(e.message||e); });
      }
      return pump();
-    }).catch(function(e){ out.innerHTML = '❌ 请求失败：'+esc(e.message||e); });
+    }).catch(function(e){
+      if(tryModelAbort && tryModelAbort.signal && tryModelAbort.signal.aborted){
+        out.innerHTML = '❌ 请求超时（20秒无响应）。模型可能未启用、或该模型/服务商当前不可用。';
+      } else {
+        out.innerHTML = '❌ 请求失败：'+esc(e.message||e);
+      }
+    }).finally(function(){ if(tryTimer) clearTimeout(tryTimer); });
   });
 };
 // ★ v1.170 模型自定义显示名（对外别名）管理：/api/model-mappings（管理员=全局全部；普通用户=全局+自己的）
@@ -345,7 +355,7 @@ window.editModel = function(id){
    '<div class="form-row"><label>显示名</label><input id="mdName" class="input" value="'+esc(m.displayName||'')+'"></div>',
    '<div class="form-row"><label>自定义别名</label><input id="mdAlias" class="input" value="'+esc(m.customAlias||'')+'"></div>',
    '<div class="form-row"><label>上下文窗口</label><input id="mdCtx" class="input" type="number" value="'+(m.contextWindow||4096)+'"></div>',
-   '<div class="form-row"><label>单价（元/百万Token，0=自动默认价）</label><input id="mdPrice" class="input" type="number" step="0.1" value="'+(m.price||0)+'"><small style="color:var(--muted)">如 gpt-4o 默认 ¥15/M，留0自动按内置价格表；自定义价格=对该模型独立收费</small></div>',
+   '<div class="form-row"><label>单价（元/百万Token，填 -1 = 永久免费；0 = 自动默认价）</label><input id="mdPrice" class="input" type="number" step="0.1" value="'+(m.price||0)+'"><small style="color:var(--muted)">-1=该模型永久免费（默认免费）；0=自动按内置价格表；填正数=对该模型独立收费</small></div>',
    auRow,
    '<div class="form-row"><label><input type="checkbox" id="mdEnabled"'+(m.isEnabled!==false?' checked':'')+'>启用</label> <label style="margin-left:12px"><input type="checkbox" id="mdPublic"'+(m.isPublic?' checked':'')+'>公用（所有用户可见可用）</label> <label style="margin-left:12px"><input type="checkbox" id="mdDefault"'+(m.isDefault?' checked':'')+'>默认</label></div>'+
    '<div class="form-row"><label style="font-size:12px;color:var(--muted)">多模态能力（影响自动切换：多模态请求优先选支持该能力的模型）</label><div>'+
@@ -375,7 +385,15 @@ window.delModel = function(id){
 var speedTestActive = false;
 var speedPollTimer = null;
 loaders.speedtest = function(){
-  $('view-speedtest').innerHTML = '<div class="action-bar"><button class="btn" onclick="runSpeedTest()">开始批量测速</button><button class="btn-ghost" onclick="loadSpeedModels()">刷新列表</button><span style="color:var(--muted);font-size:13px">后台逐模型测速：离开页面也继续跑，回来看进度/结果</span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">加载模型列表...</div></div>';
+  // ★ v1.230 测速自动启停：两个独立复选框（失败自动停用 / 可用自动启用），选项持久化到 localStorage
+  var autoClose = localStorage.getItem('stAutoClose') !== '0';
+  var autoEnable = localStorage.getItem('stAutoEnable') !== '0'; // 默认开（兼容旧行为：通过自动启用）
+  $('view-speedtest').innerHTML = '<div class="action-bar">' +
+    '<button class="btn" onclick="runSpeedTest()">开始批量测速</button>' +
+    '<button class="btn-ghost" onclick="loadSpeedModels()">刷新列表</button>' +
+    '<label style="color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-left:6px"><input type="checkbox" id="stAutoClose" '+(autoClose?'checked':'')+' onchange="localStorage.setItem(\'stAutoClose\', this.checked?\'1\':\'0\')">测速失败自动停用</label>' +
+    '<label style="color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-left:6px"><input type="checkbox" id="stAutoEnable" '+(autoEnable?'checked':'')+' onchange="localStorage.setItem(\'stAutoEnable\', this.checked?\'1\':\'0\')">测速可用自动启用</label>' +
+    '<span style="color:var(--muted);font-size:13px">后台逐模型测速：离开页面也继续跑，回来看进度/结果</span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">加载模型列表...</div></div>';
   // 先渲染待测列表，再检查是否有后台任务在跑 → 有则继续轮询
   loadSpeedModels();
   checkSpeedTask();
@@ -468,12 +486,14 @@ function renderSpeedResults(s){
     if(cells[7]) cells[7].textContent = ok && d.totalMs > 0 ? d.totalMs + 'ms' : '—';
   });
 }
-// 启动后台批量测速（前端只发一次，其余交给后端 + 轮询）
+// 启动后台批量测速（前端只发一次，其余交给后端 + 轮询；★v1.230 带两个自动启停开关）
 window.runSpeedTest = function(){
   if(speedTestActive){ toast('测速进行中，请等待完成', false); return; }
   var btn = $('view-speedtest').querySelector('.action-bar .btn');
   if(btn) btn.innerHTML = '启动中...';
-  api('/api/speedtest/start', { method:'POST', body: {} }).then(function(r){
+  var autoClose = $('stAutoClose') ? $('stAutoClose').checked : false;
+  var autoEnable = $('stAutoEnable') ? $('stAutoEnable').checked : true;
+  api('/api/speedtest/start', { method:'POST', body: { autoClose: autoClose, autoEnable: autoEnable } }).then(function(r){
     if(r.code === 0){
       speedTestActive = true;
       if(btn) btn.innerHTML = '测速中...';

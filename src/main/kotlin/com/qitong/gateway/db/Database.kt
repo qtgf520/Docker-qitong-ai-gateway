@@ -2564,6 +2564,8 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.230", "六问题大修：试用超时兜底/终端文件管理器假空/每次问答自动查记忆/单价-1=永久免费/测速自动启停/Key默认隐藏", "①模型试用卡死——tryModel 加 20s AbortController 超时兜底，不再无限『正在请求模型』，超时明确提示模型可能未启用/服务商不可用（AdminJs2）。②终端文件管理器假空根治——后端 listDir 区分『无权限(listFiles=null)』返回明确错误，不再当空目录；前端 fmLoad 识别『（空目录）/path』整行直接展示不渲染成可点击文件（TerminalManager+AdminJs5）。③每次问答自动查记忆——QQ/微信两侧加关键词实时检索注入：绑定账号 searchMemories，未绑定 QQ 走 searchQqBrainMemories(tag 场景隔离)/微信走 searchWxBrainMemories(多bot隔离)，命中注入【相关回忆】（QqBotManager+WeixinBotManager+Database）。④模型单价 -1=永久免费——GatewayProxy 4处价格逻辑支持 price==-1 视为免费（请求价/成本价/免费过滤/计费豁免），前端编辑模型页提示更新。⑤测速自动启停——测速排行页加『测速失败自动停用』『测速可用自动启用』两个独立选项（localStorage 持久化），后端 speedTestOneModel 加 autoClose/autoEnable 参数、/api/speedtest/start 解析传入（AdminJs2+AdminApi+Main）。⑥Key 默认隐藏防截屏泄露——maskKey()/toggleKeyShow() 列表只显 sk-****末尾4位，点击虚线边框展开完整 key，复制按钮保留（AdminJs3）。"),
+Triple("v1.229", "流式引擎架构升级（学 AstrBot：stream=true 边想边说边干活）", "①统一流式引擎 StreamChatEngine.kt——SSE 流式读、完整句切分、行动词过滤、工具标签出现即停推、reasoning 仅后台参考；QQ/微信/公众号三端模型首调全部切换流式（chatLoopback 签名加 openid/pSend 对齐）。②AI 边想边说——含行动词的完整句实时推💭（『好的我来帮你看一下』边读边推），进入工具标签段自动停推不刷屏；纯闲聊无行动词不推💭只回最终答案。③reasoning_content（R1 推理链）仅内部参考不直接推给用户（防冗长自语刷屏）。"),
 Triple("v1.218", "插件市场前端入口（🏪按钮 + openPluginMarket/renderMarketList/installFromMarket 三函数）", "后台插件管理页 action-bar 新增「🏪 插件市场」按钮：openPluginMarket() 用 prompt 填索引地址（install:false 预览不安装）→ renderMarketList() 按行展示 🆕新增/⬆️升级/✅已装 状态，可装项给「安装」按钮 → installFromMarket(url,name) 调 install:true 真安装后 toast+刷新列表；默认地址占位预填不发起请求；仅改 AdminJs10.kt 一处。"),
 Triple("v1.217", "插件市场在线拉取真实现（marketPull）+ 插件运行时隔离（守护线程池+真超时取消）", "①marketPull(url, install)——拉 JSON 索引（{plugins:[...]} 或顶层数组两种格式）比对本地插件版本输出 新增/升级/已装 状态，install=true 走 installFromEntry 下载 zip→解压→校验 plugin.json→失败 deleteRecursively 回滚→成功 scanAll 热重载；sanitizeName 正则过滤防路径穿越；后端路由 Main.kt POST /api/plugins/market（admin 鉴权）。②插件运行时隔离——守护线程池 pluginExecutor（daemon，主进程退得出）+ pluginTimeoutMs=5000L 超时控制，invokePluginAction 用 fut.get(timeout) 超时 fut.cancel(true) 真中断，ExecutionException 上抛 cause；onMessage runCatching 包裹，单插件失败打印 插件id/异常类/耗时/原因 后 continue，不再拖垮整轮消息分发。③踩坑自填——备份 .kt 误落 src/ 导致 Gradle 类重复声明 Redeclaration 编译 FAILED，5 个残留备份移入项目根 backup/ 后 PASS；DEV_GUIDE 写入备份位置硬性规范。"),
 Triple("v1.216", "子Agent/MP关键词/知识库页面 加载中加载不完 根治（JS .take() 误用）", "根因：前端 JS 误用 Kotlin 的 .take(N)（如 t.taskDesc.take(50)），JS String 无 take 方法，列表非空渲染抛 TypeError 页面卡死加载中（子Agent页空列表走暂无分支不崩，一有任务就崩）。修复：AdminJs1.kt 全局补 String.prototype.take polyfill（一处生效覆盖子Agent/MP关键词/知识库 3 处），同时修复 esc() 引号实体（&quot; 被编辑工具误伤）。验证：前端注入 polyfill=1、esc 实体正常、容器 healthy、QQ READY。"),
@@ -4360,14 +4362,38 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
     }
 
     // ============ QQ 长期大脑记忆（复用 brain_memory 表，tags=qq:{openid}） ============
-
     /** 读取某 QQ 用户最近的记忆（用于注入 system 上下文）。★v1.168 tag 参数支持场景隔离，默认 qq:{openid} 兼容旧调用 */
     fun getQqBrainMemories(openid: String, limit: Int = 6, tag: String = "qq:$openid"): List<String> {
         val rows = query(
             "SELECT content FROM brain_memory WHERE tags=? ORDER BY timestamp DESC LIMIT $limit",
             tag
-        )
+)
         return rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
+    }
+    /** ★ v1.230 QQ 关键词记忆检索：按当前提问关键词精准搜历史记忆（未绑定用户场景隔离 tag），供每次问答自动注入 */
+    fun searchQqBrainMemories(openid: String, keyword: String, limit: Int = 3, tag: String = "qq:$openid"): List<String> {
+        val kw = keyword.trim()
+        if (kw.isBlank()) return emptyList()
+        return try {
+            val rows = query(
+                "SELECT content FROM brain_memory WHERE tags=? AND content LIKE ? ORDER BY timestamp DESC LIMIT $limit",
+                tag, "%$kw%"
+            )
+            rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
+        } catch (e: Exception) { emptyList() }
+    }
+    /** ★ v1.230 微信关键词记忆检索：按当前提问关键词精准搜微信独立记忆（tags=wx:{botId}:{openid} 多 bot 隔离） */
+    fun searchWxBrainMemories(openid: String, keyword: String, limit: Int = 3, botId: Long = 0L): List<String> {
+        val kw = keyword.trim()
+        if (kw.isBlank()) return emptyList()
+        val tags = if (botId > 0) "wx:$botId:$openid" else "wx:$openid"
+        return try {
+            val rows = query(
+                "SELECT content FROM brain_memory WHERE tags=? AND content LIKE ? ORDER BY timestamp DESC LIMIT $limit",
+                tags, "%$kw%"
+            )
+            rows.map { (it["content"] as? String).orEmpty() }.filter { it.isNotBlank() }
+        } catch (e: Exception) { emptyList() }
     }
 
     /** v47 读取某 QQ 用户高频记忆（access_count>=5，注入系统提示词强化记住） */

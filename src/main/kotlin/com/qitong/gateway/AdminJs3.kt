@@ -4,7 +4,14 @@ package com.qitong.gateway
 object AdminJs3 {
   fun js(): String = """
 // ===== API密钥 =====
-loaders.keys = function(){
+// ★ v1.230 Key 默认隐藏（防截屏泄露）：列表只显示 sk-**** 末尾4位，点击才展开完整 key
+  if(!window._keyMasked) window._keyMasked = true;
+  window.maskKey = function(k){ if(!k) return ''; if(k.length <= 12) return k; return k.slice(0,3)+'****'+k.slice(-4); };
+  window.toggleKeyShow = function(k, el){
+   if(el.getAttribute('data-open') === '1'){ el.textContent = window.maskKey(k); el.setAttribute('data-open','0'); }
+   else { el.textContent = k; el.setAttribute('data-open','1'); }
+  };
+  loaders.keys = function(){
  var box = $('view-keys');
  box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
  api('/api/keys').then(function(r){
@@ -12,7 +19,7 @@ loaders.keys = function(){
   var rows = state.keys.map(function(k){
    var mt = (k.allowedModels && k.allowedModels.length) ? k.allowedModels.map(function(m){ return '<span class="badge blue">'+esc(m)+'</span>'; }).join(' ') : '<span style="color:var(--muted)">全部</span>';
    var keyJs = esc(k.key).replace(/'/g, '&#39;');
-   return '<tr><td style="font-family:monospace;font-size:12px">'+esc(k.key)+'</td><td>'+esc(k.label)+'</td><td><span class="badge '+(k.enabled?'green':'red')+'">'+(k.enabled?'启用':'停用')+'</span></td><td>'+mt+'</td><td><span class="badge '+(k.qtaiSjAccess?'purple':'gray')+'">'+(k.qtaiSjAccess?'允许':'禁止')+'</span></td><td><span class="badge blue">'+esc(k.ownerName||'')+'</span></td><td><button class="btn-ghost" onclick="copyKey(\''+keyJs+'\')">复制</button> <button class="btn-ghost" onclick="editKey(\''+keyJs+'\')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delKey(\''+keyJs+'\')">删除</button></td></tr>';
+   return '<tr><td style="font-family:monospace;font-size:12px"><span style="cursor:pointer;border-bottom:1px dashed var(--muted)" onclick="toggleKeyShow(this.getAttribute(\'data-k\'),this)" data-k="'+esc(k.key)+'">'+esc(maskKey(k.key))+'</span> <button class="btn-ghost btn-sm" style="padding:0 6px;font-size:11px" onclick="copyKey(\''+keyJs+'\')">复制</button></td><td>'+esc(k.label)+'</td><td><span class="badge '+(k.enabled?'green':'red')+'">'+(k.enabled?'启用':'停用')+'</span></td><td>'+mt+'</td><td><span class="badge '+(k.qtaiSjAccess?'purple':'gray')+'">'+(k.qtaiSjAccess?'允许':'禁止')+'</span></td><td><span class="badge blue">'+esc(k.ownerName||'')+'</span></td><td><button class="btn-ghost" onclick="editKey(\''+keyJs+'\')">编辑</button> <button class="btn-ghost" style="color:var(--red)" onclick="delKey(\''+keyJs+'\')">删除</button></td></tr>';
   }).join('');
   box.innerHTML = [
    '<div class="action-bar"><button class="btn" onclick="addKey()">添加密钥</button></div>',

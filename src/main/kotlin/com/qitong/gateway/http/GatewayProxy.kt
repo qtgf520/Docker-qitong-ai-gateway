@@ -646,9 +646,9 @@ class GatewayProxy(private val database: Database) {
             val dbPriceRec2 = runCatching { database.getModelPrice(modelId) }.getOrNull()
             val dbPrice2 = dbPriceRec2?.get("inputPrice") as? Double
             val requestedPrice = if (dbPriceRec2 != null) (dbPrice2 ?: 0.0)
-                else requestedModel?.let { if (it.price > 0) it.price else PricingTable.priceOf(it.modelId).takeIf { p -> p > 0 } ?: PricingTable.DEFAULT_PRICE } ?: 0.0
-            // ★ v1.160 表达式计费：命中规则覆盖价/倍率（★v1.192 免费模型不套计费规则）
-            val effRequestedPrice = if (dbPriceRec2 != null && requestedPrice <= 0) 0.0
+                else requestedModel?.let { if (it.price > 0) it.price else if (it.price == -1.0) 0.0 else PricingTable.priceOf(it.modelId).takeIf { p -> p > 0 } ?: PricingTable.DEFAULT_PRICE } ?: 0.0
+            // ★ v1.160 表达式计费：命中规则覆盖价/倍率（★v1.192 免费模型不套计费规则；★v1.230 -1=永久免费同样不套）
+            val effRequestedPrice = if (requestedPrice <= 0) 0.0
                 else applyPricingRule(requestedPrice, modelId, ownerUser.role)
             val requestedPaid = effRequestedPrice > 0
             if (requestedPaid && (ownerUser.quotaLimit <= 0 || ownerUser.quotaUsed >= ownerUser.quotaLimit)) {
@@ -1034,9 +1034,10 @@ class GatewayProxy(private val database: Database) {
             val dbPrice = dbPriceRec?.get("inputPrice") as? Double
             val price = if (dbPriceRec != null) (dbPrice ?: 0.0)
                 else if (model.price > 0) model.price
+                else if (model.price == -1.0) 0.0
                 else PricingTable.priceOf(model.modelId).takeIf { it > 0 } ?: PricingTable.DEFAULT_PRICE
-            // ★ v1.160 表达式计费：命中规则覆盖价/倍率（★v1.192 明确免费模型不套计费规则，免费就是免费）
-            val effPrice = if (dbPriceRec != null && price <= 0) 0.0
+            // ★ v1.160 表达式计费：命中规则覆盖价/倍率（★v1.192 明确免费模型不套计费规则；★v1.230 -1=永久免费同样不套）
+            val effPrice = if (price <= 0) 0.0
                 else applyPricingRule(price, model.modelId, ownerUser?.role ?: "user")
             val cost = estTokens / 1_000_000.0 * effPrice * PricingTable.OUTPUT_MULTIPLIER
             val userId = ownerUser?.id ?: 0

@@ -1984,6 +1984,27 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 }
             }
         }
+        // ★ v1.230 每次问答自动关键词检索记忆（更聪明）：用 userText 里的关键词精准搜历史记忆，
+        //   命中与本次话题相关的记忆注入（不只取最近N条）。绑定账号按账号记忆搜，未绑定按 openid 通道搜。
+        runCatching {
+            val kw = userText.trim().filter { it.isLetterOrDigit() || it == ' ' || it == '，' || it == '。' || it == '？' }
+                .replace(Regex("\\s+"), " ").trim().take(30)
+            val kwList = kw.split(Regex("[，。？\\s]+")).filter { it.length >= 2 }.distinct()
+            val hints = mutableListOf<String>()
+            if (effUserId > 0) {
+                kwList.forEach { k -> runCatching { db.searchMemories(effUserId, k, limit = 3) }?.getOrNull()?.forEach { hints.add((it["content"] as? String).orEmpty()) } }
+            } else {
+                // 未绑定用户走 openid 记忆通道的关键词检索（tag 匹配 + LIKE，用 Database public 方法）
+                val unboundTag = if (groupOpenid.isNotBlank()) "qq:$groupOpenid:$userOpenid" else "qq:c2c:$userOpenid"
+                kwList.forEach { k -> hints.addAll(runCatching { db.searchQqBrainMemories(userOpenid, k, limit = 3, tag = unboundTag) }.getOrDefault(emptyList())) }
+            }
+            val seen = mutableSetOf<String>()
+            hints.filter { it.isNotBlank() }.forEach { c ->
+                if (seen.add(c)) {
+                    memSection += "\n【相关回忆】" + c.take(80)
+                }
+            }
+        }
         // ★ v1.168 QQ 侧聊天风格自然化（只加在 QQ，不影响已达标的微信）：像朋友一样说话，不机械不端着
         val chatStyle = "\n\n## 🗣️ 聊天风格（QQ 渠道，请像真人朋友一样说话）\n" +
             "1. 【先判断聊天还是任务】打招呼/寒暄/闲聊/心情/玩笑 → 纯聊天，用轻松自然的语气回一句就够，绝不调工具、绝不列功能清单；明确要查/做/安排 → 才动手。\n" +
@@ -2024,36 +2045,31 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
             while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
         }
 
-        val body = JSONObject()
-            .put("model", bot.aiModel)
-            .put("messages", msgs)
-            .put("stream", false)
-            .put("temperature", 0.8).put("max_tokens", 4096)
-            .toString()
-
-        val req = Request.Builder()
-            .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
-            .addHeader("Content-Type", "application/json")
-            .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
-            .build()
-
+        // ★ v1.229 学 AstrBot：模型调用改流式（stream=true），AI 边想边说边推
+        //   人话过渡语（"好的我来帮你看一下"）由 StreamChatEngine 边读边回调实时推；
+        //   reasoning_content 仅后台参考不展示；纯闲聊（无行动词）不推任何💭
         return try {
             // ★ v1.116 注册当前调用到 activeCalls（可被「停止」即时 cancel）
-            val call = http.newCall(req)
-            activeCalls[userOpenid] = call
-            call.execute().use { resp ->
-                activeCalls.remove(userOpenid)
-                val respBody = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) {
-                    System.err.println("[QQBot] 模型调用失败 ${bot.appid}: HTTP ${resp.code}")
-                    db.addQqLog(bot.appid, "", userOpenid, "error", "模型调用 HTTP ${resp.code}", 0)
-                    return null
-                }
-                val obj = JSONObject(respBody)
-                var content = obj.optJSONArray("choices")
-                    ?.optJSONObject(0)
-                    ?.optJSONObject("message")
-                    ?.optString("content")?.trim().orEmpty()
+            //   流式引擎内部用独立 OkHttpClient；这里通过 onCancel 协同中断
+            val streamResult = com.qitong.gateway.sandbox.StreamChatEngine.chatStream(
+                model = bot.aiModel,
+                messages = msgs,
+                gatewayPort = gatewayPort,
+                onHumanLine = { line ->
+                    val cur = com.qitong.gateway.sandbox.StreamChatEngine.isHumanActionLine(line)
+                    if (cur) {
+                        val sp = line.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
+                        if (sp.isNotEmpty()) smartSend("💭 $sp", false)
+                    }
+                },
+                onCancel = { stopSignals[userOpenid] == true }
+            )
+            if (streamResult.content.isBlank()) {
+                System.err.println("[QQBot] 模型调用失败 ${bot.appid}: 流式返回空")
+                db.addQqLog(bot.appid, "", userOpenid, "error", "模型调用流式空返回", 0)
+                return null
+            }
+            var content = streamResult.content.trim()
                 // ★ 沙盒执行：qtai-sj 模式下解析回复中的函数调用并执行（兼容 [[沙盒:]] 与 <dots_function_call> 原生格式）
                 // ★ v46 Agent 循环：每步执行结果立即推送 QQ（过程可见），执行完回填给模型继续下一步
                 // ★ v1.110 静默模式（用户要求）：思考→自己找工具→不把步骤发出来→只回最后结果
@@ -2495,7 +2511,6 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                     if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
                 content
-            }
         } catch (e: Exception) {
             System.err.println("[QQBot] 模型调用异常 ${bot.appid}: ${e.message}")
             db.addQqLog(bot.appid, "", userOpenid, "error", "模型异常 ${e.message}", 0)
