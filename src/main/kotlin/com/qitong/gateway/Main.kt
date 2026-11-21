@@ -127,6 +127,12 @@ fun main(args: Array<String>) {
     """.trimIndent())
 
     val database = Database(dbPath)
+    // ★ v1.232 P0-B Agent 运行持久化：挂载落盘 + 启动时把上次崩溃残留的 running 标记为 interrupted
+    runCatching {
+        com.qitong.gateway.http.AgentRunTracker.attach(database)
+        database.markRunsInterrupted()
+        println("[Gateway] v1.232 Agent 运行持久化已挂载（上次 running 已标记 interrupted）")
+    }.onFailure { e -> System.err.println("[Gateway] Agent 运行持久化挂载失败: ${e.message}") }
     // ★ v1.178 统一消息管道 + 平台适配器：初始化注册（三渠道共用一套管道编排）
     runCatching {
         com.qitong.gateway.pipeline.PipelineSetup.install(database)
@@ -1942,9 +1948,11 @@ fun Application.moduleWeb(database: Database) {
             } else AdminApi.fail(call, "操作失败（永久终端不可取消或会话不存在）", 400)
         }
         // ★ v1.174 Agent 实时运行状态（沙盒可视化；管理员=全部，普通用户=自己的）
+        // ★ v1.232 P0-B：?include=interrupted 时合并库里上次中断记录
         get("/api/agent/runs") {
             val u = call.requireAuth(database) ?: return@get
-            AdminApi.ok(call, com.qitong.gateway.http.AgentRunTracker.snapshot(if (u.role == "admin") 0L else u.id), "ok")
+            val includeInterrupted = call.request.queryParameters["include"] == "interrupted"
+            AdminApi.ok(call, com.qitong.gateway.http.AgentRunTracker.snapshot(if (u.role == "admin") 0L else u.id, includeInterrupted), "ok")
         }
         // AI 智能操作终端：自然语言 -> 大模型生成命令 -> 执行
         post("/api/terminal/ai-exec") {

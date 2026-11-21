@@ -1003,6 +1003,16 @@ private fun providerToMap(p: Provider) = mapOf(
                 runCatching { database.trimMemories(userId, 50) }
             }
         }
+        // ★ v1.232 P0-A 记忆自动检索：知识库 BM25 命中【相关记忆】注入（已有则跳过、异常吞掉、不影响回复）
+        runCatching {
+            val memSec = com.qitong.gateway.kb.MemoryRetriever.retrieve(database, userId, userContent)
+            if (memSec.isNotBlank() && messages.none { it is JsonObject && (it["role"]?.jsonPrimitive?.content ?: "") == "system" && (it["content"]?.jsonPrimitive?.content ?: "").contains("【相关记忆】") }) {
+                messages.add(buildJsonObject {
+                    put("role", JsonPrimitive("system"))
+                    put("content", JsonPrimitive(memSec))
+                })
+            }
+        }
         // 注入技能池提示（让大脑能用技能）★ 默认注入（即使未建人格）
         val skillPrompt = SkillRegistry.buildSkillPrompt()
         if (memoryEnabled) {

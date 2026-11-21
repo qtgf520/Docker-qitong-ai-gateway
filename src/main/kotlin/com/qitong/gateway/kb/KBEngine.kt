@@ -1,6 +1,7 @@
 package com.qitong.gateway.kb
 
 import com.qitong.gateway.db.Database
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * ★ v1.194 知识库引擎（RAG 核心，纯 Kotlin 自研，无外部依赖）
@@ -9,8 +10,15 @@ import com.qitong.gateway.db.Database
  * - 递归字符分块：按段落/句子层级递归切分，块间重叠
  * - BM25 稀疏检索：词频+逆文档频率打分（经典概率模型，无需 embedding，离线可用）
  * - 检索结果注入：沙盒 kb_search 工具 + QQ/微信/内置聊天自动注入
+ * - ★ v1.232 chunk 缓存：按 kbId 缓存全量 chunks，60 秒过期，避免每轮全表扫
  */
 object KBEngine {
+
+    /** ★ v1.232 chunk 缓存：kbId -> (过期时间戳, chunks)；60 秒过期，命中不重复读库 */
+    private val chunkCache = ConcurrentHashMap<Long, Pair<Long, List<Map<String, Any?>>>>()
+
+    /** chunk 缓存 TTL（毫秒）= 60 秒 */
+    private const val CHUNK_CACHE_TTL_MS = 60_000L
 
     /** 默认分块大小（字符） */
     private const val DEFAULT_CHUNK_SIZE = 500
@@ -104,7 +112,15 @@ object KBEngine {
      * 经典 BM25 = IDF * (f * (k1+1)) / (f + k1 * (1 - b + b * dl/avgdl))
      */
     fun search(db: Database, kbId: Long, query: String, topK: Int = 5): List<Map<String, Any?>> {
-        val chunks = try { db.getKbChunks(kbId, limit = 2000) } catch (_: Exception) { emptyList() }
+        // ★ v1.232 chunk 缓存：60 秒过期，命中不重复读库
+        val now = System.currentTimeMillis()
+        val cached = chunkCache[kbId]
+        val chunks = if (cached != null && cached.first > now) cached.second
+            else {
+                val fresh = try { db.getKbChunks(kbId, limit = 2000) } catch (_: Exception) { emptyList() }
+                chunkCache[kbId] = (now + CHUNK_CACHE_TTL_MS) to fresh
+                fresh
+            }
         if (chunks.isEmpty()) return emptyList()
 
         val queryTokens = tokenize(query)

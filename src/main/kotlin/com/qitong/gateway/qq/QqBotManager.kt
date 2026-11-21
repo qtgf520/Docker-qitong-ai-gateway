@@ -2030,7 +2030,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 }
             }
         }
-        val sysFull = baseSys + chatStyle + memSection + kbSection
+        // ★ v1.232 P0-A 记忆自动检索：知识库 BM25 命中【相关记忆】注入（异常吞掉、不影响回复）
+        var memoryRetrSection = ""
+        runCatching {
+            memoryRetrSection = com.qitong.gateway.kb.MemoryRetriever.retrieve(db, effUserId, userText)
+        }
+        val sysFull = baseSys + chatStyle + memSection + kbSection + memoryRetrSection
         if (sysFull.isNotBlank()) msgs.put(JSONObject().put("role", "system").put("content", sysFull))
         // ★ v1.167 修复串台：历史严格按 user→assistant 交替，工具过程数据绝不入_hist。
         //   1) 先清掉尾部残留 user（前一轮模型失败/异常返回 null 时留下的脏数据，防 user→user）

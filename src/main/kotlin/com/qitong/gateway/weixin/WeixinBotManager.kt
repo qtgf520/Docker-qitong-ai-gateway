@@ -705,6 +705,13 @@ object WeixinBotManager {
                 }
             }
         }
+        // ★ v1.232 P0-A 记忆自动检索：知识库 BM25 命中【相关记忆】注入（异常吞掉、不影响回复）
+        runCatching {
+            val memSec = com.qitong.gateway.kb.MemoryRetriever.retrieve(d, userId, userText)
+            if (memSec.isNotBlank() && !baseSys.contains("【相关记忆】")) {
+                baseSys += memSec
+            }
+        }
         val hist = history.getOrPut(key) { mutableListOf() }
         return try {
             val msgs = JSONArray().put(JSONObject().put("role", "system").put("content", baseSys))

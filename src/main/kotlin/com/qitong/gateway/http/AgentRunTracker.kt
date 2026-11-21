@@ -1,5 +1,6 @@
 package com.qitong.gateway.http
 
+import com.qitong.gateway.db.Database
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -29,6 +30,39 @@ object AgentRunTracker {
     private val runs = ConcurrentHashMap<String, RunState>()
     private val seq = AtomicLong(0)
 
+    // ★ v1.232 P0-B 持久化：attach 后状态异步落盘，重启不丢（落盘失败只打日志不影响主流程）
+    @Volatile private var db: Database? = null
+    private val persistPool = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "agent-runs-persist").apply { isDaemon = true }
+    }
+
+    /** 绑定数据库实例（启动时调用；此后每次状态变更异步 upsert） */
+    fun attach(database: Database) {
+        db = database
+        println("[AgentRunTracker] 已挂载持久化（agent_runs 表）")
+    }
+
+    /** 解绑（测试/关闭用） */
+    fun detach() {
+        db = null
+        println("[AgentRunTracker] 已解除持久化")
+    }
+
+    /** 异步 upsert 当前 run 状态到库（单线程池串行，失败只打日志） */
+    private fun persist(r: RunState) {
+        val d = db ?: return
+        persistPool.submit {
+            try {
+                d.upsertRun(
+                    r.id, r.channel, r.userKey, r.userName, r.status, r.round,
+                    r.currentAction, r.toolCall, r.toolResult, r.startedAt, r.updatedAt
+                )
+            } catch (e: Exception) {
+                println("[AgentRunTracker] 持久化失败(忽略): ${e.message}")
+            }
+        }
+    }
+
     /** 开始一次 Agent 运行（渠道入口调用；相同 userKey+channel 会复用上一运行覆盖为新的） */
     fun start(channel: String, userKey: String, userName: String = "", message: String = ""): String {
         val id = channel + "-" + System.currentTimeMillis() + "-" + seq.incrementAndGet()
@@ -42,6 +76,7 @@ object AgentRunTracker {
             id = id, channel = channel, userKey = userKey,
             userName = userName, messagePreview = message.take(60)
         )
+        persist(runs[id]!!) // ★ v1.232 P0-B 立即落盘（新建运行）
         return id
     }
 
@@ -51,6 +86,7 @@ object AgentRunTracker {
         if (round != null) r.round = round
         if (action != null) r.currentAction = action
         r.updatedAt = System.currentTimeMillis()
+        persist(r) // ★ v1.232 P0-B
     }
 
     /** 上报工具调用 */
@@ -60,6 +96,7 @@ object AgentRunTracker {
         r.toolResult = ""
         r.currentAction = "调用工具 $fn"
         r.updatedAt = System.currentTimeMillis()
+        persist(r) // ★ v1.232 P0-B
     }
 
     /** 上报工具结果摘要 */
@@ -68,6 +105,7 @@ object AgentRunTracker {
         r.toolResult = result.take(120)
         r.currentAction = "工具 $fn 已返回"
         r.updatedAt = System.currentTimeMillis()
+        persist(r) // ★ v1.232 P0-B
     }
 
     // ★ v1.190 模型回复到达上报：后台不再一直"等待模型回复"——模型一回复实时刷新
@@ -77,6 +115,7 @@ object AgentRunTracker {
         r.toolResult = replyText.take(120)   // 复用结果列显示模型回复内容
         r.currentAction = "模型已回复：${replyText.take(50)}"
         r.updatedAt = System.currentTimeMillis()
+        persist(r) // ★ v1.232 P0-B
     }
 
     /** 收尾（带最终动作文案，面板显示"完成/停止/错误"而不是一直 running） */
@@ -85,13 +124,14 @@ object AgentRunTracker {
         r.status = status
         if (action.isNotBlank()) r.currentAction = action
         r.updatedAt = System.currentTimeMillis()
+        persist(r) // ★ v1.232 P0-B
     }
 
-    /** 当前运行列表（按用户隔离；userId=0 管理看全部） */
-    fun snapshot(userId: Long = 0L): List<Map<String, Any?>> {
+    /** 当前运行列表（按用户隔离；userId=0 管理看全部；★v1.232 P0-B includeInterrupted=true 时合并库里 interrupted 历史） */
+    fun snapshot(userId: Long = 0L, includeInterrupted: Boolean = false): List<Map<String, Any?>> {
         cleanup()
         val now = System.currentTimeMillis()
-        return runs.values
+        val memoryList = runs.values
             .sortedByDescending { it.startedAt }
             .take(100)
             .map { r ->
@@ -105,6 +145,31 @@ object AgentRunTracker {
                     "elapsedSec" to ((now - r.startedAt) / 1000)
                 )
             }
+        // ★ v1.232 P0-B：重启后内存空，从库里读 interrupted 历史（上次崩溃残留）补充展示
+        if (includeInterrupted) {
+            val db = this.db
+            if (db != null) {
+                runCatching {
+                    val hist = db.listRunsByStatus("interrupted", limit = 50)
+                    if (hist.isNotEmpty()) {
+                        val memIds = memoryList.mapNotNull { it["id"] as? String }.toSet()
+                        val extra = hist.filter { it["id"] as? String !in memIds }.map {
+                            mapOf(
+                                "id" to (it["id"] ?: ""), "channel" to (it["channel"] ?: ""),
+                                "userKey" to (it["userKey"] ?: ""), "userName" to (it["userName"] ?: ""),
+                                "status" to (it["status"] ?: "interrupted"),
+                                "startedAt" to (it["startedAt"] ?: 0L), "updatedAt" to (it["updatedAt"] ?: 0L),
+                                "round" to (it["round"] ?: 0), "currentAction" to (it["currentAction"] ?: "（上次中断）"),
+                                "toolCall" to (it["toolCall"] ?: ""), "toolResult" to (it["toolResult"] ?: ""),
+                                "messagePreview" to "", "elapsedSec" to -1L
+                            )
+                        }
+                        return (memoryList + extra).sortedByDescending { it["startedAt"] as? Long ?: 0L }
+                    }
+                }
+            }
+        }
+        return memoryList
     }
 
     /** 清理已完成超过 30 分钟的运行 */

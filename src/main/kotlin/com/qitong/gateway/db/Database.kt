@@ -899,6 +899,23 @@ class Database(private val dbPath: String) {
             )
             // 旧库迁移：缓存表已存在则补列（无则忽略）
             runCatching { st.executeUpdate("ALTER TABLE response_cache ADD COLUMN hit_count INTEGER NOT NULL DEFAULT 0") }
+            // ★ v1.232 P0-B Agent 运行状态持久化（重启不丢，实时沙盒面板数据源）
+            st.executeUpdate(
+                """CREATE TABLE IF NOT EXISTS agent_runs (
+                    id TEXT PRIMARY KEY,
+                    channel TEXT NOT NULL DEFAULT '',
+                    user_key TEXT NOT NULL DEFAULT '',
+                    user_name TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'running',
+                    round INTEGER NOT NULL DEFAULT 0,
+                    current_action TEXT NOT NULL DEFAULT '',
+                    tool_call TEXT NOT NULL DEFAULT '',
+                    tool_result TEXT NOT NULL DEFAULT '',
+                    started_at INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
+            try { st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status)") } catch (_: Exception) {}
         }
     }
 
@@ -3071,6 +3088,48 @@ Triple("v1.191", "说了不做根治（意图识别扩大 + 真执行才标完�
         try {
             stmt("INSERT INTO op_logs (user_id,username,action,detail,ip,created_at) VALUES (?,?,?,?,?,?)",
                 userId, username, action, detail, ip, System.currentTimeMillis())
+        } catch (_: Exception) {}
+    }
+
+    // ============ Agent 运行状态持久化（P0-B：重启不丢） ============
+
+    /** 写入/更新一条 Agent 运行记录（幂等 upsert） */
+    fun upsertRun(id: String, channel: String, userKey: String, userName: String, status: String, round: Int,
+                  currentAction: String, toolCall: String, toolResult: String, startedAt: Long, updatedAt: Long) {
+        try {
+            stmt(
+                """INSERT OR REPLACE INTO agent_runs (id,channel,user_key,user_name,status,round,current_action,tool_call,tool_result,started_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                id, channel, userKey, userName, status, round, currentAction, toolCall, toolResult, startedAt, updatedAt
+            )
+        } catch (_: Exception) {}
+    }
+
+    /** 按状态列出运行记录（按开始时间倒序） */
+    fun listRunsByStatus(status: String, limit: Int = 100): List<Map<String, Any?>> = try {
+        query(
+            "SELECT * FROM agent_runs WHERE status=? ORDER BY started_at DESC LIMIT $limit", status
+        ).map {
+            mapOf(
+                "id" to (it["id"] as? String ?: ""),
+                "channel" to (it["channel"] as? String ?: ""),
+                "userKey" to (it["user_key"] as? String ?: ""),
+                "userName" to (it["user_name"] as? String ?: ""),
+                "status" to (it["status"] as? String ?: ""),
+                "round" to ((it["round"] as? Number)?.toInt() ?: 0),
+                "currentAction" to (it["current_action"] as? String ?: ""),
+                "toolCall" to (it["tool_call"] as? String ?: ""),
+                "toolResult" to (it["tool_result"] as? String ?: ""),
+                "startedAt" to ((it["started_at"] as? Number)?.toLong() ?: 0L),
+                "updatedAt" to ((it["updated_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+    } catch (_: Exception) { emptyList() }
+
+    /** 把库中所有 running 标记为 interrupted（启动时清理上次崩溃残留） */
+    fun markRunsInterrupted() {
+        try {
+            stmt("UPDATE agent_runs SET status='interrupted', updated_at=? WHERE status='running'", System.currentTimeMillis())
         } catch (_: Exception) {}
     }
 
