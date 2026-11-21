@@ -1,6 +1,7 @@
 package com.qitong.gateway.qq
 
 import com.qitong.gateway.db.Database
+import com.qitong.gateway.http.AgentLimits
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -2100,10 +2101,14 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 //   原用 loopGuard>0 判断，假调用引导（模型说"正在调用"但没输出标签→引导）也会 loopGuard++ → 误触发收敛
                 //   → 模型被诱导"总结已推送的工具结果"但实际没执行 → 编出"我没真调任何工具"式空转话痨
                 var executedCalls = false
+                // ★ v1.232 P0-C 工具预算：本次运行累计实际执行工具数（达上限强制收敛，防无限循环耗尽资源）
+                var runToolCount = 0
+                // ★ v1.232 P0-C 跨轮累计被跳过的工具调用数（单轮超出预算部分）
+                var skippedCount = 0
                 // ★ v1.188 看门狗：单任务总耗时超 90s 强制中断（配合工具 20s 短超时，Agent 永不卡死）
                 //   原循环最多 20 轮但轮内模型/工具都可能长时间阻塞；现在无论卡在哪，90s 必须收尾
                 val loopStartedAt = System.currentTimeMillis()
-                while (sandboxOn && content.isNotBlank() && loopGuard < 20) {
+                while (sandboxOn && content.isNotBlank() && loopGuard < AgentLimits.MAX_ROUNDS_QQ) {
                     // ★ v1.188 看门狗检查：超时强制收尾，不再无限等（工具网络卡死/模型挂起都能兜底）
                     if (System.currentTimeMillis() - loopStartedAt > 90_000L) {
                         System.err.println("[QQBot] ${bot.appid} Agent 循环看门狗超时（90s），强制收尾")
@@ -2127,7 +2132,14 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     }
                     // ★ v1.169 修复「工具重复执行」：传 executedSigs 做跨轮去重——模型照抄上一轮调用标签/复述描述时，
                     //   同一 fn+参数已执行过 → 解析结果为空 → 循环正常收尾，不再执行第二遍
-                    val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
+                    var calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
+                    // ★ v1.232 P0-C 单轮工具预算：最多执行 MAX_TOOLS_PER_ROUND 个，超出的跳过并提示
+                    if (calls.size > AgentLimits.MAX_TOOLS_PER_ROUND) {
+                        val skipped = calls.size - AgentLimits.MAX_TOOLS_PER_ROUND
+                        skippedCount += skipped
+                        System.err.println("[QQBot] 单轮工具预算用尽，跳过 $skipped 个调用")
+                        calls = calls.take(AgentLimits.MAX_TOOLS_PER_ROUND)
+                    }
 // ★ v1.228 有工具调用 → 推正文剥标签后的简短过渡语（"好的我来帮你看一下"一类人话思考）
                     if (calls.isNotEmpty()) {
                         val acted = content.contains("我来", true) || content.contains("我去", true) ||
@@ -2243,6 +2255,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         results.append("【$fn 执行结果】\n$r")
                         // ★ v1.186 真执行过工具（对齐微信 executedCalls，供 closeBody 收敛判断）
                         executedCalls = true
+                        runToolCount++ // ★ v1.232 P0-C 累计实际执行工具数
                         // ★ v1.166 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文本分段由 smartSend 自动拆
                         //   自主式：结果就是结果，必须完整给用户看到
                         val rShow = r.trim()
@@ -2267,6 +2280,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                     results.append(if (results.isEmpty()) "" else "\n").append("【$fn 执行结果】\n$r")
                                     // ★ v1.186 真执行过工具（对齐微信 executedCalls）
                                     executedCalls = true
+                                    runToolCount++ // ★ v1.232 P0-C 累计实际执行工具数
                                     // ★ v1.166 修复长文截断：并行工具结果也完整推送（不再 take(120)）
                                     val rShow = r.trim()
                                     smartSend("✅ $fn 完成：\n$rShow", false)
@@ -2276,9 +2290,19 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                     smartSend("⚠️ 并行工具执行异常：${e.message}", false)
                                 }
                             }
+                            // ★ v1.232 P0-C 总预算耗尽：本轮执行完强制收敛，防长任务无限循环（并行分支内）
+                            if (runToolCount >= AgentLimits.MAX_TOOLS_PER_RUN) {
+                                System.err.println("[QQBot] 工具总预算耗尽(${AgentLimits.MAX_TOOLS_PER_RUN})，已收敛")
+                                break
+                            }
                         } finally {
                             executor.shutdown()
                         }
+                    }
+                    // ★ v1.232 P0-C 单调用分支后也检测总预算（与并行分支同一收敛出口）
+                    if (runToolCount >= AgentLimits.MAX_TOOLS_PER_RUN) {
+                        System.err.println("[QQBot] 工具总预算耗尽(${AgentLimits.MAX_TOOLS_PER_RUN})，已收敛")
+                        break
                     }
                     // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
                     val cleanText = cleanFunctionTags(content)

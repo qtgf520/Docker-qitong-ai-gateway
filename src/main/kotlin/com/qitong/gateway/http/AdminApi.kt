@@ -1213,10 +1213,20 @@ private fun providerToMap(p: Provider) = mapOf(
             // ★ v1.169 修复「工具重复执行」：已执行调用签名集合——模型照抄上一轮调用标签/复述描述时
             //   parseCalls 按签名过滤已执行过的调用，同一工具不会被二次执行
             val executedSigs = mutableSetOf<String>()
-            while (agentLoop < 8) {
+            // ★ v1.232 P0-C 工具预算：本次运行累计实际执行工具数 + 跨轮被跳过数
+            var runToolCount = 0
+            var skippedCount = 0
+            while (agentLoop < AgentLimits.MAX_ROUNDS_CHAT) {
                 agentLoop++
                 com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = agentLoop, action = "第 $agentLoop 轮 · 等模型回复中…")
-                val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(lastResult!!, executedSigs)
+                var calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(lastResult!!, executedSigs)
+                // ★ v1.232 P0-C 单轮工具预算：最多执行 MAX_TOOLS_PER_ROUND 个，超出的跳过
+                if (calls.size > AgentLimits.MAX_TOOLS_PER_ROUND) {
+                    val skipped = calls.size - AgentLimits.MAX_TOOLS_PER_ROUND
+                    skippedCount += skipped
+                    System.err.println("[Chat] 单轮工具预算用尽，跳过 $skipped 个调用")
+                    calls = calls.take(AgentLimits.MAX_TOOLS_PER_ROUND)
+                }
                 if (calls.isEmpty()) break
                 val sb = StringBuilder()
                 for ((fn, args) in calls) {
@@ -1226,8 +1236,14 @@ private fun providerToMap(p: Provider) = mapOf(
                     // ★ v1.169 登记已执行签名，防模型下一轮照抄标签/复述描述导致同一工具执行两遍
                     executedSigs.add(com.qitong.gateway.sandbox.SandboxEngine.callSignature(fn, args))
                     sb.append("【$fn 执行结果】\n$r\n")
+                    runToolCount++ // ★ v1.232 P0-C 累计实际执行工具数
                     skillResults.add(mapOf("code" to fn, "name" to fn, "result" to r))
                     database.addOpLog(userId, user?.username ?: "user$userId", "沙盒调用", "[$fn] $args -> ${r.take(80)}", "")
+                }
+                // ★ v1.232 P0-C 总预算耗尽：本轮执行完强制收敛
+                if (runToolCount >= AgentLimits.MAX_TOOLS_PER_RUN) {
+                    System.err.println("[Chat] 工具总预算耗尽(${AgentLimits.MAX_TOOLS_PER_RUN})，已收敛")
+                    break
                 }
                 val toolResult = sb.toString().trim()
                 // ★ v1.169 回填前清洗已执行过的调用标签：防止调用标签在 lastResult 里累积，

@@ -1,5 +1,6 @@
 package com.qitong.gateway.weixin
 import com.qitong.gateway.db.Database
+import com.qitong.gateway.http.AgentLimits
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -755,6 +756,9 @@ object WeixinBotManager {
                 val isAdmin = d.getWeixinUserPerm(msg.from) >= 3 ||
                     d.getWeixinBoundUser(msg.from)?.let { it.role == "admin" || it.role == "agent" } == true
                 var loop = 0
+                // ★ v1.232 P0-C 工具预算：本次运行累计实际执行工具数 + 跨轮被跳过数
+                var runToolCount = 0
+                var skippedCount = 0
                 // ★ v1.174 Agent 运行可视化：微信渠道登记运行（后台实时沙盒面板按用户隔离查看）
                 val agentRunId = com.qitong.gateway.http.AgentRunTracker.start("weixin", msg.from, d.getWeixinBoundUser(msg.from)?.username ?: "", userText)
                 com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "收到消息，开始处理…")
@@ -768,7 +772,7 @@ object WeixinBotManager {
                 val executedSigs = mutableSetOf<String>()
                 // ★ v1.188 看门狗：单任务总耗时超 90s 强制中断（对齐 QQ，Agent 永不卡死）
                 val loopStartedAt = System.currentTimeMillis()
-                while (loop < 20) {
+                while (loop < AgentLimits.MAX_ROUNDS_WX) {
                     // ★ v1.188 看门狗检查：超时强制收尾（工具网络卡死/模型挂起都能兜底）
                     if (System.currentTimeMillis() - loopStartedAt > 90_000L) {
                         System.err.println("[WeixinBot] ${bot.id} Agent 循环看门狗超时（90s），强制收尾")
@@ -794,7 +798,14 @@ object WeixinBotManager {
                         lastProgressAt = System.currentTimeMillis()
                     }
                     // ★ v1.167 user 已在入口幂等写入，循环内不再补写（避免重复写 user）
-                    val calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
+                    var calls = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
+                    // ★ v1.232 P0-C 单轮工具预算：最多执行 MAX_TOOLS_PER_ROUND 个，超出的跳过
+                    if (calls.size > AgentLimits.MAX_TOOLS_PER_ROUND) {
+                        val skipped = calls.size - AgentLimits.MAX_TOOLS_PER_ROUND
+                        skippedCount += skipped
+                        System.err.println("[WeixinBot] 单轮工具预算用尽，跳过 $skipped 个调用")
+                        calls = calls.take(AgentLimits.MAX_TOOLS_PER_ROUND)
+                    }
                     // ★ v1.209/★v1.218/★v1.218 模型思考话术实时推送：
                     //   只有【本轮有工具调用】时才推模型过渡话术（剥标签后的话术，≤40字+行动词才推）
                     //   修复：无工具调用时模型话术=最终答案，若当过渡推会造成「同句推两次」（386/387 实锤）
@@ -895,6 +906,7 @@ object WeixinBotManager {
                         val rShow = r.trim()
                         pSend("✅ $fn 完成：\n$rShow")
                         executedCalls = true
+                        runToolCount++ // ★ v1.232 P0-C 累计实际执行工具数
                     } else {
                         // 多调用并行（★v1.130 实时推送并行概况）
                         pSend("⚡ 我同时处理 ${calls.size} 件事：「${fnNames.joinToString("、")}」")
@@ -920,14 +932,25 @@ object WeixinBotManager {
                                     val rShow = r.trim()
                                     pSend("✅ $fn 完成：\n$rShow")
                                     executedCalls = true
+                                    runToolCount++ // ★ v1.232 P0-C 累计实际执行工具数
                                 } catch (e: Exception) {
                                     results.append("【工具执行异常】\n${e.message}\n")
                                     pSend("⚠️ 并行工具执行异常：${e.message}")
                                 }
                             }
+                            // ★ v1.232 P0-C 总预算耗尽：本轮执行完强制收敛
+                            if (runToolCount >= AgentLimits.MAX_TOOLS_PER_RUN) {
+                                System.err.println("[WeixinBot] 工具总预算耗尽(${AgentLimits.MAX_TOOLS_PER_RUN})，已收敛")
+                                break
+                            }
                         } finally {
                             executor.shutdown()
                         }
+                    }
+                    // ★ v1.232 P0-C 单调用分支后也检测总预算（与并行分支同一收敛出口）
+                    if (runToolCount >= AgentLimits.MAX_TOOLS_PER_RUN) {
+                        System.err.println("[WeixinBot] 工具总预算耗尽(${AgentLimits.MAX_TOOLS_PER_RUN})，已收敛")
+                        break
                     }
                     val cleanText = cleanFunctionTags(content)
                     // ★ v1.130 结果已实时推送 → 要求模型基于结果继续决策/收尾（不重复已展示）
