@@ -277,6 +277,9 @@ git push origin master
 | 44 | **Kotlin 块注释里写 `/*` 触发嵌套注释未闭合** | detectModality 注释写 `(/v1/images/*)` 里的 `/*` 开启内层注释 → 编译器报 Missing '}' + Unclosed comment，连带后续所有代码错位（大量 Unresolved reference 看似其他文件坏了，v1.161 排查 40+ 分钟） | Kotlin 块注释支持嵌套，注释内严禁出现 `/*` 组合（路径描述改写成 `images接口` 等）；改注释后编译报奇怪的 Missing '}' 先 grep 注释里的 `/*` |
 | 45 | **服务器内存越积越满（旧包不清）** | 每次部署留旧 jar 备份 + 旧 tgz + 未使用镜像，曾堆到 818M 且 swap 611M，用户炸「内存不能每次开发爆满」；Java 默认堆 = 物理内存 1/4 无上限 | Dockerfile 显式限堆 `-Xmx512m` + compose `mem_limit: 768m`；部署后自动清理（jar 只留最新1 + tgz 只留最新1 + docker image prune）——规则写进 DEV_GUIDE 部署章节必做（v1.164 实测容器内存 337M→164M，系统可用内存 +500M） |
 | 46 | **QQ 机器人记忆不如微信** | QQ 绑定用户仍走 qq:{openid} 简单记忆，微信已走账号记忆（getMemories 带日期标记+滚动摘要），两通道不同源 | QQ 绑定账号后优先走 getMemories(effUserId)+getMemorySummaries，未绑定才回退 qq:{openid}；让 QQ/微信/内置聊天记忆同源（v1.164） |
+| 47 | **Database.query/queryOne/stmt 是 private，跨类调用编译 13 错** | 给 QQ/微信加关键词记忆检索时直接 `db.query(...)`，Kotlin 编译拦截 private 访问，连带 isNotEmpty/forEach 一片报错 | 在 Database 类内加 public 包装方法（如 searchQqBrainMemories/searchWxBrainMemories），外部只调 public；编译报 private 访问先查 Database（v1.230） |
+| 48 | **JsonPrimitive 没有 isBoolean，布尔解析要用 content** | v1.230 写 `isBoolean` 编译报 Unresolved reference；v1.231 只认 isString 导致 JSON 布尔 true 被吞成 false，测速自动启停"开了等于没开" | 统一 `JsonPrimitive.content` 字符串判断：布尔 true 的 content="true"、字符串 "true" 同、数字 1 是 "1"，一个 content 通吃；凡是"开关开了没反应"先怀疑后端布尔解析（v1.231 核心根因） |
+| 49 | **autoEnable 没机会启用停用模型** | getSpeedTestModels 用 getEnabledModels() 只列已启用模型，停用模型不进测速队列；speedTestOneModel 对停用模型短路不真测 | "自动启用"类功能把停用模型也列入测速队列（getModels() 全量），测速只要求服务商启用就真测（v1.231） |
 
 ---
 

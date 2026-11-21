@@ -31,6 +31,8 @@
 | C4 | **python 正序删多段代码** | 行号漂移误删相邻代码 | 从后往前删（先删行号大的段），删后 read_file_part 验证上下文 |
 | C5 | **改代码用 sed 锚点脚本批量替换** | 锚点对不上导致误改（v1.159/1.160 README changelog 被误改） | 直接用编辑工具/edit_file，复杂多行改动用 python 文件级替换（DEV_GUIDE 踩坑7） |
 | C6 | **版本号漏改某处** | 只改部分文件，jar 文件名/前端显示旧版 | 发版前 grep 全部版本位置：Main.kt(3处)+Models.kt+WebUi VER+build.gradle.kts version+README+Database seedUpdateLogs（DEV_GUIDE 踩坑27） |
+| C7 | **跨类调用 Database.query 编译报 Unresolved reference / private 访问** | Database.query/queryOne/stmt 是 **private**，外部类（QqBotManager/WeixinBotManager）直接调用被 Kotlin 编译拦截，连带一整片 isNotEmpty/forEach 报错 | 在 Database 类内部加 **public 包装方法**（如 searchQqBrainMemories/searchWxBrainMemories），外部只调 public 方法；编译报私人访问先查是不是动了 Database 私有方法（v1.230 踩坑 13 错） |
+| C8 | **JsonPrimitive.isBoolean 编译报 Unresolved reference 'isBoolean'** | kotlinx.serialization 的 JsonPrimitive **没有 isBoolean 属性**（只有 isString） | 不要猜属性名；**统一按 JsonPrimitive.content 字符串判断**：JSON 布尔 true 的 content="true"、字符串 "true" 也是 "true"、数字 1 是 "1"，一个 content 通吃（v1.230 踩 isBoolean 不存在，v1.231 定案） |
 
 ---
 
@@ -47,6 +49,8 @@
 | F7 | **聊天页 CSS 高度不够** | 只改 .chat-layout 高度不够，父容器有 padding/卡片留白 | `.content:has(#chatLayout){padding:0!important}` + 高度 calc；移动端减底部导航（踩坑28） |
 | F8 | **删页面没删干净** | 删菜单+视图+loader 三件套后残留引用导致切页报错 | 删后用 grep 复查 `loaders.xxx\|view-xxx\|data-page="xxx"` 应为 0（踩坑38） |
 | F9 | **页面数据没按用户隔离** | 管理员/普通用户看到别人数据 | 所有页面数据按当前登录用户隔离（统计/排行榜/密钥/记忆），管理员可看全部但优先自己的（v1.105/v1.161） |
+| F10 | **文件管理器"假空"：点目录提示空** | `listFiles()` 在无权限目录返回 **null**，代码用 `?: emptyList()` 把 null 当空列表 → 返回"（空目录）"误导；前端又把该提示整行当**文件**渲染，点击报"是目录" | 后端 `listFiles()==null` 要当"无权限"返回明确错误（不能吞成空）；前端识别"（空目录）"整行直接文本展示、不渲染成可点击项（v1.230 双向假空） |
+| F11 | **表单开关生效但后端没动作（选项传布尔被吞）** | 前端 fetch JSON.stringify 传 `true`（布尔），后端用 `JsonPrimitive.isString` 判断 → 布尔 isString=false → 落入 else 返回默认 false，开关等于没传 | 后端解析布尔统一按 `.content` 字符串判断（true/1 都算 true），前端不必改（v1.231 测速自动启停失效根因） |
 
 ---
 
@@ -94,6 +98,8 @@
 | N10 | **扣费金额显示 ¥0.00** | 小额扣费 toFixed(2) 显示 | 金额 <0.005 用 toFixed(4) 动态精度（踩坑18） |
 | N11 | **sanitizeRequestBody 拼接坏 JSON** | bodyStr2+sb 两个 JSON 拼接 | 直接对同一 sb 变量做所有替换，返回单个完整 JSON（踩坑41） |
 | N12 | **渠道分组/模型映射/表达式计费三件套没生效** | 新增功能没进调用链 | 加功能必须全链路同步：getVisibleModels + buildAttemptModels + 前端（v1.157 经验） |
+| N13 | **选项传 true 但后端按 false 处理（功能"开了等于没开"）** | speedtest/start 的 boolOf 只认 isString，前端 JSON 布尔 true 落入 else 返回 false → autoClose/autoEnable 永不生效 | 统一用 JsonPrimitive.content 字符串判断（"true"/"1" 都算 true）；凡是"开关开了没反应"先怀疑后端布尔解析（v1.231 核心根因） |
+| N14 | **autoEnable 永远没机会启用停用模型** | getSpeedTestModels 用 getEnabledModels() 只列**已启用**模型，停用模型根本不进测速队列 | "自动启用"类功能必须把**停用模型也列入测速队列**（改用 getModels() 全量），且测速逻辑只要求服务商启用就真测，不因模型自身停用而短路（v1.231） |
 
 ---
 
@@ -177,5 +183,5 @@
 
 ---
 
-> 文档版本：v1（2026-10-25 建立，汇总 DEV_GUIDE 44 条踩坑 + 历史记忆全部血泪）
+> 文档版本：v1.1（2026-10-25 建立，v1.231 补充：C7/C8 Database 私有方法 + JsonPrimitive.isBoolean、F10/F11 文件管理器假空 + 布尔解析、N13/N14 开关失效 + 停用模型不进队列）
 > 更新规则：每次踩新坑、改流程，第一时间补进本文件并 git 提交。
