@@ -240,7 +240,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.253"))
+                put("version", JsonPrimitive("1.254"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1541,7 +1541,10 @@ fun Application.moduleWeb(database: Database) {
             if (content.isBlank() && aiPrompt.isBlank()) { AdminApi.fail(call, "推送内容或 AI 提示词至少要填一个", 400); return@post }
             val enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
                 ?: body["enabled"]?.jsonPrimitive?.booleanOrNull ?: true
-            val newId = database.saveChannelSchedule(id, channelId, name, cron, content, aiPrompt, enabled)
+            val targetType = (body["targetType"]?.jsonPrimitive?.content ?: "channel").trim().lowercase()
+            val targetId = body["targetId"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (targetType != "channel" && targetId.isBlank()) { AdminApi.fail(call, "QQ群/微信推送要填目标 ID", 400); return@post }
+            val newId = database.saveChannelSchedule(id, channelId, name, cron, content, aiPrompt, targetType, targetId, enabled)
             database.addOpLog(u.id, u.username, "消息渠道", "保存定时推送 $name（$cron）", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("id" to newId), "定时推送已保存")
         }
@@ -1558,13 +1561,25 @@ fun Application.moduleWeb(database: Database) {
             val id = call.parameters["id"]?.toLongOrNull() ?: return@post
             val sch = database.getChannelSchedules().firstOrNull { (it["id"] as Long) == id }
                 ?: run { AdminApi.fail(call, "计划不存在", 404); return@post }
-            val ch = database.getChannelById(sch["channelId"] as Long)
-                ?: run { AdminApi.fail(call, "渠道不存在", 404); return@post }
+            val targetType = (sch["targetType"] as? String ?: "channel").lowercase()
+            val targetId = (sch["targetId"] as? String).orEmpty()
+            val ch = if (targetType == "channel") database.getChannelById(targetId.toLongOrNull() ?: (sch["channelId"] as Long)) else null
+            if (targetType == "channel" && ch == null) { AdminApi.fail(call, "渠道不存在", 404); return@post }
             val aiPrompt = (sch["aiPrompt"] as? String).orEmpty().trim()
             val text = if (aiPrompt.isNotBlank()) com.qitong.gateway.platform.ChannelManager.generate(database, aiPrompt)
-                else com.qitong.gateway.platform.ChannelScheduler.render((sch["content"] as? String).orEmpty(), ch, sch)
-            val (ok, detail) = com.qitong.gateway.platform.ChannelManager.send(ch, text)
-            database.addChannelLog(ch["id"] as Long, "sched", text, ok, detail)
+                else com.qitong.gateway.platform.ChannelScheduler.render((sch["content"] as? String).orEmpty(), ch ?: mapOf("name" to targetId), sch)
+            val (ok, detail) = when (targetType) {
+                "qq_group" -> {
+                    val r = com.qitong.gateway.qq.QqBotManager.sendActiveGreetToGroup(targetId, text)
+                    r to (if (r) "QQ群 $targetId 已发送" else "QQ群发送失败（群 openid 不对或 QQ 机器人未启用/离线）")
+                }
+                "weixin" -> {
+                    val r = com.qitong.gateway.weixin.WeixinBotManager.sendActiveGreet(targetId, text)
+                    r to (if (r) "微信 $targetId 已发送" else "微信发送失败（openid 不对或微信机器人离线）")
+                }
+                else -> com.qitong.gateway.platform.ChannelManager.send(ch!!, text)
+            }
+            if (ch != null) database.addChannelLog(ch["id"] as Long, "sched", text, ok, detail)
             if (ok) database.markChannelScheduleRun(id, System.currentTimeMillis())
             AdminApi.ok(call, mapOf("ok" to ok, "detail" to detail), if (ok) "已立即推送：$detail" else "推送失败：$detail")
         }
@@ -3351,7 +3366,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.253"))
+                put("version", JsonPrimitive("1.254"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -4195,7 +4210,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.253"))
+                    put("version", JsonPrimitive("1.254"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

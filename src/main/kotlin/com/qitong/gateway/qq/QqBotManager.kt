@@ -191,18 +191,19 @@ object QqBotManager {
     fun allStatus(): Map<Long, QqRuntimeState> = runtime.toMap()
 
     /** ★ v1.166 主动活跃：向指定 QQ 群发一句自然问候（心跳引擎定时调用） */
-    fun sendActiveGreetToGroup(groupOpenid: String, text: String) {
-        if (groupOpenid.isBlank() || text.isBlank()) return
-        try {
+    fun sendActiveGreetToGroup(groupOpenid: String, text: String): Boolean {
+        if (groupOpenid.isBlank() || text.isBlank()) return false
+        return try {
             val bots = db.getQqBots().filter { (it["enabled"] as? Boolean) == true }
-            if (bots.isEmpty()) return
+            if (bots.isEmpty()) return false
             val bot = botFromRow(bots.first())
             val at = api.getAccessToken(bot)
             if (!at.isNullOrBlank()) {
                 api.sendGroupMessage(bot, at, groupOpenid, text, null)
                 db.addQqLog(bot.appid, groupOpenid, "", "active", "主动活跃: $text", 0)
-            }
-        } catch (e: Exception) { System.err.println("[QQBot] 主动活跃异常: ${e.message}") }
+                true
+            } else false
+        } catch (e: Exception) { System.err.println("[QQBot] 主动活跃异常: ${e.message}"); false }
     }
 
     /** ★ v1.218 主动发消息：向指定 QQ 用户（C2C 私聊）发送文本（send_message_to_user 沙盒工具用） */

@@ -126,16 +126,16 @@ object WeixinBotManager {
     }
 
     /** ★ v1.166 主动活跃：向指定微信用户发一句自然问候（心跳引擎定时调用） */
-    fun sendActiveGreet(openid: String, text: String) {
-        if (openid.isBlank() || text.isBlank()) return
-        try {
-            val bots = db?.getWeixinBots()?.filter { it.enabled } ?: return
-            if (bots.isEmpty()) return
+    fun sendActiveGreet(openid: String, text: String): Boolean {
+        if (openid.isBlank() || text.isBlank()) return false
+        return try {
+            val bots = db?.getWeixinBots()?.filter { it.enabled } ?: return false
+            if (bots.isEmpty()) return false
             val bot = bots.first()
             val st = statusOf(bot.id)
-            if (st.status != WeixinBotStatus.ONLINE) return
-            runCatching { api.sendMessage(bot.botToken, openid, text, "") }
-        } catch (e: Exception) { System.err.println("[WeixinBot] 主动活跃异常: ${e.message}") }
+            if (st.status != WeixinBotStatus.ONLINE) return false
+            runCatching { api.sendMessage(bot.botToken, openid, text, "") }.isSuccess
+        } catch (e: Exception) { System.err.println("[WeixinBot] 主动活跃异常: ${e.message}"); false }
     }
 
     /** ★ v76 全网广播（保留：计划任务等仍可用，但心跳已改 sendToTargets 指定目标） */

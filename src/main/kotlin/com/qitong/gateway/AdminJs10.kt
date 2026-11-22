@@ -1011,7 +1011,7 @@ window.chSchedules = function(chId, chName){
   var list = r.data || [];
   var rows = list.length ? list.map(function(s){
    var next = s.nextRun ? new Date(Number(s.nextRun)).toLocaleString() : '—';
-   return '<tr><td><b>'+esc(s.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(s.cron)+'</div></td>' +
+   return '<tr><td><b>'+esc(s.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(s.cron)+' · 目标 '+(s.targetType==='qq_group'?'QQ群':s.targetType==='weixin'?'微信':'渠道')+(s.targetId?' '+esc(s.targetId):'')+'</div></td>' +
     '<td style="max-width:260px;white-space:pre-wrap;font-size:12px">'+(s.aiPrompt?'<span class="badge purple">AI 生成</span> '+esc(s.aiPrompt):esc(s.content))+'</td>' +
     '<td style="font-size:11px">'+(s.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'<div style="color:var(--muted);margin-top:4px">下次：'+esc(next)+'</div></td>' +
     '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="chSchedRun('+s.id+','+chId+')">立即推</button> ' +
@@ -1021,6 +1021,9 @@ window.chSchedules = function(chId, chName){
    '<div class="table-wrap" style="max-height:240px;overflow-y:auto"><table><thead><tr><th>计划</th><th>内容</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>' +
    '<div style="border-top:1px solid var(--line);margin:14px 0 10px"></div>' +
    '<div class="form-row"><label>计划名称</label><input id="schName" class="input" placeholder="如：每日早报"></div>' +
+   '<div class="form-row"><label>推送目标</label><select id="schTargetType" class="input" onchange="chTargetChanged()">'+
+    '<option value="channel">当前消息渠道</option><option value="qq_group">QQ 群</option><option value="weixin">微信联系人</option></select></div>' +
+   '<div class="form-row" id="schTargetRow" style="display:none"><label>目标 ID（QQ群 openid / 微信 openid）</label><input id="schTargetId" class="input" placeholder="QQ机器人群配置里的 group openid"></div>' +
    '<div class="form-row"><label>cron（分 时 日 月 周）</label><input id="schCron" class="input" placeholder="0 8 * * *" value="0 8 * * *"></div>' +
    '<div class="form-row"><label>推送内容（固定文案）</label><textarea id="schContent" class="input" rows="4" placeholder="早上好！今天是 {date}，记得看看今天的待办～"></textarea></div>' +
    '<div class="form-row"><label>或让 AI 生成内容（填提示词，优先生效）</label><textarea id="schAiPrompt" class="input" rows="3" placeholder="写一段今天的早安问候，带一句天气提醒和一句激励，80 字以内"></textarea></div>' +
@@ -1031,12 +1034,18 @@ window.chSchedules = function(chId, chName){
     var content=$('schContent').value;
     var aiPrompt=($('schAiPrompt')?$('schAiPrompt').value:'').trim();
     if(!cron || (!content.trim() && !aiPrompt)){ toast('cron 要有，内容或 AI 提示词至少填一个', false); return; }
-    api('/api/channels/'+chId+'/schedules',{method:'POST',body:{name:nm,cron:cron,content:content,aiPrompt:aiPrompt,enabled:true}}).then(function(rr){
+    var tt=$('schTargetType').value; var tid=($('schTargetId')?$('schTargetId').value:'').trim();
+    if(tt!=='channel' && !tid){ toast('QQ群/微信推送要填目标 ID', false); return; }
+    api('/api/channels/'+chId+'/schedules',{method:'POST',body:{name:nm,cron:cron,content:content,aiPrompt:aiPrompt,targetType:tt,targetId:tid,enabled:true}}).then(function(rr){
      toast(rr.msg||'', rr.code===0);
      if(rr.code===0) chSchedules(chId, chName);
     });
    });
  });
+};
+window.chTargetChanged = function(){
+ var tt=$('schTargetType') && $('schTargetType').value;
+ var row=$('schTargetRow'); if(row) row.style.display = (tt && tt!=='channel') ? '' : 'none';
 };
 window.chSchedRun = function(id,chId){ api('/api/schedules/'+id+'/run',{method:'POST'}).then(function(r){ toast(r.msg||'', r.code===0); }); };
 window.chSchedDel = function(id,chId){ if(!confirm('确认删除这条定时推送？')) return; api('/api/schedules/'+id,{method:'DELETE'}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) chSchedules(chId,''); }); };

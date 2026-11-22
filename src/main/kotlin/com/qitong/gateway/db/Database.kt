@@ -1940,8 +1940,10 @@ fun updateUserLogin(id: Long) {
     fun deleteChannel(id: Long) { ensureChannelTable(); stmt("DELETE FROM channels WHERE id=?", id) }
 
     fun ensureChannelScheduleTable() {
-        runCatching { stmt("CREATE TABLE IF NOT EXISTS channel_schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER NOT NULL, name TEXT NOT NULL, cron TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', ai_prompt TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)") }
+        runCatching { stmt("CREATE TABLE IF NOT EXISTS channel_schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER NOT NULL, name TEXT NOT NULL, cron TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', ai_prompt TEXT NOT NULL DEFAULT '', target_type TEXT NOT NULL DEFAULT 'channel', target_id TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)") }
         runCatching { stmt("ALTER TABLE channel_schedules ADD COLUMN ai_prompt TEXT NOT NULL DEFAULT ''") }
+        runCatching { stmt("ALTER TABLE channel_schedules ADD COLUMN target_type TEXT NOT NULL DEFAULT 'channel'") }
+        runCatching { stmt("ALTER TABLE channel_schedules ADD COLUMN target_id TEXT NOT NULL DEFAULT ''") }
     }
 
     fun getChannelSchedules(channelId: Long = 0L): List<Map<String, Any?>> = runCatching {
@@ -1956,19 +1958,21 @@ fun updateUserLogin(id: Long) {
                 "cron" to (r["cron"] as? String ?: ""),
                 "content" to (r["content"] as? String ?: ""),
                 "aiPrompt" to (r["ai_prompt"] as? String ?: ""),
+                "targetType" to (r["target_type"] as? String ?: "channel"),
+                "targetId" to (r["target_id"] as? String ?: ""),
                 "enabled" to ((r["enabled"] as? Number)?.toInt() == 1),
                 "lastRun" to ((r["last_run"] as? Number)?.toLong() ?: 0L)
             )
         }
     }.getOrDefault(emptyList())
 
-    fun saveChannelSchedule(id: Long, channelId: Long, name: String, cron: String, content: String, aiPrompt: String, enabled: Boolean): Long {
+    fun saveChannelSchedule(id: Long, channelId: Long, name: String, cron: String, content: String, aiPrompt: String, targetType: String, targetId: String, enabled: Boolean): Long {
         ensureChannelScheduleTable()
         return if (id > 0) {
-            stmt("UPDATE channel_schedules SET channel_id=?, name=?, cron=?, content=?, ai_prompt=?, enabled=? WHERE id=?", channelId, name, cron, content, aiPrompt, if (enabled) 1 else 0, id)
+            stmt("UPDATE channel_schedules SET channel_id=?, name=?, cron=?, content=?, ai_prompt=?, target_type=?, target_id=?, enabled=? WHERE id=?", channelId, name, cron, content, aiPrompt, targetType, targetId, if (enabled) 1 else 0, id)
             id
         } else {
-            stmt("INSERT INTO channel_schedules (channel_id,name,cron,content,ai_prompt,enabled,last_run,created_at) VALUES (?,?,?,?,?,?,?,?)", channelId, name, cron, content, aiPrompt, if (enabled) 1 else 0, 0L, System.currentTimeMillis())
+            stmt("INSERT INTO channel_schedules (channel_id,name,cron,content,ai_prompt,target_type,target_id,enabled,last_run,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", channelId, name, cron, content, aiPrompt, targetType, targetId, if (enabled) 1 else 0, 0L, System.currentTimeMillis())
             lastInsertId()
         }
     }
@@ -2720,6 +2724,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.254", "定时播报直发 QQ 群 / 微信联系人", "①渠道定时推送的目标从「Webhook 渠道」扩展到 QQ 群、微信联系人：同一条 cron 计划可选推到 QQ 群（填 group openid）或微信（填用户 openid），不用再绕外部 Webhook。②QQ 走 QqBotManager 主动发群消息（复用已启用机器人，成功/失败回传真实结果），微信走 WeixinBotManager 主动发消息并校验机器人在线。③QQ/微信目标失败会回显具体原因（群 openid 不对/机器人未启用/离线），日志与「立即推」都能看到。④计划列表显示目标类型与 ID，后台弹窗新增目标选择器，选 QQ/微信自动展开 ID 输入框，默认仍是当前消息渠道。"),
 Triple("v1.253", "插件市场升级：运势/抽签/骰子/时间支持 AI 工具调用", "①官方市场今日运势、抽签、摇骰子、时间助手四个插件升级到 1.1.0，manifest 开启 tool：模型可以直接把「帮我看下今天运势」「摇个骰子」当工具调用，不必用户恰好发指令。②插件管理列表对已开启工具化的插件显示「AI 工具」紫色徽章与工具名，一眼分清哪些能被模型主动调用。③市场索引同步版本与说明，后台「一键更新」可把旧版插件升到支持工具调用的版本。④工具参数保留可选（如运势可带星座），不填也能调用，降低模型调用门槛。"),
 Triple("v1.252", "AI 定时播报：定时任务可让模型现写内容再推送", "①渠道定时推送支持「AI 生成内容」：只填提示词（如写一段今天的早安问候+天气提醒），到点先调模型生成成品文案再推到群里，固定文案与 AI 生成二选一，AI 优先生效。②AI 生成走网关自身模型路由（可在渠道页设置 channel_ai_model，不设就用第一个启用模型），max_tokens 800，提示词要求直接输出可发群的成品文案、不解释过程。③生成失败时不会发空消息，日志里记录失败原因；手动「立即推」同样支持 AI 生成，方便先看效果再定时。④后台计划列表用「AI 生成」徽章区分，一眼看出哪条是模型现写、哪条是固定文案。"),
 Triple("v1.251", "渠道收发日志 + 多群一键群发", "①每条消息渠道自动记录收发日志：入站原文、AI/插件回复、定时推送、手动推送、测试消息全部留痕，含成功/失败与平台回执，单渠道最多保留 2000 条自动滚动清理。②后台「日志」弹窗按时间倒序查看收/发/定时三类记录，失败原因直接显示，不用再靠猜。③「📢 群发」支持勾选多个渠道一次发送同一条消息，不勾即全部渠道；返回逐渠道成功/失败明细与汇总。④群发与单发都写日志，定时器推送同样入账，排障时能直接定位是哪一步断的。"),

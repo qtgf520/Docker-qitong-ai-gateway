@@ -51,15 +51,32 @@ object ChannelScheduler {
             if (now < due) continue
             // 同一分钟内只触发一次
             if ((sch["lastRun"] as? Long ?: 0L) / 60_000 == minKey) { nextAt[id] = expr.next(now) ?: continue; continue }
-            val ch = db.getChannelById(sch["channelId"] as Long) ?: run { nextAt[id] = expr.next(now) ?: Long.MAX_VALUE; continue }
+            val targetType = (sch["targetType"] as? String ?: "channel").lowercase()
+            val targetId = (sch["targetId"] as? String).orEmpty().trim()
+            val ch = if (targetType == "channel") db.getChannelById(targetId.toLongOrNull() ?: (sch["channelId"] as Long)) else null
+            val label = ch?.get("name")?.toString() ?: "$targetType:$targetId"
             val aiPrompt = (sch["aiPrompt"] as? String).orEmpty().trim()
-            val text = if (aiPrompt.isNotBlank()) ChannelManager.generate(db, aiPrompt) else render((sch["content"] as? String).orEmpty(), ch, sch)
+            val fake = mapOf("name" to label, "type" to targetType, "id" to 0L)
+            val text = if (aiPrompt.isNotBlank()) ChannelManager.generate(db, aiPrompt) else render((sch["content"] as? String).orEmpty(), fake, sch)
             if (text.isBlank()) { nextAt[id] = expr.next(now) ?: Long.MAX_VALUE; continue }
-            val (ok, detail) = ChannelManager.send(ch, text)
-            db.addChannelLog(ch["id"] as Long, "sched", text, ok, detail)
+            val (ok, detail) = when (targetType) {
+                "qq_group" -> {
+                    val sent = com.qitong.gateway.qq.QqBotManager.sendActiveGreetToGroup(targetId, text)
+                    sent to (if (sent) "QQ群 $targetId 已发送" else "QQ群发送失败（群 openid 不对或机器人未启用）")
+                }
+                "weixin" -> {
+                    val sent = com.qitong.gateway.weixin.WeixinBotManager.sendActiveGreet(targetId, text)
+                    sent to (if (sent) "微信 $targetId 已发送" else "微信发送失败（openid 不对或机器人离线）")
+                }
+                else -> {
+                    val c = ch ?: run { nextAt[id] = expr.next(now) ?: Long.MAX_VALUE; continue }
+                    ChannelManager.send(c, text)
+                }
+            }
+            if (ch != null) db.addChannelLog(ch["id"] as Long, "sched", text, ok, detail)
             db.markChannelScheduleRun(id, now)
             nextAt[id] = expr.next(now) ?: Long.MAX_VALUE
-            println("[ChannelScheduler] 推送 #$id「${sch["name"]}」→ ${ch["name"]}：ok=$ok $detail")
+            println("[ChannelScheduler] 推送 #$id「${sch["name"]}」→ $label：ok=$ok $detail")
         }
     }
 
