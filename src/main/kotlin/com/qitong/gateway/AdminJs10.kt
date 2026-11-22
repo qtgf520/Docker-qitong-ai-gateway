@@ -846,7 +846,7 @@ function installPluginByUrl(){
 function reloadPlugins(){ api('/api/plugins/reload',{method:'POST'}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.plugins(); }); }
 // ★ v1.218 在线插件市场：prompt 输入索引地址 → 拉取市场列表（install:false 预览）→ 交 renderMarketList 渲染
 function openPluginMarket(){
- var url = prompt('请输入插件市场索引地址（JSON，含 name/version/desc/entry）：', 'https://raw.githubusercontent.com/qtgf520/Docker-qitong-ai-gateway/master/market/index.json');
+ var url = prompt('请输入插件市场索引地址（JSON，含 name/version/desc/entry）：', 'https://raw.githubusercontent.com/qtgf520/Docker-qitong-ai-gateway/master/market/plugins.json');
  if(!url || !url.trim()) return;
  var u = url.trim();
  api('/api/plugins/market',{method:'POST',body:{url:u,install:false}}).then(function(r){
