@@ -126,7 +126,7 @@ function wxForm(b){
   '<div class="form-row"><label>Bot Token（ilink bot_token，扫码登录后自动填入）</label><input class="input" id="wxToken" type="password" value="" placeholder="'+(b.hasToken?'已保存，留空则不修改':'扫码登录后自动获得')+'"></div>'+
   '<div class="form-row"><label>iLink Bot ID（ilink_bot_id）</label><input class="input" id="wxBotId" value="'+esc(b.ilinkBotId||'')+'" placeholder="扫码后自动获得，如 xxx@im.bot"></div>'+
   '<div class="form-row"><label>使用模型（留空用 qtai-sj）</label><input class="input" id="wxModel" value="'+esc(b.aiModel||'')+'" placeholder="qtai-sj"></div>'+
-  '<div class="form-row"><label>系统人设 / System Prompt（可选）</label><textarea class="input" id="wxPrompt" rows="3" placeholder="例如：你是綦桐小助理…">'+esc(b.systemPrompt||'')+'</textarea></div>';
+  '<div class="form-row"><label>系统人设 / System Prompt（可选）</label><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px"><button class="btn-ghost btn-sm" type="button" onclick="setPersona('wxPrompt','assistant')">小助理</button><button class="btn-ghost btn-sm" type="button" onclick="setPersona('wxPrompt','whale')">鲸鱼娘</button><button class="btn-ghost btn-sm" type="button" onclick="setPersona('wxPrompt','engineer')">工程师</button><button class="btn-ghost btn-sm" type="button" onclick="setPersona('wxPrompt','warm')">温柔陪聊</button><button class="btn-ghost btn-sm" type="button" onclick="setPersona('wxPrompt','dry')">毒舌搭子</button></div><textarea class="input" id="wxPrompt" rows="3" placeholder="例如：你是綦桐小助理…">'+esc(b.systemPrompt||'')+'</textarea></div>';
  openModal(b.id?'编辑微信机器人':'添加微信机器人', html, function(){
   var name=$('wxName').value.trim();
   if(!name){ toast('名称必填', false); return; }
