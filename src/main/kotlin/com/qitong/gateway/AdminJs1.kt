@@ -694,7 +694,7 @@ loaders.providers = function(){
    // ★ v1.173 Key 全面脱敏：一律掩码显示 + 提取按钮（凭密码验证）
    var keyTxt = p.apiKey ? '<span style="font-family:monospace;font-size:12px">'+esc(p.apiKey)+'</span> ' + (p.canReveal ? '<button class="btn-ghost btn-sm" style="padding:1px 6px;font-size:11px" title="凭添加者密码提取完整Key" onclick="revealProviderKey('+p.id+')">🔑 提取</button>' : '<span style="font-size:11px;color:var(--muted)">（无权提取）</span>') : '<span style="color:var(--muted)">无</span>';
    var pubTxt = p.isPublic ? '<span class="badge green">公用</span>' : (p.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
-   return '<tr data-pvid="'+p.id+'"><td><input type="checkbox" class="pv-chk" value="'+p.id+'" onclick="pvSelChange()"></td><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
+   return '<tr data-pvid="'+p.id+'"><td><input type="checkbox" class="pv-chk" value="'+p.id+'" onclick="pvSelChange()"></td><td><b>'+esc(p.name)+'</b> <span class="badge purple">P'+(p.customId||p.id)+'</span></td><td>'+esc(p.type)+'</td><td style="font-size:12px;color:var(--muted)">'+esc(p.baseUrl)+(p.port?':'+esc(p.port):'')+'</td><td style="font-size:12px">'+keyTxt+'</td><td>'+pubTxt+'</td><td><span class="badge blue">'+esc(p.ownerName||'')+'</span></td><td><span class="badge '+(p.isEnabled?'green':'gray')+'">'+(p.isEnabled?'已启用':'已停用')+'</span></td><td><button class="btn-ghost" onclick="editProvider('+p.id+')">编辑</button> <button class="btn-ghost" onclick="syncProvider('+p.id+')">同步</button> <button class="btn-ghost" onclick="probeProvider('+p.id+')">测连通</button> <button class="btn-ghost" style="color:var(--red)" onclick="delProvider('+p.id+')">删除</button></td></tr>';
   }).join('');
   box.innerHTML = [
    '<div class="action-bar"><button class="btn" onclick="editProvider(0)">添加服务商</button>' +
@@ -736,6 +736,13 @@ window.PV_PRESETS = {
 window.pvApplyPreset = function(k){
  var x = window.PV_PRESETS[k]; if(!x) return;
  $('pvName').value = x.n; $('pvUrl').value = x.u; $('pvPath').value = x.p;
+};
+window.probeProvider = function(id){
+ toast('正在探测服务商连通性…', true);
+ api('/api/providers/'+id+'/probe', {method:'POST'}).then(function(r){
+  if(r.code===0){ var d=r.data||{}; toast('✅ '+(r.msg||'连通正常')+'（可用模型 '+(d.models||0)+' 个）', true); }
+  else { toast(r.msg||'连通失败', false); }
+ });
 };
 window.editProvider = function(id){
  var p = state.providers.find(function(x){ return x.id===id; }) || {};

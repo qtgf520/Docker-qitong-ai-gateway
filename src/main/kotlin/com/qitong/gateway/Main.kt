@@ -236,7 +236,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.240"))
+                put("version", JsonPrimitive("1.241"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -638,6 +638,48 @@ fun Application.moduleWeb(database: Database) {
             if (AdminApi.deleteProvider(database, id, u)) AdminApi.ok(call, null, "已删除")
             else AdminApi.fail(call, "无权限删除该服务商", 403)
         }
+        // ★ v1.241 服务商连通性探测：GET {base}/models，校验地址+Key 是否可用（不用真跑对话，秒回）
+        post("/api/providers/{id}/probe") {
+            val u = call.requireAuth(database) ?: return@post
+            val id = call.parameters["id"]?.toLongOrNull() ?: 0L
+            val pv = database.getProviderById(id)
+            if (pv == null) { AdminApi.fail(call, "服务商不存在", 404); return@post }
+            var base = pv.baseUrl.trim().trimEnd('/')
+            val cp = (pv.chatPath ?: "").trim()
+            val probeUrl = when {
+                cp.contains("/chat/completions") -> base + cp.substringBefore("/chat/completions") + "/models"
+                cp.isNotBlank() && cp.startsWith("/") -> base + cp.replace(Regex("/chat.*$"), "/models")
+                else -> base + "/v1/models"
+            }
+            val t0 = System.currentTimeMillis()
+            val result = runCatching {
+                val rb = okhttp3.Request.Builder().url(probeUrl).get()
+                    .addHeader("Accept", "application/json")
+                pv.apiKey?.takeIf { it.isNotBlank() }?.let { rb.addHeader("Authorization", "Bearer $it") }
+                com.qitong.gateway.network.WebToolClient.http.newBuilder()
+                    .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
+                    .newCall(rb.build()).execute().use { resp ->
+                        val code = resp.code
+                        val body = resp.body?.string() ?: ""
+                        var cnt = 0
+                        runCatching {
+                            val o = org.json.JSONObject(body)
+                            cnt = o.optJSONArray("data")?.length() ?: o.optJSONArray("models")?.length() ?: 0
+                        }
+                        Triple(code, cnt, body.take(120))
+                    }
+            }
+            val ms = System.currentTimeMillis() - t0
+            result.onSuccess { (code, cnt, body) ->
+                if (code in 200..299) AdminApi.ok(call, mapOf("url" to probeUrl, "code" to code, "models" to cnt, "ms" to ms),
+                    "✅ 连通正常（HTTP $code，可用模型 $cnt 个，${ms}ms）")
+                else AdminApi.fail(call, "❌ 连通失败 HTTP $code（${ms}ms）：$body")
+            }.onFailure { e ->
+                AdminApi.fail(call, "❌ 请求失败（${ms}ms）：${e.message ?: e::class.simpleName}")
+            }
+        }
+
         post("/api/providers/{id}/sync") {
             val id = call.parameters["id"]?.toLongOrNull() ?: return@post
             val u = call.requireAuth(database) ?: return@post
@@ -3055,7 +3097,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.240"))
+                put("version", JsonPrimitive("1.241"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3899,7 +3941,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.240"))
+                    put("version", JsonPrimitive("1.241"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running
