@@ -79,15 +79,23 @@ object WeixinBotManager {
         if (!watchdogStarted) {
             watchdogStarted = true
             Thread {
+                // ★ v1.235 掉线自愈：30s 巡检；连续 2 次异常才重连（避免把"正在退避重连"的客户端再拉起一条 → 双连接）
+                val errStreak = HashMap<Long, Int>()
                 while (true) {
                     try {
-                        Thread.sleep(60_000L)
+                        Thread.sleep(30_000L)
                         val bots = db?.getWeixinBots()?.filter { it.enabled } ?: continue
                         for (b in bots) {
                             val st = statusOf(b.id)
-                            if (st.status == WeixinBotStatus.ERROR || st.status == WeixinBotStatus.OFFLINE) {
-                                println("[WeixinBot] ${b.name} 掉线自动重启（status=${st.status} lastErr=${st.lastError}）")
+                            val online = st.status == WeixinBotStatus.ONLINE || st.status == WeixinBotStatus.CONNECTING
+                            val alive = clients[b.id]?.isAlive() == true
+                            if (online && alive) { errStreak.remove(b.id); continue }
+                            val n = (errStreak[b.id] ?: 0) + 1
+                            errStreak[b.id] = n
+                            if (n >= 2) {
+                                println("[WeixinBot] ${b.name} 掉线自动重启（status=${st.status} lastErr=${st.lastError} streak=$n）")
                                 runCatching { startBot(b) }
+                                errStreak[b.id] = 0
                             }
                         }
                     } catch (_: InterruptedException) { break }
@@ -178,7 +186,13 @@ object WeixinBotManager {
     }
 
     fun stopBot(id: Long) {
-        runCatching { clients.remove(id)?.stop() }
+        val old = clients.remove(id)
+        runCatching { old?.stop() }
+        // ★ v1.235 等旧长轮询线程退出（最多 3s），否则新旧线程并存 → 同一消息收两次 → 回两遍
+        runCatching {
+            val t = Thread.currentThread()
+            repeat(30) { if (old?.isAlive() != true) return@repeat; Thread.sleep(100) }
+        }
         val state = statusOf(id)
         state.status = WeixinBotStatus.OFFLINE; state.lastError = "已停止"
     }
@@ -227,6 +241,11 @@ object WeixinBotManager {
         if (t.isBlank()) return
         // ★ v1.232 过滤无法解析的占位消息（非文本/表情/图片解析失败），避免污染 AI 上下文与记忆
         if (t == "暂不能查看该消息内容" || t == "[图片]" || t == "[表情]" || t == "[语音]" || t == "[视频]" || t == "[文件]") return
+        // ★ v1.235 入站幂等：同一 msgId 只处理一次（重连重投/并发长轮询 → 回两遍根因）
+        if (!com.qitong.gateway.http.InboundGuard.first("wx", msg.msgId)) {
+            System.err.println("[WeixinBot] 重复入站消息已忽略 msgId=${msg.msgId}")
+            return
+        }
         val t0 = System.currentTimeMillis()
         val wxSettings = d.getPlatformSettings("weixin")
         // ★ v1.218 唤醒设置：忽略自己发送的消息（ignoreSelf）
@@ -779,10 +798,10 @@ object WeixinBotManager {
                 val loopStartedAt = System.currentTimeMillis()
                 while (loop < AgentLimits.MAX_ROUNDS_WX) {
                     // ★ v1.188 看门狗检查：超时强制收尾（工具网络卡死/模型挂起都能兜底）
-                    if (System.currentTimeMillis() - loopStartedAt > 90_000L) {
-                        System.err.println("[WeixinBot] ${bot.id} Agent 循环看门狗超时（90s），强制收尾")
-                        content = "⏱️ 任务处理超时（超过90秒），已自动结束。请确认指令是否合理，稍后重试或换个方式。"
-                        com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "⏱ 看门狗超时，已强制结束")
+                    if (System.currentTimeMillis() - loopStartedAt > AgentLimits.MAX_SECONDS_WX) {
+                        System.err.println("[WeixinBot] ${bot.id} Agent 看门狗超时（${AgentLimits.MAX_SECONDS_WX / 1000}s），收尾")
+                        content = "⏱️ 这活儿跑了 ${AgentLimits.MAX_SECONDS_WX / 1000} 秒还没收尾，我先停这儿。回一句「继续」我接着干。"
+                        com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "⏱ 超时收尾")
                         break
                     }
                     com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loop + 1, action = "第 ${loop + 1} 轮 · 等模型回复中…")

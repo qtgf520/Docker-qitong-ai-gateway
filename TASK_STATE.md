@@ -1,4 +1,19 @@
-# TASK_STATE · P0-A/B/C 全部完成并上线
+# TASK_STATE · P0-A/B/C + P1 稳定性三连（已上线 v1.235）
+
+## ✅ P1-1 发送幂等（v1.233，commit 见下）
+- `http/SendGuard.kt`：同 (渠道,目标,msgId,内容哈希) 5 分钟内只发一次；QQ dispatch 分段发送前守卫
+- 目的：修「同一条消息回两遍」
+
+## ✅ P1-2 长任务不再被 90s 砍断（v1.234）
+- 看门狗 90s → `AgentLimits.MAX_SECONDS_QQ/WX = 300s`（chat 600s），超时保留阶段结果并提示「回继续」
+- 长任务心跳：超过 60s 每 60s 推「⏳ 还在处理（第N步）」
+- QQ 模型单轮 read/call 超时 60s → 120s（慢模型不再被误杀）
+
+## ✅ P1-3 掉线自愈 + 重复消息根因（v1.235）
+- `http/InboundGuard.kt`：同渠道同 msgId 只处理一次（QQ dispatch / 微信 handleMessage 入口）
+- 微信长轮询单实例化：`WeixinGatewayClient.stop()` 中断旧线程；`stopBot` 等旧线程退出（≤3s）
+- 微信看门狗 60s → 30s 巡检 + 连续 2 次异常才重连（避免双连接并发收消息）
+- 微信客户端 backoff 保持 2s→60s，成功即重置
 
 > 记录时间：2026-11-22 02:32
 > 状态：✅ 全部完成并上线，收尾清理完毕

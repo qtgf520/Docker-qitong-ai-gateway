@@ -31,10 +31,10 @@ object QqBotManager {
     private val api = QqApiClient()
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
         // ★ v1.166 提速：单轮 60s（原来 90s 读 + 120s 总）——QQ 机器人回复慢根因是等超时太久；
         //   模型长思考靠 activeCall.cancel() 即时打断，60s 足够覆盖绝大多数模型响应，超时快速失败触发故障转移
-        .callTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(120, TimeUnit.SECONDS)
         .build()
     // ★ v1.116 当前活动模型调用（按用户），发「停止」立即 cancel() 打断，不再等跑完
     private val activeCalls = ConcurrentHashMap<String, okhttp3.Call>()
@@ -647,6 +647,11 @@ object QqBotManager {
         val t = text.trim()
         // ★ v1.232 统一过滤无法解析的占位/纯表情消息（图片/表情解析失败占位），不污染 AI 上下文与记忆
         if (t == "暂不能查看该消息内容" || t == "[图片]" || t == "[表情]" || t == "[语音]" || t == "[视频]" || t == "[文件]") return
+        // ★ v1.235 入站幂等：同一条 msgId 只处理一次（长轮询重连/并发投递会重复推同一条 → 重复回复根因）
+        if (!com.qitong.gateway.http.InboundGuard.first("qq", msgId)) {
+            System.err.println("[QQBot] 重复入站消息已忽略 msgId=$msgId")
+            return
+        }
         // ★ v1.185 进度模式口令：说「隐藏步骤/别发步骤/只回结果」→ 关闭过程推送；「显示步骤/打开步骤」→ 打开
         if (t.contains("隐藏步骤", true) || t.contains("别发步骤", true) || t.contains("不要发步骤", true) ||
             t.contains("只回结果", true) || t.contains("不需要过程", true) || t.contains("别把步骤", true) ||
@@ -769,6 +774,11 @@ object QqBotManager {
                 val pieces = splitText(content, 1800)
                 var anyOk = false
                 pieces.forEachIndexed { idx, piece ->
+                    // ★ v1.233 发送幂等：同 msgId 同内容重复发送直接拦截（修"回复两遍"）
+                    if (!com.qitong.gateway.http.SendGuard.allow("qq", if (groupOpenid.isNotBlank()) groupOpenid else userOpenid, msgId, piece)) {
+                        System.out.println("[QQBot] 重复回复已拦截 len=${piece.length}")
+                        return@forEachIndexed
+                    }
                     val isLastPiece = idx == pieces.lastIndex
                     val pieceMsgId = if (usePassive && isLastPiece) effectiveMsgId else null
                     // ★ v1.218 分段讲话：只首段带@点名（真人讲话风格，后续分段自然连续）；已有@则不重复
@@ -2115,17 +2125,28 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 val toolResultsSummary = StringBuilder()
                 // ★ v1.188 看门狗：单任务总耗时超 90s 强制中断（配合工具 20s 短超时，Agent 永不卡死）
                 //   原循环最多 20 轮但轮内模型/工具都可能长时间阻塞；现在无论卡在哪，90s 必须收尾
+                var lastBeatAt = 0L
                 val loopStartedAt = System.currentTimeMillis()
                 while (sandboxOn && content.isNotBlank() && loopGuard < AgentLimits.MAX_ROUNDS_QQ) {
                     // ★ v1.188 看门狗检查：超时强制收尾，不再无限等（工具网络卡死/模型挂起都能兜底）
-                    if (System.currentTimeMillis() - loopStartedAt > 90_000L) {
-                        System.err.println("[QQBot] ${bot.appid} Agent 循环看门狗超时（90s），强制收尾")
-                        content = "⏱️ 任务处理超时（超过90秒），已自动结束。请确认指令是否合理，稍后重试或换个方式。"
-                        com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "⏱ 看门狗超时，已强制结束")
+                    if (System.currentTimeMillis() - loopStartedAt > AgentLimits.MAX_SECONDS_QQ) {
+                        System.err.println("[QQBot] ${bot.appid} Agent 看门狗超时（${AgentLimits.MAX_SECONDS_QQ / 1000}s），收尾并保留阶段结果")
+                        val partial = toolResultsSummary.toString().trim().take(500)
+                        content = if (partial.isBlank())
+                            "⏱️ 这活儿跑了 ${AgentLimits.MAX_SECONDS_QQ / 1000} 秒还没收尾，我先停这儿。回一句「继续」我接着干。"
+                        else
+                            "⏱️ 已跑 ${AgentLimits.MAX_SECONDS_QQ / 1000} 秒，先给阶段性结果：\n$partial\n\n回一句「继续」我接着做。"
+                        com.qitong.gateway.http.AgentRunTracker.update(agentRunId, action = "⏱ 超时收尾（保留阶段结果）")
                         break
                     }
                     loopGuard++
                     com.qitong.gateway.http.AgentRunTracker.update(agentRunId, round = loopGuard, action = "第 $loopGuard 轮 · 等模型回复中…")
+                    // ★ v1.234 长任务心跳：超过 60s 每 60s 推一次，用户看到"还活着"，不再以为断线
+                    val el = System.currentTimeMillis() - loopStartedAt
+                    if (el > AgentLimits.HEARTBEAT_MS && el - lastBeatAt >= AgentLimits.HEARTBEAT_MS) {
+                        lastBeatAt = el
+                        smartSend("⏳ 还在处理（第 ${loopGuard + 1} 步），稍等…", false)
+                    }
                     // ★ v1.228 思考只推「人话过渡语」，不推 reasoning_content 原始推理链：
                     //   实锤问题（用户 11-16 反馈）：R1 对闲聊也输出冗长推理链（"作为鲸鱼娘我得..."），
                     //   直接推给用户=闲聊刷屏+自言自语长文。正确做法（对齐你原始需求）：

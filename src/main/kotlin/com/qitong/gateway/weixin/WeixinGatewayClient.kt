@@ -18,19 +18,29 @@ class WeixinGatewayClient(
     private val onStatusChange: (WeixinBotStatus, String) -> Unit
 ) {
     private val stopped = AtomicBoolean(false)
+    @Volatile private var thread: Thread? = null
     @Volatile private var backoffMs = 2000L
     @Volatile private var buf = ""
     @Volatile private var pausedUntil = 0L
 
     fun start() {
+        // ★ v1.235 单实例保证：旧线程没死透就绝不再起第二条（并发长轮询=重复收消息=重复回复）
+        if (thread?.isAlive == true) return
         stopped.set(false)
-        Thread { loop() }.start()
+        val t = Thread { loop() }
+        t.name = "weixin-poll-${bot.id}"
+        t.isDaemon = true
+        thread = t
+        t.start()
     }
 
     fun stop() {
         stopped.set(true)
+        thread?.interrupt()
         onStatusChange(WeixinBotStatus.OFFLINE, "已停止")
     }
+
+    fun isAlive(): Boolean = thread?.isAlive == true
 
     private fun loop() {
         while (!stopped.get()) {
@@ -64,6 +74,8 @@ class WeixinGatewayClient(
                     onStatusChange(WeixinBotStatus.ONLINE, "在线")
                 }
                 backoffMs = 2000L // 成功后重置退避
+            } catch (e: InterruptedException) {
+                break
             } catch (e: Exception) {
                 // ★ v87 显示离线：真正异常才离线（用户要求：报错=离线）
                 onStatusChange(WeixinBotStatus.ERROR, e.message ?: "长轮询异常")

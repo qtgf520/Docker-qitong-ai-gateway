@@ -22,4 +22,12 @@ object AgentLimits {
 
     /** 单次 Agent 运行累计工具调用总上限（防长任务无限循环耗尽资源） */
     const val MAX_TOOLS_PER_RUN = 24
+
+    /** 单次 Agent 运行总时长上限（毫秒）：替代"90s 一刀切" */
+    const val MAX_SECONDS_QQ = 300_000L
+    const val MAX_SECONDS_WX = 300_000L
+    const val MAX_SECONDS_CHAT = 600_000L
+
+    /** 长任务心跳：超过该间隔就推一次"还在处理" */
+    const val HEARTBEAT_MS = 60_000L
 }
