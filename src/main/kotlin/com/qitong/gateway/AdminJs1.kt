@@ -731,7 +731,17 @@ window.PV_PRESETS = {
  hunyuan:{n:'腾讯混元',u:'https://api.hunyuan.cloud.tencent.com',p:'/v1/chat/completions'},
  openrouter:{n:'OpenRouter',u:'https://openrouter.ai/api/v1',p:'/chat/completions'},
  openai:{n:'OpenAI 官方',u:'https://api.openai.com',p:'/v1/chat/completions'},
- ollama:{n:'本地 Ollama',u:'http://127.0.0.1:11434',p:'/v1/chat/completions'}
+ ollama:{n:'本地 Ollama',u:'http://127.0.0.1:11434',p:'/v1/chat/completions'},
+ gemini:{n:'Google Gemini（OpenAI 兼容）',u:'https://generativelanguage.googleapis.com/v1beta/openai',p:'/chat/completions'},
+ groq:{n:'Groq',u:'https://api.groq.com/openai/v1',p:'/chat/completions'},
+ mistral:{n:'Mistral AI',u:'https://api.mistral.ai/v1',p:'/chat/completions'},
+ together:{n:'Together AI',u:'https://api.together.xyz/v1',p:'/chat/completions'},
+ fireworks:{n:'Fireworks AI',u:'https://api.fireworks.ai/inference/v1',p:'/chat/completions'},
+ deepinfra:{n:'DeepInfra',u:'https://api.deepinfra.com/v1/openai',p:'/chat/completions'},
+ spark:{n:'讯飞星火',u:'https://spark-api-open.xf-yun.com/v1',p:'/chat/completions'},
+ stepfun:{n:'阶跃星辰',u:'https://api.stepfun.com/v1',p:'/chat/completions'},
+ baichuan:{n:'百川智能',u:'https://api.baichuan-ai.com/v1',p:'/chat/completions'},
+ lingyiwanwu:{n:'零一万物',u:'https://api.lingyiwanwu.com/v1',p:'/chat/completions'}
 };
 window.pvApplyPreset = function(k){
  var x = window.PV_PRESETS[k]; if(!x) return;
@@ -750,7 +760,7 @@ window.editProvider = function(id){
  // ★ v1.173 key 一律脱敏：编辑框不再回显完整 key，留空=保持不变；需要完整 key 先点列表「🔑 提取」
  var keyVal = '';
  var html = [
-  '<div class="form-row"><label>官方预设（一键填）</label><select id="pvPreset" class="input" onchange="pvApplyPreset(this.value)"><option value="">自定义 / 不预填</option><option value="deepseek">DeepSeek 官方</option><option value="zhipu">智谱 BigModel</option><option value="moonshot">月之暗面 Kimi</option><option value="dashscope">阿里百炼</option><option value="siliconflow">硅基流动</option><option value="volc">火山方舟（豆包）</option><option value="minimax">MiniMax</option><option value="qianfan">百度千帆</option><option value="hunyuan">腾讯混元</option><option value="openrouter">OpenRouter</option><option value="openai">OpenAI 官方</option><option value="ollama">本地 Ollama</option></select></div>',
+  '<div class="form-row"><label>官方预设（一键填）</label><select id="pvPreset" class="input" onchange="pvApplyPreset(this.value)"><option value="">自定义 / 不预填</option><option value="deepseek">DeepSeek 官方</option><option value="zhipu">智谱 BigModel</option><option value="moonshot">月之暗面 Kimi</option><option value="dashscope">阿里百炼</option><option value="siliconflow">硅基流动</option><option value="volc">火山方舟（豆包）</option><option value="minimax">MiniMax</option><option value="qianfan">百度千帆</option><option value="hunyuan">腾讯混元</option><option value="openrouter">OpenRouter</option><option value="openai">OpenAI 官方</option><option value="ollama">本地 Ollama</option><option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="mistral">Mistral AI</option><option value="together">Together AI</option><option value="fireworks">Fireworks AI</option><option value="deepinfra">DeepInfra</option><option value="spark">讯飞星火</option><option value="stepfun">阶跃星辰</option><option value="baichuan">百川智能</option><option value="lingyiwanwu">零一万物</option></select></div>',
   '<div class="form-row"><label>名称 *</label><input id="pvName" class="input" value="'+esc(p.name||'')+'"></div>',
   '<div class="form-row"><label>类型</label><select id="pvType" class="input"><option value="OpenAI Compatible"'+(p.type==='OpenAI Compatible'?' selected':'')+'>OpenAI Compatible</option><option value="Ollama"'+(p.type==='Ollama'?' selected':'')+'>Ollama</option><option value="Custom"'+(p.type==='Custom'?' selected':'')+'>Custom</option></select></div>',
   '<div class="form-row"><label>Base URL *</label><input id="pvUrl" class="input" value="'+esc(p.baseUrl||'')+'" placeholder="https://api.openai.com"></div>',
