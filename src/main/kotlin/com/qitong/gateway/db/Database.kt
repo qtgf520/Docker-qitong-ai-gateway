@@ -39,6 +39,7 @@ class Database(private val dbPath: String) {
 
     init {
         ensureKbVecTable()
+        ensureChannelTable()
         createTables()
         seedDefaults()
     }
@@ -1902,6 +1903,42 @@ fun updateUserLogin(id: Long) {
     }
 
     /** 删除单个文档（连带分块 + 更新统计） */
+    // ============ ★ v1.247 消息渠道（飞书/钉钉/Slack/Discord/自定义 Webhook） ============
+
+    fun ensureChannelTable() {
+        runCatching { stmt("CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, type TEXT NOT NULL, webhook_url TEXT NOT NULL DEFAULT '', secret TEXT NOT NULL DEFAULT '', ai_enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)") }
+    }
+
+    fun getChannels(): List<Map<String, Any?>> = runCatching {
+        ensureChannelTable()
+        query("SELECT * FROM channels ORDER BY id DESC").map { r ->
+            mapOf(
+                "id" to ((r["id"] as Number).toLong()),
+                "name" to (r["name"] as? String ?: ""),
+                "type" to (r["type"] as? String ?: "custom"),
+                "webhookUrl" to (r["webhook_url"] as? String ?: ""),
+                "secret" to (r["secret"] as? String ?: ""),
+                "aiEnabled" to ((r["ai_enabled"] as? Number)?.toInt() == 1),
+                "createdAt" to ((r["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    fun getChannelById(id: Long): Map<String, Any?>? = getChannels().firstOrNull { (it["id"] as Long) == id }
+
+    fun saveChannel(id: Long, name: String, type: String, webhookUrl: String, secret: String, aiEnabled: Boolean): Long {
+        ensureChannelTable()
+        return if (id > 0) {
+            stmt("UPDATE channels SET name=?, type=?, webhook_url=?, secret=?, ai_enabled=? WHERE id=?", name, type, webhookUrl, secret, if (aiEnabled) 1 else 0, id)
+            id
+        } else {
+            stmt("INSERT INTO channels (name,type,webhook_url,secret,ai_enabled,created_at) VALUES (?,?,?,?,?,?)", name, type, webhookUrl, secret, if (aiEnabled) 1 else 0, System.currentTimeMillis())
+            lastInsertId()
+        }
+    }
+
+    fun deleteChannel(id: Long) { ensureChannelTable(); stmt("DELETE FROM channels WHERE id=?", id) }
+
     fun deleteKbDoc(docId: Long, kbId: Long) {
         stmt("DELETE FROM kb_chunks WHERE doc_id=?", docId)
         stmt("DELETE FROM kb_docs WHERE id=?", docId)
@@ -2619,6 +2656,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.247", "多平台消息渠道：飞书 / 钉钉 / Slack / Discord / 自定义 Webhook", "①新增「消息渠道」模块，一套配置同时管出站推送与入站回调：飞书/钉钉走各自 text 结构，Slack/Discord 走 text/content，自定义 Webhook 原样传 text，出站统一点「测发送」验证连通。②入站地址 /api/channels/{id}/inbound?token=密钥，收到的消息先过插件（签到/指令直接回），没命中再交 AI 回复，回复自动推回该渠道，飞书/钉钉/Slack 的文本结构都能识别。③内置飞书事件订阅 URL 校验（GET/POST 带 challenge 自动回显），填回调地址即可通过校验。④后台渠道表展示类型、模式、入站地址一键复制，支持新建/编辑/删除/推送/测发送；密钥为空则不做 token 校验，方便内网自建。"),
 Triple("v1.246", "知识库文件上传：PDF / DOCX 直接解析入库", "①后台知识库上传支持直接选文件，不再只能粘贴文本：PDF 用 PDFBox 抽取文字（按位置排序，多栏不乱序），DOCX 直接解包 word/document.xml 还原段落与表格，TXT/MD/CSV/JSON 原样读取。②上传走 JSON+Base64（≤25MB），解析后自动清洗空行、截断超长文本，再走原有 500 字分块与向量化流程。③旧版 .doc 给出明确提示「请另存为 .docx」，扫描版 PDF 提示「请先 OCR」，错误信息直接回显给上传者。④文档新增/删除/清空、知识库清空时同步清理 kb_vec 向量缓存，避免旧向量污染检索结果。⑤前端弹窗改为「选文件 + 可选标题 + 可粘贴文本」三合一，选中文件即显示大小与解析提示。"),
 Triple("v1.245", "知识库语义检索（embedding + BM25 RRF 融合）", "①自动挑选 embedding 模型——配置了 kb_embedding_model 就用它，否则自动识别 modelId/显示名含 embed/bge/m3e/gte/text-embedding 的已启用模型，不改配置也能跑。②向量缓存表 kb_vec（kb_id+chunk_index+model 主键，vec 存逗号分隔向量），首次检索现算并落库，后续直接读缓存；文档/库清理时配套 clearKbVectors。③检索融合——BM25 与向量各取 top-2k，用 RRF（1/(60+rank)）合并排序，同义词/换说法也能召回，纯稀疏检索的关键词死板问题解决。④批量 16 条一次 /embeddings，连接 10s/读 30s，provider 不支持则自动退回 BM25 不影响原功能。"),
 Triple("v1.244", "插件 webhook 动作：一句话把消息转发给 Dify / Coze / n8n / 自建工作流", "插件 action 新增 webhook：命中后 POST {text,user,group,nick,channel,plugin} 到配置的 webhookUrl（可带 Bearer webhookToken），响应自动兼容 {answer}/{reply}/{content}/{text}/data.answer/纯文本，超时 8s 连接 30s 读；失败返回明确提示不吞消息。实测外部 mock 工作流返回『你好，这是外部工作流的回复』链路通。这样不用改代码就能把第三方 Agent（Dify/Coze/百炼应用/n8n）挂到 QQ/微信群里当插件用。"),

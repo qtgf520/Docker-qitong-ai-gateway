@@ -928,5 +928,71 @@ function testPluginTrigger(){
 }
 function togglePlugin(id,en){ api('/api/plugins/toggle',{method:'POST',body:{id:id,enabled:en?'true':'false'}}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.plugins(); }); }
 function removePlugin(id){ if(!confirm('确认卸载插件 '+id+'？')) return; api('/api/plugins/remove',{method:'POST',body:{id:id}}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.plugins(); }); }
+// ===== ★ v1.247 消息渠道（飞书/钉钉/Slack/Discord/自定义 Webhook：出站推送 + 入站回调） =====
+loaders.channels = function(){
+ var box = $('view-channels');
+ box.innerHTML = '<div class="card"><h3>📡 消息渠道 <span style="font-size:12px;color:var(--muted)">飞书 / 钉钉 / Slack / Discord / 自定义 Webhook：既能往外推消息，也能接别人发进来的消息</span></h3>' +
+  '<div class="action-bar"><button class="btn" onclick="chOpenEdit(0)">+ 新建渠道</button><span id="chHint" style="font-size:12px;color:var(--muted)">加载中…</span></div>' +
+  '<div id="chList" style="margin-top:12px"><div style="color:var(--muted);padding:16px">加载中…</div></div></div>' +
+  '<div class="card"><h3>📥 入站回调怎么用</h3><div style="font-size:12px;color:var(--muted);line-height:1.9">' +
+  '① 新建渠道时填的「入站密钥」就是 token；<br>' +
+  '② 把 &lt;你的网关地址&gt;/api/channels/&lt;渠道ID&gt;/inbound?token=&lt;密钥&gt; 填到飞书/钉钉的事件订阅回调地址；<br>' +
+  '③ 收到的消息会先过插件（签到/指令等直接回复），没有插件命中就交给 AI 回答，再把回复推回该渠道；<br>' +
+  '④ 飞书事件订阅的 URL 校验（challenge）已内置兼容，填完直接保存即可。</div></div>';
+ api('/api/channels').then(function(r){
+  var list = r.data || [];
+  var el = $('chList'); if(!el) return;
+  if(!list.length){ el.innerHTML = '<div style="color:var(--muted)">还没有渠道。点「+ 新建渠道」添加飞书群机器人 / 钉钉机器人 / Slack / Discord 的 Webhook 地址即可。</div>'; $('chHint').textContent='未配置'; return; }
+  var tc = {feishu:'badge green',lark:'badge green',dingtalk:'badge blue',slack:'badge purple',discord:'badge gray',custom:'badge gray'};
+  var rows = list.map(function(c){
+   var inbound = location.origin + '/api/channels/' + c.id + '/inbound?token=' + (c.secret||'');
+   return '<tr>' +
+    '<td><b>'+esc(c.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(c.webhookUrl||'未填 Webhook')+'</div></td>' +
+    '<td><span class="'+ (tc[c.type]||'badge gray') +'">'+esc(c.type)+'</span></td>' +
+    '<td>'+(c.aiEnabled?'<span class="badge green">AI 回复</span>':'<span class="badge gray">仅插件</span>')+'</td>' +
+    '<td style="max-width:260px;word-break:break-all;font-size:11px;color:var(--muted)">'+esc(inbound)+' <button class="btn-ghost btn-sm" onclick="chCopy(\''+inbound+'\')">复制</button></td>' +
+    '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="chTest('+c.id+')">测发送</button> ' +
+    '<button class="btn-ghost btn-sm" onclick="chSend('+c.id+')">推消息</button> ' +
+    '<button class="btn-ghost btn-sm" onclick="chOpenEdit('+c.id+',\''+esc(c.name)+'\',\''+esc(c.type)+'\',\''+esc(c.webhookUrl||'')+'\',\''+esc(c.secret||'')+'\','+(c.aiEnabled?'true':'false')+')">编辑</button> ' +
+    '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="chDel('+c.id+')">删</button></td></tr>';
+  }).join('');
+  el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>渠道</th><th>类型</th><th>模式</th><th>入站回调地址</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  $('chHint').textContent = '共 ' + list.length + ' 个渠道';
+ });
+};
+window.chCopy = function(t){
+ try{ navigator.clipboard.writeText(t); toast('已复制',true); }catch(e){ prompt('复制下面的地址：', t); }
+};
+window.chOpenEdit = function(id,name,type,url,secret,aiEnabled){
+ openModal((id?'编辑渠道':'新建渠道'),
+  '<div class="form-row"><label>渠道名称 *</label><input id="chName" class="input" value="'+esc(name||'')+'" placeholder="如：飞书产品群"></div>' +
+  '<div class="form-row"><label>平台类型</label><select id="chType" class="input">' +
+   ['feishu','dingtalk','slack','discord','custom'].map(function(t){ return '<option value="'+t+'"'+((type||'feishu')===t?' selected':'')+'>'+t+'</option>'; }).join('') +
+  '</select></div>' +
+  '<div class="form-row"><label>Webhook 地址</label><input id="chUrl" class="input" value="'+esc(url||'')+'" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…"></div>' +
+  '<div class="form-row"><label>入站密钥（token，留空则不校验）</label><input id="chSecret" class="input" value="'+esc(secret||'')+'" placeholder="建议填一串随机字符"></div>' +
+  '<div class="form-row"><label><input type="checkbox" id="chAI"'+(aiEnabled!==false?' checked':'')+'> 插件未命中时交给 AI 回复</label></div>',
+  function(){
+   var nm=$('chName').value.trim();
+   if(!nm){ toast('渠道名称不能为空', false); return; }
+   api('/api/channels', { method:'POST', body: { id: id, name: nm, type: $('chType').value, webhookUrl: $('chUrl').value.trim(), secret: $('chSecret').value.trim(), aiEnabled: $('chAI').checked } }).then(function(r){
+    toast(r.msg||'已保存', r.code===0);
+    if(r.code===0){ closeModal(); loaders.channels(); }
+   });
+  });
+};
+window.chTest = function(id){
+ api('/api/channels/'+id+'/test',{method:'POST'}).then(function(r){ toast(r.msg||'', r.code===0); });
+};
+window.chSend = function(id){
+ var t=prompt('要推送的消息内容：','綦桐AI网关：这是一条测试推送');
+ if(!t) return;
+ api('/api/channels/'+id+'/send',{method:'POST',body:{text:t}}).then(function(r){ toast(r.msg||'', r.code===0); });
+};
+window.chDel = function(id){
+ if(!confirm('确认删除该渠道？')) return;
+ api('/api/channels/'+id,{method:'DELETE'}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.channels(); });
+};
+
 """
 }
