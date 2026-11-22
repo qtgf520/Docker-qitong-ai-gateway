@@ -38,6 +38,7 @@ class Database(private val dbPath: String) {
         }
 
     init {
+        ensureKbVecTable()
         createTables()
         seedDefaults()
     }
@@ -1107,7 +1108,14 @@ class Database(private val dbPath: String) {
     // ============ 模型隐藏（★ v1.173 按用户隔离，非全局） ============
 
     /** 表：记录 "哪个用户隐藏了哪个模型"（user_id + model_id 唯一） */
+    // ★ v1.245 知识库向量表（语义检索缓存；chunk_index + model 唯一）
+    fun ensureKbVecTable() {
+        runCatching { stmt("CREATE TABLE IF NOT EXISTS kb_vec (kb_id INTEGER NOT NULL, chunk_id INTEGER NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL, vec TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(kb_id, chunk_id, model))") }
+    }
+
     fun createModelHiddenTable() {
+        ensureKbVecTable()
+        runCatching { stmt("CREATE TABLE IF NOT EXISTS kb_vec (kb_id INTEGER NOT NULL, chunk_id INTEGER NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL, vec TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(kb_id, chunk_id, model))") }
         runCatching { stmt("CREATE TABLE IF NOT EXISTS model_hidden (user_id INTEGER NOT NULL, model_id INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, model_id))") }
     }
 
@@ -1923,6 +1931,36 @@ fun updateUserLogin(id: Long) {
             )
         }
 
+    /** ★ v1.245 读取某知识库已缓存的向量（chunkIndex → 向量） */
+    fun getKbVectors(kbId: Long, model: String): MutableMap<Long, DoubleArray> {
+        val out = HashMap<Long, DoubleArray>()
+        query("SELECT chunk_id, vec FROM kb_vec WHERE kb_id=? AND model=?", kbId, model).forEach { row ->
+            val idx = (row["chunk_id"] as? Number)?.toLong() ?: return@forEach
+            val parts = (row["vec"] as? String ?: "").split(',')
+            if (parts.size > 1) {
+                val arr = parts.mapNotNull { it.toDoubleOrNull() }.toDoubleArray()
+                if (arr.isNotEmpty()) out[idx] = arr
+            }
+        }
+        return out
+    }
+
+    /** ★ v1.245 保存向量缓存（覆盖写） */
+    fun saveKbVectors(kbId: Long, model: String, vectors: Map<Long, DoubleArray>) {
+        val now = System.currentTimeMillis()
+        vectors.forEach { (cid, v) ->
+            runCatching {
+                stmt("INSERT OR REPLACE INTO kb_vec (kb_id,chunk_id,model,dim,vec,created_at) VALUES (?,?,?,?,?,?)",
+                    kbId, cid, model, v.size, v.joinToString(","), now)
+            }
+        }
+    }
+
+    /** ★ v1.245 清理知识库向量缓存（文档变更/删除时调用） */
+    fun clearKbVectors(kbId: Long) {
+        runCatching { stmt("DELETE FROM kb_vec WHERE kb_id=?", kbId) }
+    }
+
     /** 跨库检索（沙盒 kb_search 支持多个 kb 逗号分隔） */
     fun searchKbAcross(kbIds: List<Long>, query: String, topKPerKb: Int = 3): List<Map<String, Any?>> {
         if (kbIds.isEmpty()) return emptyList()
@@ -2581,6 +2619,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.245", "知识库语义检索（embedding + BM25 RRF 融合）", "①自动挑选 embedding 模型——配置了 kb_embedding_model 就用它，否则自动识别 modelId/显示名含 embed/bge/m3e/gte/text-embedding 的已启用模型，不改配置也能跑。②向量缓存表 kb_vec（kb_id+chunk_index+model 主键，vec 存逗号分隔向量），首次检索现算并落库，后续直接读缓存；文档/库清理时配套 clearKbVectors。③检索融合——BM25 与向量各取 top-2k，用 RRF（1/(60+rank)）合并排序，同义词/换说法也能召回，纯稀疏检索的关键词死板问题解决。④批量 16 条一次 /embeddings，连接 10s/读 30s，provider 不支持则自动退回 BM25 不影响原功能。"),
 Triple("v1.244", "插件 webhook 动作：一句话把消息转发给 Dify / Coze / n8n / 自建工作流", "插件 action 新增 webhook：命中后 POST {text,user,group,nick,channel,plugin} 到配置的 webhookUrl（可带 Bearer webhookToken），响应自动兼容 {answer}/{reply}/{content}/{text}/data.answer/纯文本，超时 8s 连接 30s 读；失败返回明确提示不吞消息。实测外部 mock 工作流返回『你好，这是外部工作流的回复』链路通。这样不用改代码就能把第三方 Agent（Dify/Coze/百炼应用/n8n）挂到 QQ/微信群里当插件用。"),
 Triple("v1.243", "插件市场扩到 12 个开箱插件 + 随机回复池 + 随机数变量 + 后台强制不走缓存", "①新增 8 个零依赖插件：今日运势、抽签、摇骰子（{random:1-6}）、早安问候、晚安问候、群规、冷笑话、功能菜单，市场从 4 个变 12 个。②插件 manifest 支持 replies 随机回复池，同一句触发每次不同答案，不再死板。③变量模板新增 {random:a-b} 随机整数，骰子/抽奖类插件不用写代码。④后台 / /admin /login /app 全部加 Cache-Control: no-store，改版后浏览器不会再拿旧 JS（这次『线上没更新』的体感根因之一）。"),
 Triple("v1.242", "服务商官方预设扩到 22 家（Gemini/Groq/Mistral/Together/Fireworks/DeepInfra/星火/阶跃/百川/零一万物）", "在原有 12 家基础上补齐主流官方 OpenAI 兼容入口：Google Gemini（v1beta/openai）、Groq、Mistral AI、Together AI、Fireworks AI、DeepInfra、讯飞星火、阶跃星辰、百川智能、零一万物；选中即自动填名称/BaseURL/ChatPath，配合「测连通」一键验 Key。各家路径不一致的（如智谱 /api/paas/v4、百炼 compatible-mode/v1、火山 /api/v3、Gemini /v1beta/openai）已按官方文档填好。"),
