@@ -52,7 +52,8 @@ object ChannelScheduler {
             // 同一分钟内只触发一次
             if ((sch["lastRun"] as? Long ?: 0L) / 60_000 == minKey) { nextAt[id] = expr.next(now) ?: continue; continue }
             val ch = db.getChannelById(sch["channelId"] as Long) ?: run { nextAt[id] = expr.next(now) ?: Long.MAX_VALUE; continue }
-            val text = render((sch["content"] as? String).orEmpty(), ch, sch)
+            val aiPrompt = (sch["aiPrompt"] as? String).orEmpty().trim()
+            val text = if (aiPrompt.isNotBlank()) ChannelManager.generate(db, aiPrompt) else render((sch["content"] as? String).orEmpty(), ch, sch)
             if (text.isBlank()) { nextAt[id] = expr.next(now) ?: Long.MAX_VALUE; continue }
             val (ok, detail) = ChannelManager.send(ch, text)
             db.addChannelLog(ch["id"] as Long, "sched", text, ok, detail)

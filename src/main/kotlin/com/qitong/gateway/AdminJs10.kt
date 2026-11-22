@@ -1012,7 +1012,7 @@ window.chSchedules = function(chId, chName){
   var rows = list.length ? list.map(function(s){
    var next = s.nextRun ? new Date(Number(s.nextRun)).toLocaleString() : '—';
    return '<tr><td><b>'+esc(s.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(s.cron)+'</div></td>' +
-    '<td style="max-width:260px;white-space:pre-wrap;font-size:12px">'+esc(s.content)+'</td>' +
+    '<td style="max-width:260px;white-space:pre-wrap;font-size:12px">'+(s.aiPrompt?'<span class="badge purple">AI 生成</span> '+esc(s.aiPrompt):esc(s.content))+'</td>' +
     '<td style="font-size:11px">'+(s.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'<div style="color:var(--muted);margin-top:4px">下次：'+esc(next)+'</div></td>' +
     '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="chSchedRun('+s.id+','+chId+')">立即推</button> ' +
     '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="chSchedDel('+s.id+','+chId+')">删</button></td></tr>';
@@ -1022,14 +1022,16 @@ window.chSchedules = function(chId, chName){
    '<div style="border-top:1px solid var(--line);margin:14px 0 10px"></div>' +
    '<div class="form-row"><label>计划名称</label><input id="schName" class="input" placeholder="如：每日早报"></div>' +
    '<div class="form-row"><label>cron（分 时 日 月 周）</label><input id="schCron" class="input" placeholder="0 8 * * *" value="0 8 * * *"></div>' +
-   '<div class="form-row"><label>推送内容</label><textarea id="schContent" class="input" rows="4" placeholder="早上好！今天是 {date}，记得看看今天的待办～"></textarea></div>' +
+   '<div class="form-row"><label>推送内容（固定文案）</label><textarea id="schContent" class="input" rows="4" placeholder="早上好！今天是 {date}，记得看看今天的待办～"></textarea></div>' +
+   '<div class="form-row"><label>或让 AI 生成内容（填提示词，优先生效）</label><textarea id="schAiPrompt" class="input" rows="3" placeholder="写一段今天的早安问候，带一句天气提醒和一句激励，80 字以内"></textarea></div>' +
    '<div style="font-size:11px;color:var(--muted)">示例：0 8 * * *（每天 8:00）、0 22 * * 0（每周日 22:00）、30 9 1 * *（每月 1 号 9:30）。可用变量 {date} {time} {channel} {name}。</div>',
    function(){
     var nm=$('schName').value.trim() || '定时推送';
     var cron=$('schCron').value.trim();
     var content=$('schContent').value;
-    if(!cron || !content.trim()){ toast('cron 和推送内容都要填', false); return; }
-    api('/api/channels/'+chId+'/schedules',{method:'POST',body:{name:nm,cron:cron,content:content,enabled:true}}).then(function(rr){
+    var aiPrompt=($('schAiPrompt')?$('schAiPrompt').value:'').trim();
+    if(!cron || (!content.trim() && !aiPrompt)){ toast('cron 要有，内容或 AI 提示词至少填一个', false); return; }
+    api('/api/channels/'+chId+'/schedules',{method:'POST',body:{name:nm,cron:cron,content:content,aiPrompt:aiPrompt,enabled:true}}).then(function(rr){
      toast(rr.msg||'', rr.code===0);
      if(rr.code===0) chSchedules(chId, chName);
     });

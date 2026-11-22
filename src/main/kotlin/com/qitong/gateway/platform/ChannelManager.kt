@@ -77,6 +77,30 @@ object ChannelManager {
         }
     }
 
+    /** ★ v1.252 定时推送用：按提示词让 AI 现生成内容（不经过插件，避免定时任务被指令命中） */
+    fun generate(db: Database, prompt: String): String {
+        if (prompt.isBlank()) return ""
+        val model = db.getConfig("channel_ai_model", "").ifBlank {
+            runCatching { db.getModels().firstOrNull { it.isEnabled && it.modelId.isNotBlank() }?.modelId }.getOrNull() ?: ""
+        }
+        if (model.isBlank()) return "（未配置可用模型，无法生成定时内容）"
+        val base = "http://127.0.0.1:" + (System.getenv("GATEWAY_PORT")?.takeIf { it.isNotBlank() } ?: "18889")
+        return try {
+            val body = JSONObject().put("model", model).put("stream", false).put("max_tokens", 800)
+                .put("messages", org.json.JSONArray()
+                    .put(JSONObject().put("role", "system").put("content", "你是綦桐AI网关的定时播报助手，输出可直接发到群里的成品文案，简洁自然，不要解释过程。"))
+                    .put(JSONObject().put("role", "user").put("content", prompt)))
+            val req = Request.Builder().url("$base/v1/chat/completions")
+                .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+            client.newCall(req).execute().use { r ->
+                if (!r.isSuccessful) return ""
+                JSONObject(r.body?.string().orEmpty()).optJSONArray("choices")
+                    ?.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
+            }
+        } catch (e: Exception) { "" }
+    }
+
     /** 从各家入站回调里尽量抽出文本 */
     fun extractText(raw: String, type: String): String {
         val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return ""

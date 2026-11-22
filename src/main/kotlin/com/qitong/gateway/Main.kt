@@ -240,7 +240,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.251"))
+                put("version", JsonPrimitive("1.252"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1534,13 +1534,14 @@ fun Application.moduleWeb(database: Database) {
             val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty().ifBlank { "定时推送" }
             val cron = body["cron"]?.jsonPrimitive?.content?.trim().orEmpty()
             val content = body["content"]?.jsonPrimitive?.content ?: ""
+            val aiPrompt = body["aiPrompt"]?.jsonPrimitive?.content?.trim().orEmpty()
             if (cron.isBlank() || com.qitong.gateway.sandbox.CronExpression.parse(cron) == null) {
                 AdminApi.fail(call, "cron 格式不对，示例：0 8 * * *（每天 8:00）", 400); return@post
             }
-            if (content.isBlank()) { AdminApi.fail(call, "推送内容不能为空", 400); return@post }
+            if (content.isBlank() && aiPrompt.isBlank()) { AdminApi.fail(call, "推送内容或 AI 提示词至少要填一个", 400); return@post }
             val enabled = body["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
                 ?: body["enabled"]?.jsonPrimitive?.booleanOrNull ?: true
-            val newId = database.saveChannelSchedule(id, channelId, name, cron, content, enabled)
+            val newId = database.saveChannelSchedule(id, channelId, name, cron, content, aiPrompt, enabled)
             database.addOpLog(u.id, u.username, "消息渠道", "保存定时推送 $name（$cron）", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("id" to newId), "定时推送已保存")
         }
@@ -1559,7 +1560,9 @@ fun Application.moduleWeb(database: Database) {
                 ?: run { AdminApi.fail(call, "计划不存在", 404); return@post }
             val ch = database.getChannelById(sch["channelId"] as Long)
                 ?: run { AdminApi.fail(call, "渠道不存在", 404); return@post }
-            val text = com.qitong.gateway.platform.ChannelScheduler.render((sch["content"] as? String).orEmpty(), ch, sch)
+            val aiPrompt = (sch["aiPrompt"] as? String).orEmpty().trim()
+            val text = if (aiPrompt.isNotBlank()) com.qitong.gateway.platform.ChannelManager.generate(database, aiPrompt)
+                else com.qitong.gateway.platform.ChannelScheduler.render((sch["content"] as? String).orEmpty(), ch, sch)
             val (ok, detail) = com.qitong.gateway.platform.ChannelManager.send(ch, text)
             database.addChannelLog(ch["id"] as Long, "sched", text, ok, detail)
             if (ok) database.markChannelScheduleRun(id, System.currentTimeMillis())
@@ -3347,7 +3350,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.251"))
+                put("version", JsonPrimitive("1.252"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -4191,7 +4194,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.251"))
+                    put("version", JsonPrimitive("1.252"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

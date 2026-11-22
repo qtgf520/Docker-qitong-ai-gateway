@@ -1940,7 +1940,8 @@ fun updateUserLogin(id: Long) {
     fun deleteChannel(id: Long) { ensureChannelTable(); stmt("DELETE FROM channels WHERE id=?", id) }
 
     fun ensureChannelScheduleTable() {
-        runCatching { stmt("CREATE TABLE IF NOT EXISTS channel_schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER NOT NULL, name TEXT NOT NULL, cron TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)") }
+        runCatching { stmt("CREATE TABLE IF NOT EXISTS channel_schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER NOT NULL, name TEXT NOT NULL, cron TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', ai_prompt TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)") }
+        runCatching { stmt("ALTER TABLE channel_schedules ADD COLUMN ai_prompt TEXT NOT NULL DEFAULT ''") }
     }
 
     fun getChannelSchedules(channelId: Long = 0L): List<Map<String, Any?>> = runCatching {
@@ -1954,19 +1955,20 @@ fun updateUserLogin(id: Long) {
                 "name" to (r["name"] as? String ?: ""),
                 "cron" to (r["cron"] as? String ?: ""),
                 "content" to (r["content"] as? String ?: ""),
+                "aiPrompt" to (r["ai_prompt"] as? String ?: ""),
                 "enabled" to ((r["enabled"] as? Number)?.toInt() == 1),
                 "lastRun" to ((r["last_run"] as? Number)?.toLong() ?: 0L)
             )
         }
     }.getOrDefault(emptyList())
 
-    fun saveChannelSchedule(id: Long, channelId: Long, name: String, cron: String, content: String, enabled: Boolean): Long {
+    fun saveChannelSchedule(id: Long, channelId: Long, name: String, cron: String, content: String, aiPrompt: String, enabled: Boolean): Long {
         ensureChannelScheduleTable()
         return if (id > 0) {
-            stmt("UPDATE channel_schedules SET channel_id=?, name=?, cron=?, content=?, enabled=? WHERE id=?", channelId, name, cron, content, if (enabled) 1 else 0, id)
+            stmt("UPDATE channel_schedules SET channel_id=?, name=?, cron=?, content=?, ai_prompt=?, enabled=? WHERE id=?", channelId, name, cron, content, aiPrompt, if (enabled) 1 else 0, id)
             id
         } else {
-            stmt("INSERT INTO channel_schedules (channel_id,name,cron,content,enabled,last_run,created_at) VALUES (?,?,?,?,?,?,?)", channelId, name, cron, content, if (enabled) 1 else 0, 0L, System.currentTimeMillis())
+            stmt("INSERT INTO channel_schedules (channel_id,name,cron,content,ai_prompt,enabled,last_run,created_at) VALUES (?,?,?,?,?,?,?,?)", channelId, name, cron, content, aiPrompt, if (enabled) 1 else 0, 0L, System.currentTimeMillis())
             lastInsertId()
         }
     }
@@ -2718,6 +2720,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.252", "AI 定时播报：定时任务可让模型现写内容再推送", "①渠道定时推送支持「AI 生成内容」：只填提示词（如写一段今天的早安问候+天气提醒），到点先调模型生成成品文案再推到群里，固定文案与 AI 生成二选一，AI 优先生效。②AI 生成走网关自身模型路由（可在渠道页设置 channel_ai_model，不设就用第一个启用模型），max_tokens 800，提示词要求直接输出可发群的成品文案、不解释过程。③生成失败时不会发空消息，日志里记录失败原因；手动「立即推」同样支持 AI 生成，方便先看效果再定时。④后台计划列表用「AI 生成」徽章区分，一眼看出哪条是模型现写、哪条是固定文案。"),
 Triple("v1.251", "渠道收发日志 + 多群一键群发", "①每条消息渠道自动记录收发日志：入站原文、AI/插件回复、定时推送、手动推送、测试消息全部留痕，含成功/失败与平台回执，单渠道最多保留 2000 条自动滚动清理。②后台「日志」弹窗按时间倒序查看收/发/定时三类记录，失败原因直接显示，不用再靠猜。③「📢 群发」支持勾选多个渠道一次发送同一条消息，不勾即全部渠道；返回逐渠道成功/失败明细与汇总。④群发与单发都写日志，定时器推送同样入账，排障时能直接定位是哪一步断的。"),
 Triple("v1.250", "插件工具化：插件可被 AI 当工具直接调用", "①插件 manifest 新增 tool / toolName / toolDesc / toolParams：开启后插件自动出现在模型能力清单里，模型按「[[沙盒:工具名(参数=值)]]」直接调用，不再只靠关键词碰运气。②工具清单每次请求动态拼（内置能力 + 已启用插件工具），插件热重载后立即生效，不用重启。③插件工具复用原有 action：reply 直接返回渲染后的文本（支持 {user}/{args} 变量），webhook 走外部工作流并把回复带回给模型，cooldown 照常生效。④新增 GET /api/plugins/tools（OpenAI 风格工具 schema）与 POST /api/plugins/invoke（管理员调试/外部 Agent 直接调用），第三方平台也能把网关插件当工具用。"),
 Triple("v1.249", "知识库语义检索可视化配置：指定模型 + 一键重建向量", "①知识库详情新增语义检索状态条：直接显示当前用的是哪个 embedding 模型、是手动指定还是自动识别；没找到模型时明确提示仍走关键词检索。②「⚙️ 语义检索」弹窗可手动指定 embedding 模型（列出全部已启用模型，含自动识别选项），保存即写入 kb_embedding_model，无需重启。③「重建向量」一键按当前模型重算整个知识库的向量缓存，切换模型后不会出现旧缓存混用。④重建走批量 16 条 /embeddings，失败时回显「服务商不支持或返回为空」，不会默默清空向量。"),
