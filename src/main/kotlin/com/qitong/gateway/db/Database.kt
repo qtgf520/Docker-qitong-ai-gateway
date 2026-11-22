@@ -2581,6 +2581,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.244", "插件 webhook 动作：一句话把消息转发给 Dify / Coze / n8n / 自建工作流", "插件 action 新增 webhook：命中后 POST {text,user,group,nick,channel,plugin} 到配置的 webhookUrl（可带 Bearer webhookToken），响应自动兼容 {answer}/{reply}/{content}/{text}/data.answer/纯文本，超时 8s 连接 30s 读；失败返回明确提示不吞消息。实测外部 mock 工作流返回『你好，这是外部工作流的回复』链路通。这样不用改代码就能把第三方 Agent（Dify/Coze/百炼应用/n8n）挂到 QQ/微信群里当插件用。"),
 Triple("v1.243", "插件市场扩到 12 个开箱插件 + 随机回复池 + 随机数变量 + 后台强制不走缓存", "①新增 8 个零依赖插件：今日运势、抽签、摇骰子（{random:1-6}）、早安问候、晚安问候、群规、冷笑话、功能菜单，市场从 4 个变 12 个。②插件 manifest 支持 replies 随机回复池，同一句触发每次不同答案，不再死板。③变量模板新增 {random:a-b} 随机整数，骰子/抽奖类插件不用写代码。④后台 / /admin /login /app 全部加 Cache-Control: no-store，改版后浏览器不会再拿旧 JS（这次『线上没更新』的体感根因之一）。"),
 Triple("v1.242", "服务商官方预设扩到 22 家（Gemini/Groq/Mistral/Together/Fireworks/DeepInfra/星火/阶跃/百川/零一万物）", "在原有 12 家基础上补齐主流官方 OpenAI 兼容入口：Google Gemini（v1beta/openai）、Groq、Mistral AI、Together AI、Fireworks AI、DeepInfra、讯飞星火、阶跃星辰、百川智能、零一万物；选中即自动填名称/BaseURL/ChatPath，配合「测连通」一键验 Key。各家路径不一致的（如智谱 /api/paas/v4、百炼 compatible-mode/v1、火山 /api/v3、Gemini /v1beta/openai）已按官方文档填好。"),
 Triple("v1.241", "服务商「测连通」一键探测（地址+Key 是否可用）", "服务商列表每行新增「测连通」：后端 POST /api/providers/{id}/probe 自动把 chatPath 推成 /models（兼容 /v1/chat/completions、/api/paas/v4/chat/completions 等各家路径），带 Bearer Key 请求，10 秒超时，返回 HTTP 码、可用模型数量、耗时；前端 toast 秒回成功/失败原因。不用真跑对话、不烧 token，加服务商后第一时间知道 Key 和地址对不对。"),

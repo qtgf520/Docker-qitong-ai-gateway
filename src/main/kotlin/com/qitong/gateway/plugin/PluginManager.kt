@@ -1,6 +1,7 @@
 package com.qitong.gateway.plugin
 
 import com.qitong.gateway.db.Database
+import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -33,6 +34,8 @@ object PluginManager {
         val triggers: List<String> = emptyList(),   // 触发关键词（命中即激活）
         val action: String = "reply",               // reply=固定回复 / ignore=忽略 / ai=走AI
         val content: String = "",                   // reply 的固定内容（支持 {user}/{nick}/{group}/{args}/{time}/{date}/{plugin}/{channel} 变量）
+        val webhookUrl: String = "",                // ★ v1.244 action=webhook 时转发的地址（Dify/Coze/n8n 等）
+        val webhookToken: String = "",              // ★ v1.244 可选 Bearer Token
         val replies: List<String> = emptyList(),    // ★ v1.243 随机回复池（非空时优先于 content，随机抽一条）
         val commands: List<String> = emptyList(),   // ★ v1.239 指令集（等值/带参数匹配，如 签到、/签到、查天气）
         val match: String = "contains",             // ★ v1.239 触发词匹配模式：contains / exact / prefix / regex
@@ -104,6 +107,8 @@ object PluginManager {
             triggers = o.optJSONArray("triggers")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } } ?: emptyList(),
             action = o.optString("action", "reply"),
             content = o.optString("content", ""),
+            webhookUrl = o.optString("webhookUrl", o.optJSONObject("webhook")?.optString("url", "") ?: ""),
+            webhookToken = o.optString("webhookToken", o.optJSONObject("webhook")?.optString("token", "") ?: ""),
             replies = o.optJSONArray("replies")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } } ?: emptyList(),
             commands = o.optJSONArray("commands")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } } ?: emptyList(),
             match = o.optString("match", "contains").lowercase(),
@@ -160,6 +165,7 @@ object PluginManager {
 
     fun onMessage(text: String, channel: String, userId: String = "", groupId: String = "", nick: String = ""): String? {
         if (text.isBlank()) return null
+        lastText = text; lastUser = userId; lastGroup = groupId; lastNick = nick; lastChannel = channel
         // ★ v1.239 按优先级排序（大者先），命中即返回
         val ordered = plugins.values.filter { it.enabled }.sortedByDescending { it.priority }
         for (p in ordered) {
@@ -254,6 +260,7 @@ object PluginManager {
                 "reply" -> p.replies.takeIf { it.isNotEmpty() }?.randomOrNull()
                     ?: p.content.ifBlank { "📦 ${p.name}：触发成功" }
                 "ignore" -> "\u0000IGNORE\u0000"   // 忽略标记：上层见到即不回复
+                "webhook" -> callWebhook(p)
                 else -> null
             }
         }
@@ -267,6 +274,50 @@ object PluginManager {
             throw e.cause ?: e   // 插件业务异常向上抛，由 onMessage 捕获跳过
         }
     }
+
+    /** ★ v1.244 webhook 执行：把消息 POST 给外部工作流（Dify/Coze/n8n/自建 API），返回其答复
+     *  请求体：{text,user,group,nick,channel,plugin}；响应兼容 {answer}/{reply}/{content}/{text}/纯文本
+     */
+    @Suppress("DEPRECATION")
+    private fun callWebhook(p: Plugin): String? {
+        if (p.webhookUrl.isBlank()) return "⚠️ 插件「${p.name}」未配置 webhookUrl"
+        val body = JSONObject()
+            .put("text", lastText)
+            .put("user", lastUser)
+            .put("group", lastGroup)
+            .put("nick", lastNick)
+            .put("channel", lastChannel)
+            .put("plugin", p.name)
+        val req = okhttp3.Request.Builder().url(p.webhookUrl)
+            .post(okhttp3.RequestBody.create("application/json".toMediaType(), body.toString()))
+            .addHeader("Accept", "application/json, text/plain")
+            .apply { if (p.webhookToken.isNotBlank()) addHeader("Authorization", "Bearer ${p.webhookToken}") }
+            .build()
+        val client = com.qitong.gateway.network.WebToolClient.http.newBuilder()
+            .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
+        return try {
+            client.newCall(req).execute().use { resp ->
+                val raw = resp.body?.string() ?: ""
+                if (raw.isBlank()) return if (resp.code in 200..299) null else "⚠️ 工作流返回空（HTTP ${resp.code}）"
+                runCatching {
+                    val o = JSONObject(raw)
+                    o.optString("answer").ifBlank { o.optString("reply") }
+                        .ifBlank { o.optString("content") }.ifBlank { o.optString("text") }
+                        .ifBlank { o.optJSONObject("data")?.optString("answer") ?: "" }
+                }.getOrNull()?.takeIf { it.isNotBlank() } ?: raw.take(1500)
+            }
+        } catch (e: Exception) {
+            "⚠️ 工作流调用失败：${e.message ?: e::class.simpleName}"
+        }
+    }
+
+    /** 当前消息上下文（webhook 用；单线程池内短生命周期，够用） */
+    @Volatile private var lastText = ""
+    @Volatile private var lastUser = ""
+    @Volatile private var lastGroup = ""
+    @Volatile private var lastNick = ""
+    @Volatile private var lastChannel = ""
 
     /** ★ v1.218 在线插件市场：从远程仓库拉取 JSON 索引并安装/更新插件
      *  - marketPull(url)          ：拉取索引（name/version/desc/entry），比对本地版本，返回可更新/可安装列表
