@@ -1,0 +1,22 @@
+{
+  "author": "綦桐AI网关",
+  "action": "reply",
+  "name": "早安问候",
+  "version": "1.0.0",
+  "desc": "一句话触发，{nick} 变量已适配",
+  "commands": [
+    "早安",
+    "早上好"
+  ],
+  "triggers": [
+    "早安",
+    "早上好"
+  ],
+  "match": "exact",
+  "cooldown": 300,
+  "priority": 55,
+  "replies": [
+    "🌤 早安 {nick}，今天也要好好吃饭。",
+    "🌤 早，{date} 的第一杯水先喝上。"
+  ]
+}

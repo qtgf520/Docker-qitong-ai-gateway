@@ -236,7 +236,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.242"))
+                put("version", JsonPrimitive("1.243"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -491,15 +491,17 @@ fun Application.moduleWeb(database: Database) {
         staticResources("/assets", "static/assets")
 
         get("/") {
+            call.response.headers.append("Cache-Control", "no-store, no-cache, must-revalidate")
+            call.response.headers.append("Pragma", "no-cache")
             // ★ v1.166 官网首页：未登录显示官网；已登录直接进控制台
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
             val logged = !token.isNullOrBlank() && AuthManager.getUserByToken(database, token) != null
             if (logged) call.respondText(WebUi.adminHtml(), ContentType.Text.Html.withCharset(Charsets.UTF_8))
             else call.respondText(WebUi.landingHtml(), ContentType.Text.Html.withCharset(Charsets.UTF_8))
         }
-        get("/login") { call.respondText(WebUi.loginHtml(), ContentType.Text.Html.withCharset(Charsets.UTF_8)) }
-        get("/admin") { call.respondText(WebUi.adminHtml(), ContentType.Text.Html.withCharset(Charsets.UTF_8)) }
-        get("/app") { call.respondText(WebUi.adminHtml(), ContentType.Text.Html.withCharset(Charsets.UTF_8)) }
+        get("/login") { call.response.headers.append("Cache-Control", "no-store"); call.respondText(WebUi.loginHtml(), ContentType.Text.Html.withCharset(Charsets.UTF_8)) }
+        get("/admin") { call.response.headers.append("Cache-Control", "no-store"); call.respondText(WebUi.adminHtml(), ContentType.Text.Html.withCharset(Charsets.UTF_8)) }
+        get("/app") { call.response.headers.append("Cache-Control", "no-store"); call.respondText(WebUi.adminHtml(), ContentType.Text.Html.withCharset(Charsets.UTF_8)) }
 
         // 认证
         post("/api/auth/register") {
@@ -3097,7 +3099,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.242"))
+                put("version", JsonPrimitive("1.243"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3941,7 +3943,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.242"))
+                    put("version", JsonPrimitive("1.243"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

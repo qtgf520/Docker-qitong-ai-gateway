@@ -1,0 +1,21 @@
+{
+  "author": "綦桐AI网关",
+  "action": "reply",
+  "name": "摇骰子",
+  "version": "1.0.0",
+  "desc": "一句话触发，{nick} 变量已适配",
+  "commands": [
+    "摇骰子",
+    "掷骰子",
+    "骰子"
+  ],
+  "triggers": [
+    "摇骰子",
+    "掷骰子",
+    "骰子"
+  ],
+  "match": "exact",
+  "cooldown": 0,
+  "priority": 55,
+  "content": "🎲 {nick} 掷出 {random:1-6} 点！"
+}

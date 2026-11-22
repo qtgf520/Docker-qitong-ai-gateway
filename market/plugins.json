@@ -3,11 +3,67 @@
   "updated": "2026-11-23",
   "plugins": [
     {
+      "name": "今日运势",
+      "version": "1.0.0",
+      "desc": "一句话触发，{nick} 变量已适配",
+      "author": "綦桐AI网关",
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/fortune.zip"
+    },
+    {
+      "name": "抽签",
+      "version": "1.0.0",
+      "desc": "一句话触发，{nick} 变量已适配",
+      "author": "綦桐AI网关",
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/lots.zip"
+    },
+    {
+      "name": "摇骰子",
+      "version": "1.0.0",
+      "desc": "一句话触发，{nick} 变量已适配",
+      "author": "綦桐AI网关",
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/dice.zip"
+    },
+    {
+      "name": "早安问候",
+      "version": "1.0.0",
+      "desc": "一句话触发，{nick} 变量已适配",
+      "author": "綦桐AI网关",
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/morning.zip"
+    },
+    {
+      "name": "晚安问候",
+      "version": "1.0.0",
+      "desc": "一句话触发，{nick} 变量已适配",
+      "author": "綦桐AI网关",
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/night.zip"
+    },
+    {
+      "name": "群规",
+      "version": "1.0.0",
+      "desc": "一句话触发，{nick} 变量已适配",
+      "author": "綦桐AI网关",
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/rules.zip"
+    },
+    {
+      "name": "冷笑话",
+      "version": "1.0.0",
+      "desc": "一句话触发，{nick} 变量已适配",
+      "author": "綦桐AI网关",
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/joke.zip"
+    },
+    {
+      "name": "功能菜单",
+      "version": "1.0.0",
+      "desc": "一句话触发，{nick} 变量已适配",
+      "author": "綦桐AI网关",
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/help.zip"
+    },
+    {
       "name": "签到助手",
       "version": "1.0.2",
       "desc": "发「签到/打卡」自动回复，带昵称与时间，内置冷却",
       "author": "綦桐AI网关",
-      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/qd.zip"
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/sign.zip"
     },
     {
       "name": "摸鱼提醒",
@@ -26,7 +82,7 @@
     {
       "name": "时间助手",
       "version": "1.0.0",
-      "desc": "问「时间/现在几点」报时分与日期",
+      "desc": "问「时间/现在几点」直接报时分与日期",
       "author": "綦桐AI网关",
       "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/clock.zip"
     }

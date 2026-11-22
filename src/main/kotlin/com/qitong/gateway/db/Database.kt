@@ -2581,6 +2581,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.243", "插件市场扩到 12 个开箱插件 + 随机回复池 + 随机数变量 + 后台强制不走缓存", "①新增 8 个零依赖插件：今日运势、抽签、摇骰子（{random:1-6}）、早安问候、晚安问候、群规、冷笑话、功能菜单，市场从 4 个变 12 个。②插件 manifest 支持 replies 随机回复池，同一句触发每次不同答案，不再死板。③变量模板新增 {random:a-b} 随机整数，骰子/抽奖类插件不用写代码。④后台 / /admin /login /app 全部加 Cache-Control: no-store，改版后浏览器不会再拿旧 JS（这次『线上没更新』的体感根因之一）。"),
 Triple("v1.242", "服务商官方预设扩到 22 家（Gemini/Groq/Mistral/Together/Fireworks/DeepInfra/星火/阶跃/百川/零一万物）", "在原有 12 家基础上补齐主流官方 OpenAI 兼容入口：Google Gemini（v1beta/openai）、Groq、Mistral AI、Together AI、Fireworks AI、DeepInfra、讯飞星火、阶跃星辰、百川智能、零一万物；选中即自动填名称/BaseURL/ChatPath，配合「测连通」一键验 Key。各家路径不一致的（如智谱 /api/paas/v4、百炼 compatible-mode/v1、火山 /api/v3、Gemini /v1beta/openai）已按官方文档填好。"),
 Triple("v1.241", "服务商「测连通」一键探测（地址+Key 是否可用）", "服务商列表每行新增「测连通」：后端 POST /api/providers/{id}/probe 自动把 chatPath 推成 /models（兼容 /v1/chat/completions、/api/paas/v4/chat/completions 等各家路径），带 Bearer Key 请求，10 秒超时，返回 HTTP 码、可用模型数量、耗时；前端 toast 秒回成功/失败原因。不用真跑对话、不烧 token，加服务商后第一时间知道 Key 和地址对不对。"),
 Triple("v1.240", "插件市场卡片化 + 一键安装/更新 + 插件试触发调试", "①市场不再弹 prompt 粘地址——后台直接卡片列表：名称/版本/本地版本/描述/可安装·可更新·已最新三态徽章，顶部搜索过滤。②一键安装/更新全部——统计可安装+可更新数量，逐个安装并自动刷新。③插件试触发——「🧪 试触发」输入任意一句话，返回命中哪个插件、回复什么（变量已渲染），不真的发群，调参不怕打扰人。④新增结构化接口 GET /api/plugins/market/list（默认 jsdelivr 镜像源），市场数据不再靠解析中文文本行。⑤市场源统一 jsdelivr（raw.githubusercontent 有 CDN 缓存，更新后几分钟仍读旧索引，实测踩坑）。"),

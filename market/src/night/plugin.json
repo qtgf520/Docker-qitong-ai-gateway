@@ -1,0 +1,22 @@
+{
+  "author": "綦桐AI网关",
+  "action": "reply",
+  "name": "晚安问候",
+  "version": "1.0.0",
+  "desc": "一句话触发，{nick} 变量已适配",
+  "commands": [
+    "晚安",
+    "睡了"
+  ],
+  "triggers": [
+    "晚安",
+    "睡了"
+  ],
+  "match": "exact",
+  "cooldown": 300,
+  "priority": 55,
+  "replies": [
+    "🌙 晚安 {nick}，手机放下，明天见。",
+    "🌙 早点睡，剩下的事明天再说。"
+  ]
+}

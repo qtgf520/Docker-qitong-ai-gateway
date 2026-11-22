@@ -33,6 +33,7 @@ object PluginManager {
         val triggers: List<String> = emptyList(),   // 触发关键词（命中即激活）
         val action: String = "reply",               // reply=固定回复 / ignore=忽略 / ai=走AI
         val content: String = "",                   // reply 的固定内容（支持 {user}/{nick}/{group}/{args}/{time}/{date}/{plugin}/{channel} 变量）
+        val replies: List<String> = emptyList(),    // ★ v1.243 随机回复池（非空时优先于 content，随机抽一条）
         val commands: List<String> = emptyList(),   // ★ v1.239 指令集（等值/带参数匹配，如 签到、/签到、查天气）
         val match: String = "contains",             // ★ v1.239 触发词匹配模式：contains / exact / prefix / regex
         val cooldown: Int = 0,                      // ★ v1.239 单用户冷却秒数（0=不限制）
@@ -103,6 +104,7 @@ object PluginManager {
             triggers = o.optJSONArray("triggers")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } } ?: emptyList(),
             action = o.optString("action", "reply"),
             content = o.optString("content", ""),
+            replies = o.optJSONArray("replies")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } } ?: emptyList(),
             commands = o.optJSONArray("commands")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } } ?: emptyList(),
             match = o.optString("match", "contains").lowercase(),
             cooldown = o.optInt("cooldown", 0),
@@ -237,6 +239,11 @@ object PluginManager {
             .replace("{date}", now.format(dft))
             .replace("{plugin}", p.name)
             .replace("{channel}", channel)
+            .replace(Regex("\\{random:(\\d+)-(\\d+)\\}")) { m ->
+                val a = m.groupValues[1].toIntOrNull() ?: 1
+                val b = m.groupValues[2].toIntOrNull() ?: 100
+                (if (a <= b) (a..b).random() else a).toString()
+            }
     }
 
     /** ★ v1.218 单插件动作执行：独立线程 + 可中断真取消（daemon 线程池） + 超时上限 */
@@ -244,7 +251,8 @@ object PluginManager {
         if (p.action == "ai") return null   // 放行走 AI，不拦截
         val fut = pluginExecutor.submit<String?> {
             when (p.action) {
-                "reply" -> p.content.ifBlank { "📦 ${p.name}：触发成功" }
+                "reply" -> p.replies.takeIf { it.isNotEmpty() }?.randomOrNull()
+                    ?: p.content.ifBlank { "📦 ${p.name}：触发成功" }
                 "ignore" -> "\u0000IGNORE\u0000"   // 忽略标记：上层见到即不回复
                 else -> null
             }

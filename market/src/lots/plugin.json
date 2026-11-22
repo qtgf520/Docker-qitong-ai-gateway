@@ -1,0 +1,22 @@
+{
+  "author": "綦桐AI网关",
+  "action": "reply",
+  "name": "抽签",
+  "version": "1.0.0",
+  "desc": "一句话触发，{nick} 变量已适配",
+  "commands": [
+    "抽签"
+  ],
+  "triggers": [
+    "抽签"
+  ],
+  "match": "exact",
+  "cooldown": 600,
+  "priority": 55,
+  "replies": [
+    "🎋 上上签：心想事成，今日有贵人。",
+    "🎋 上签：稳中求进，事缓则圆。",
+    "🎋 中签：宜守不宜攻。",
+    "🎋 下签：宜静养，少决策。"
+  ]
+}

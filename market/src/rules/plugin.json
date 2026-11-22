@@ -1,0 +1,17 @@
+{
+  "author": "綦桐AI网关",
+  "action": "reply",
+  "name": "群规",
+  "version": "1.0.0",
+  "desc": "一句话触发，{nick} 变量已适配",
+  "commands": [
+    "群规"
+  ],
+  "triggers": [
+    "群规"
+  ],
+  "match": "exact",
+  "cooldown": 5,
+  "priority": 55,
+  "content": "📌 群规：1) 不刷屏 2) 不发广告 3) 有事说事、有图带图 4) 尊重每个人；违规会被请喝茶。"
+}
