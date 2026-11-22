@@ -233,8 +233,45 @@ object PluginManager {
         return head + sb.toString().trim() + tail
     }
 
+    /** ★ v1.236 从 GitHub 仓库 / zip 直链一键安装（对齐 AstrBot 插件 URL 安装） */
+    fun installFromUrl(rawUrl: String): String {
+        val u = normalizePluginUrl(rawUrl)
+        if (u.isBlank()) return "⚠️ 请提供 GitHub 仓库地址（如 https://github.com/用户/仓库）或 zip 直链"
+        val name = guessPluginName(u)
+        var ok = downloadAndInstall(name, u)
+        // GitHub 仓库默认分支可能是 master：main 失败再试 master
+        if (!ok && isGithubRepo(u)) {
+            val alt = u.replace("/refs/heads/main.zip", "/refs/heads/master.zip")
+            if (alt != u) ok = downloadAndInstall(name, alt)
+        }
+        return if (ok) {
+            scanAll()
+            "✅ 已安装插件「$name」，已热加载生效（触发词见插件配置）"
+        } else "❌ 安装失败：$u（要求 zip 内含 plugin.json，且网络可达）"
+    }
+
+    private fun isGithubRepo(u: String): Boolean = u.contains("github.com/")
+
+    private fun normalizePluginUrl(raw: String): String {
+        val u = raw.trim()
+        if (u.isBlank()) return ""
+        if (u.endsWith(".zip")) return u
+        val gh = Regex("""https?://github\.com/([^/]+)/([^/]+)/?$""").find(u)
+        if (gh != null) return "https://github.com/${gh.groupValues[1]}/${gh.groupValues[2]}/archive/refs/heads/main.zip"
+        return u
+    }
+
+    private fun guessPluginName(url: String): String {
+        Regex("""github\.com/([^/]+)/([^/]+)""").find(url)?.let {
+            return sanitizeName(it.groupValues[2].removeSuffix(".git").substringBefore("/"))
+        }
+        return sanitizeName(url.substringAfterLast('/').substringBefore('?').removeSuffix(".zip"))
+    }
+
     /** 从 entry URL 下载 zip 并落地到插件目录（zip 内含 plugin.json；落地后自动装载） */
-    private fun installFromEntry(pluginName: String, entry: String): Boolean {
+    private fun installFromEntry(pluginName: String, entry: String): Boolean = downloadAndInstall(pluginName, entry)
+
+    private fun downloadAndInstall(pluginName: String, entry: String): Boolean {
         return try {
             val dir = File(pluginRoot)
             if (!dir.exists()) dir.mkdirs()
@@ -263,8 +300,16 @@ object PluginManager {
                 }
             }
             zipFile.delete()
-            // manifest 校验 + 重新扫描
-            val mf = File(target, "plugin.json")
+            // ★ v1.236 GitHub archive 会多一层 仓库名-分支/ 目录：单层则拍平
+            var mf = File(target, "plugin.json")
+            if (!mf.exists()) {
+                val subs = target.listFiles()?.filter { it.isDirectory } ?: emptyList()
+                if (subs.size == 1 && File(subs[0], "plugin.json").exists()) {
+                    subs[0].listFiles()?.forEach { f -> runCatching { f.renameTo(File(target, f.name)) } }
+                    runCatching { subs[0].deleteRecursively() }
+                    mf = File(target, "plugin.json")
+                }
+            }
             if (!mf.exists()) { target.deleteRecursively(); return false }
             scanAll()
             true

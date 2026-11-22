@@ -711,12 +711,31 @@ loaders.providers = function(){
   ].join('');
  });
 };
+window.PV_PRESETS = {
+ deepseek:{n:'DeepSeek 官方',u:'https://api.deepseek.com',p:'/v1/chat/completions'},
+ zhipu:{n:'智谱 BigModel',u:'https://open.bigmodel.cn/api/paas/v4',p:'/chat/completions'},
+ moonshot:{n:'月之暗面 Kimi',u:'https://api.moonshot.cn',p:'/v1/chat/completions'},
+ dashscope:{n:'阿里百炼',u:'https://dashscope.aliyuncs.com/compatible-mode/v1',p:'/chat/completions'},
+ siliconflow:{n:'硅基流动',u:'https://api.siliconflow.cn',p:'/v1/chat/completions'},
+ volc:{n:'火山方舟（豆包）',u:'https://ark.cn-beijing.volces.com/api/v3',p:'/chat/completions'},
+ minimax:{n:'MiniMax',u:'https://api.minimax.chat',p:'/v1/chat/completions'},
+ qianfan:{n:'百度千帆',u:'https://qianfan.baidubce.com/v2',p:'/chat/completions'},
+ hunyuan:{n:'腾讯混元',u:'https://api.hunyuan.cloud.tencent.com',p:'/v1/chat/completions'},
+ openrouter:{n:'OpenRouter',u:'https://openrouter.ai/api/v1',p:'/chat/completions'},
+ openai:{n:'OpenAI 官方',u:'https://api.openai.com',p:'/v1/chat/completions'},
+ ollama:{n:'本地 Ollama',u:'http://127.0.0.1:11434',p:'/v1/chat/completions'}
+};
+window.pvApplyPreset = function(k){
+ var x = window.PV_PRESETS[k]; if(!x) return;
+ $('pvName').value = x.n; $('pvUrl').value = x.u; $('pvPath').value = x.p;
+};
 window.editProvider = function(id){
  var p = state.providers.find(function(x){ return x.id===id; }) || {};
  var canEditKey = !p.apiKey || p.apiKey.indexOf('****') < 0;
  // ★ v1.173 key 一律脱敏：编辑框不再回显完整 key，留空=保持不变；需要完整 key 先点列表「🔑 提取」
  var keyVal = '';
  var html = [
+  '<div class="form-row"><label>官方预设（一键填）</label><select id="pvPreset" class="input" onchange="pvApplyPreset(this.value)"><option value="">自定义 / 不预填</option><option value="deepseek">DeepSeek 官方</option><option value="zhipu">智谱 BigModel</option><option value="moonshot">月之暗面 Kimi</option><option value="dashscope">阿里百炼</option><option value="siliconflow">硅基流动</option><option value="volc">火山方舟（豆包）</option><option value="minimax">MiniMax</option><option value="qianfan">百度千帆</option><option value="hunyuan">腾讯混元</option><option value="openrouter">OpenRouter</option><option value="openai">OpenAI 官方</option><option value="ollama">本地 Ollama</option></select></div>',
   '<div class="form-row"><label>名称 *</label><input id="pvName" class="input" value="'+esc(p.name||'')+'"></div>',
   '<div class="form-row"><label>类型</label><select id="pvType" class="input"><option value="OpenAI Compatible"'+(p.type==='OpenAI Compatible'?' selected':'')+'>OpenAI Compatible</option><option value="Ollama"'+(p.type==='Ollama'?' selected':'')+'>Ollama</option><option value="Custom"'+(p.type==='Custom'?' selected':'')+'>Custom</option></select></div>',
   '<div class="form-row"><label>Base URL *</label><input id="pvUrl" class="input" value="'+esc(p.baseUrl||'')+'" placeholder="https://api.openai.com"></div>',

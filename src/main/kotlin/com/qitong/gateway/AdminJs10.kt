@@ -826,12 +826,21 @@ loaders.plugins = function(){
  api('/api/plugins').then(function(r){
   if(r.code!==0){ box.innerHTML='<div class="card"><h3>📦 插件管理</h3><div style="color:var(--red);padding:10px">加载失败</div></div>'; return; }
   var list=(r.data&&r.data.plugins)||[];
-  var html='<div class="action-bar"><button class="btn-ghost" onclick="reloadPlugins()">🔄 热重载</button> <button class="btn-ghost" onclick="openPluginMarket()">🏪 插件市场</button><span style="font-size:12px;color:var(--muted)">把插件目录放进服务器 /app/plugins/ 后点热重载即可生效，无需重启！</span></div>';
+  var html='<div class="action-bar"><button class="btn-ghost" onclick="reloadPlugins()">🔄 热重载</button> <button class="btn-ghost" onclick="installPluginByUrl()">🔗 从 URL 安装</button> <button class="btn-ghost" onclick="openPluginMarket()">🏪 插件市场</button><span style="font-size:12px;color:var(--muted)">把插件目录放进服务器 /app/plugins/ 后点热重载即可生效，无需重启！</span></div>';
   if(!list.length) html+='<div style="color:var(--muted);padding:18px">暂无插件。在服务器 /app/plugins/ 下建 插件名/plugin.json 即可（参考：{"name":"示例","version":"1.0.0","triggers":["关键词"],"action":"reply","content":"回复内容"}）</div>';
   else html+='<div class="table-wrap"><table class="tb"><thead><tr><th>名称</th><th>版本</th><th>触发词</th><th>动作</th><th>状态</th><th>操作</th></tr></thead><tbody>'+list.map(function(p){
    return '<tr><td><b>'+esc(p.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(p.id||'')+(p.desc?' · '+esc(p.desc):'')+'</div></td><td>'+esc(p.version)+'</td><td style="font-size:11px">'+esc((p.triggers||[]).join(', '))+ '</td><td>'+esc(p.action)+'</td><td>'+(p.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td><td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="togglePlugin(\''+esc(p.id)+'\','+(p.enabled?'false':'true')+')">'+(p.enabled?'停用':'启用')+'</button> <button class="btn-ghost btn-sm danger" onclick="removePlugin(\''+esc(p.id)+'\')">卸载</button></td></tr>';
   }).join('')+'</tbody></table></div>';
   box.innerHTML='<div class="card"><h3>📦 插件管理</h3><div style="color:var(--muted);padding:2px 0 8px;font-size:12px">插件系统：目录扫描 + manifest 热重载 + on_message 钩子（触发词命中即回复/忽略）。</div>'+html+'</div>';
+ });
+}
+function installPluginByUrl(){
+ var u = prompt('粘贴插件地址（GitHub 仓库 或 .zip 直链）：', 'https://github.com/');
+ if(!u || u==='https://github.com/') return;
+ toast('安装中，请稍候…', true);
+ api('/api/plugins/install',{method:'POST',body:{url:u}}).then(function(r){
+  toast(r.msg||'', r.code===0);
+  if(r.code===0) loaders.plugins();
  });
 }
 function reloadPlugins(){ api('/api/plugins/reload',{method:'POST'}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.plugins(); }); }

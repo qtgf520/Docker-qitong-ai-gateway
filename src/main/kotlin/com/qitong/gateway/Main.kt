@@ -1793,6 +1793,15 @@ fun Application.moduleWeb(database: Database) {
             if (ok) AdminApi.ok(call, null, "插件已卸载")
             else AdminApi.fail(call, "插件不存在", 404)
         }
+        post("/api/plugins/install") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val url = body["url"]?.jsonPrimitive?.content ?: ""
+            val msg = com.qitong.gateway.plugin.PluginManager.installFromUrl(url)
+            if (msg.startsWith("✅")) AdminApi.ok(call, null, msg) else AdminApi.fail(call, msg)
+        }
+
         post("/api/plugins/market") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }

@@ -18,7 +18,8 @@ loaders.models = function(){
      ? '<button class="btn-ghost" style="padding:2px 8px;font-size:12px;color:var(--green)" title="已对你隐藏，点击恢复显示" onclick="toggleModelHidden(' + m.id + ',false)">恢复显示</button>'
      : '<button class="btn-ghost" style="padding:2px 8px;font-size:12px" title="隐藏后仅你自己看不到该模型" onclick="toggleModelHidden(' + m.id + ',true)">隐藏</button>';
     var pubTxt = m.isPublic ? '<span class="badge green">公用</span>' : (m.ownerId>0 ? '<span class="badge blue">私有</span>' : '<span class="badge gray">系统</span>');
-    var priceTxt = m.price > 0 ? ('¥'+m.price+'/M') : '<span style="color:var(--muted)">默认价</span>';
+    var priceNum = Number(m.price);
+    var priceTxt = priceNum === -1 ? '<span class="badge green">永久免费</span>' : (priceNum > 0 ? ('¥'+priceNum+'/M') : '<span style="color:var(--muted)">默认价</span>');
     var auTxt = (m.authorizedNames||'') ? '<span class="badge purple">'+esc(m.authorizedNames)+'</span>' : (m.isPublic ? '<span style="color:var(--muted)">—</span>' : '<span class="badge gray">仅属主</span>');
     var key = m.providerId + '::' + m.modelId;
     return '<tr id="mdRow-' + esc(key) + '" data-key="' + esc(key) + '">' +
@@ -290,7 +291,7 @@ window.editModel = function(id){
    '<div class="form-row"><label>显示名</label><input id="mdName" class="input" value="'+esc(m.displayName||'')+'"></div>',
    '<div class="form-row"><label>自定义别名</label><input id="mdAlias" class="input" value="'+esc(m.customAlias||'')+'"></div>',
    '<div class="form-row"><label>上下文窗口</label><input id="mdCtx" class="input" type="number" value="'+(m.contextWindow||4096)+'"></div>',
-   '<div class="form-row"><label>单价（元/百万Token，填 -1 = 永久免费；0 = 自动默认价）</label><input id="mdPrice" class="input" type="number" step="0.1" value="'+(m.price||0)+'"><small style="color:var(--muted)">-1=该模型永久免费（默认免费）；0=自动按内置价格表；填正数=对该模型独立收费</small></div>',
+   '<div class="form-row"><label>单价（元/百万Token）</label><div style="display:flex;gap:6px;align-items:center"><input id="mdPrice" class="input" type="number" step="0.1" value="'+(Number(m.price)===0?0:(m.price||0))+'"><button class="btn-ghost btn-sm" type="button" onclick="$('mdPrice').value=-1;">永久免费 -1</button><button class="btn-ghost btn-sm" type="button" onclick="$('mdPrice').value=0;">按默认价 0</button><button class="btn-ghost btn-sm" type="button" onclick="$('mdPrice').value=1;">收费 1元/M</button></div><small style="color:var(--muted)">-1=永久免费（不扣余额、不套计费规则）；0=自动按内置价格表；正数=独立收费</small></div>',
    auRow,
    '<div class="form-row"><label><input type="checkbox" id="mdEnabled"'+(m.isEnabled!==false?' checked':'')+'>启用</label> <label style="margin-left:12px"><input type="checkbox" id="mdPublic"'+(m.isPublic?' checked':'')+'>公用（所有用户可见可用）</label> <label style="margin-left:12px"><input type="checkbox" id="mdDefault"'+(m.isDefault?' checked':'')+'>默认</label></div>'+
    '<div class="form-row"><label style="font-size:12px;color:var(--muted)">多模态能力（影响自动切换：多模态请求优先选支持该能力的模型）</label><div>'+
