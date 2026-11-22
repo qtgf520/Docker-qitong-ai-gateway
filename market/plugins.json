@@ -7,28 +7,28 @@
       "version": "1.0.2",
       "desc": "发「签到/打卡」自动回复，带昵称与时间，内置冷却",
       "author": "綦桐AI网关",
-      "entry": "https://raw.githubusercontent.com/qtgf520/Docker-qitong-ai-gateway/master/market/qd.zip"
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/qd.zip"
     },
     {
       "name": "摸鱼提醒",
       "version": "1.0.1",
       "desc": "发「摸鱼/歇会」温柔提醒休息",
       "author": "綦桐AI网关",
-      "entry": "https://raw.githubusercontent.com/qtgf520/Docker-qitong-ai-gateway/master/market/moyu.zip"
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/moyu.zip"
     },
     {
       "name": "夸夸机",
       "version": "1.0.1",
       "desc": "发「夸我/夸夸」立即收获彩虹屁",
       "author": "綦桐AI网关",
-      "entry": "https://raw.githubusercontent.com/qtgf520/Docker-qitong-ai-gateway/master/market/kuakua.zip"
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/kuakua.zip"
     },
     {
       "name": "时间助手",
       "version": "1.0.0",
       "desc": "问「时间/现在几点」报时分与日期",
       "author": "綦桐AI网关",
-      "entry": "https://raw.githubusercontent.com/qtgf520/Docker-qitong-ai-gateway/master/market/clock.zip"
+      "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/clock.zip"
     }
   ]
 }
