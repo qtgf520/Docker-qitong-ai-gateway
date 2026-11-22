@@ -67,6 +67,13 @@ object SandboxEngine {
         "weather_now", "translate", "news_top"   // ★ v1.218 实用内置：天气/翻译/新闻（免费无 key，开箱即用）
     )
 
+    /** ★ v1.250 能力清单 = 内置函数 + 已启用插件工具（每次请求动态拼，插件热重载后立即生效） */
+    private fun toolKnowledgeJson(): String {
+        val base = JSONArray(KNOWLEDGE_JSON)
+        runCatching { com.qitong.gateway.plugin.PluginManager.toolSpecs() }.getOrDefault(emptyList()).forEach { base.put(it) }
+        return base.toString()
+    }
+
     /** 网关能力知识库（注入 qtai-sj 上下文用） */
     val KNOWLEDGE_JSON: String by lazy {
         JSONArray()
@@ -296,7 +303,7 @@ object SandboxEngine {
 > 收到消息第一步：校验发送者QQ身份，判断权限范围，无权限操作直接拒绝，并说明权限不足。
 
 ## 2. 你内置网关能力知识库（必须记住所有可用功能）
-$KNOWLEDGE_JSON
+${toolKnowledgeJson()}
 
 ## 3. 自主任务规划规则【最重要】
 用户发来需求，不要直接回答，先自主规划任务，严格遵循流程：
@@ -1774,7 +1781,7 @@ $KNOWLEDGE_JSON
                         ?: V155Ext2.execute(fn, args, isAdmin, userId, db, channel)
                         ?: "❌ 未知沙盒函数: $fn（发「沙盒帮助」查看可用能力）"
                 }
-                else -> "❌ 未知沙盒函数: $fn（发「沙盒帮助」查看可用能力）"
+                else -> com.qitong.gateway.plugin.PluginManager.invokeTool(fn, args, channel, userId.toString()) ?: "❌ 未知沙盒函数: $fn（发「沙盒帮助」查看可用能力）"
                 }
             }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {

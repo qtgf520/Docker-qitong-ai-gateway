@@ -1975,6 +1975,31 @@ fun updateUserLogin(id: Long) {
 
     fun markChannelScheduleRun(id: Long, ts: Long) { ensureChannelScheduleTable(); stmt("UPDATE channel_schedules SET last_run=? WHERE id=?", ts, id) }
 
+    fun ensureChannelLogTable() {
+        runCatching { stmt("CREATE TABLE IF NOT EXISTS channel_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER NOT NULL, direction TEXT NOT NULL, text TEXT NOT NULL, ok INTEGER NOT NULL DEFAULT 1, detail TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL)") }
+    }
+
+    fun addChannelLog(channelId: Long, direction: String, text: String, ok: Boolean, detail: String = "") {
+        ensureChannelLogTable()
+        runCatching { stmt("INSERT INTO channel_logs (channel_id,direction,text,ok,detail,created_at) VALUES (?,?,?,?,?,?)", channelId, direction, text.take(1000), if (ok) 1 else 0, detail.take(500), System.currentTimeMillis()) }
+        runCatching { stmt("DELETE FROM channel_logs WHERE id NOT IN (SELECT id FROM channel_logs ORDER BY id DESC LIMIT 2000)") }
+    }
+
+    fun getChannelLogs(channelId: Long, limit: Int = 50): List<Map<String, Any?>> = runCatching {
+        ensureChannelLogTable()
+        query("SELECT * FROM channel_logs WHERE channel_id=? ORDER BY id DESC LIMIT ${limit.coerceIn(1, 500)}", channelId).map { r ->
+            mapOf(
+                "id" to ((r["id"] as Number).toLong()),
+                "direction" to (r["direction"] as? String ?: ""),
+                "text" to (r["text"] as? String ?: ""),
+                "ok" to ((r["ok"] as? Number)?.toInt() == 1),
+                "detail" to (r["detail"] as? String ?: ""),
+                "createdAt" to ((r["created_at"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+    }.getOrDefault(emptyList())
+
+
 
     fun deleteKbDoc(docId: Long, kbId: Long) {
         stmt("DELETE FROM kb_chunks WHERE doc_id=?", docId)
@@ -2693,6 +2718,8 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.251", "渠道收发日志 + 多群一键群发", "①每条消息渠道自动记录收发日志：入站原文、AI/插件回复、定时推送、手动推送、测试消息全部留痕，含成功/失败与平台回执，单渠道最多保留 2000 条自动滚动清理。②后台「日志」弹窗按时间倒序查看收/发/定时三类记录，失败原因直接显示，不用再靠猜。③「📢 群发」支持勾选多个渠道一次发送同一条消息，不勾即全部渠道；返回逐渠道成功/失败明细与汇总。④群发与单发都写日志，定时器推送同样入账，排障时能直接定位是哪一步断的。"),
+Triple("v1.250", "插件工具化：插件可被 AI 当工具直接调用", "①插件 manifest 新增 tool / toolName / toolDesc / toolParams：开启后插件自动出现在模型能力清单里，模型按「[[沙盒:工具名(参数=值)]]」直接调用，不再只靠关键词碰运气。②工具清单每次请求动态拼（内置能力 + 已启用插件工具），插件热重载后立即生效，不用重启。③插件工具复用原有 action：reply 直接返回渲染后的文本（支持 {user}/{args} 变量），webhook 走外部工作流并把回复带回给模型，cooldown 照常生效。④新增 GET /api/plugins/tools（OpenAI 风格工具 schema）与 POST /api/plugins/invoke（管理员调试/外部 Agent 直接调用），第三方平台也能把网关插件当工具用。"),
 Triple("v1.249", "知识库语义检索可视化配置：指定模型 + 一键重建向量", "①知识库详情新增语义检索状态条：直接显示当前用的是哪个 embedding 模型、是手动指定还是自动识别；没找到模型时明确提示仍走关键词检索。②「⚙️ 语义检索」弹窗可手动指定 embedding 模型（列出全部已启用模型，含自动识别选项），保存即写入 kb_embedding_model，无需重启。③「重建向量」一键按当前模型重算整个知识库的向量缓存，切换模型后不会出现旧缓存混用。④重建走批量 16 条 /embeddings，失败时回显「服务商不支持或返回为空」，不会默默清空向量。"),
 Triple("v1.248", "渠道定时推送：cron 到点自动发飞书/钉钉/Slack/Discord", "①消息渠道新增定时推送：标准 5 字段 cron（分 时 日 月 周），到点自动把内容推到渠道，支持每天早报、晚安问候、每周周报、每月账单提醒。②一条渠道可挂多条计划，各自独立开关与下次触发时间；计划名/内容支持 {date} {time} {channel} {name} 变量。③常驻调度协程每 20 秒检查一次，重启后从当前时刻重算下次触发，不补发历史消息；同一分钟只触发一次防重复。④后台「定时」弹窗可查看全部计划、下次触发时间，支持新建、立即推送验证、删除；cron 写错直接回显示例，不会静默失败。⑤已本地实测：计划创建、立即推送到 Webhook、列表返回 nextRun 均正常。"),
 Triple("v1.247", "多平台消息渠道：飞书 / 钉钉 / Slack / Discord / 自定义 Webhook", "①新增「消息渠道」模块，一套配置同时管出站推送与入站回调：飞书/钉钉走各自 text 结构，Slack/Discord 走 text/content，自定义 Webhook 原样传 text，出站统一点「测发送」验证连通。②入站地址 /api/channels/{id}/inbound?token=密钥，收到的消息先过插件（签到/指令直接回），没命中再交 AI 回复，回复自动推回该渠道，飞书/钉钉/Slack 的文本结构都能识别。③内置飞书事件订阅 URL 校验（GET/POST 带 challenge 自动回显），填回调地址即可通过校验。④后台渠道表展示类型、模式、入站地址一键复制，支持新建/编辑/删除/推送/测发送；密钥为空则不做 token 校验，方便内网自建。"),

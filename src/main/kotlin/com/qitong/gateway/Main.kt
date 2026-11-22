@@ -240,7 +240,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.249"))
+                put("version", JsonPrimitive("1.251"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1499,6 +1499,7 @@ fun Application.moduleWeb(database: Database) {
             val ch = database.getChannelById(id) ?: run { AdminApi.fail(call, "渠道不存在", 404); return@post }
             val text = "🔔 綦桐AI网关测试消息（渠道「${ch["name"]}」已连通）"
             val (ok, detail) = com.qitong.gateway.platform.ChannelManager.send(ch, text)
+            database.addChannelLog(id, "out", text, ok, detail)
             AdminApi.ok(call, mapOf("ok" to ok, "detail" to detail), if (ok) "测试消息已发送：$detail" else "发送失败：$detail")
         }
         post("/api/channels/{id}/send") {
@@ -1510,6 +1511,7 @@ fun Application.moduleWeb(database: Database) {
             val text = body["text"]?.jsonPrimitive?.content ?: ""
             if (text.isBlank()) { AdminApi.fail(call, "消息内容不能为空", 400); return@post }
             val (ok, detail) = com.qitong.gateway.platform.ChannelManager.send(ch, text)
+            database.addChannelLog(id, "out", text, ok, detail)
             AdminApi.ok(call, mapOf("ok" to ok, "detail" to detail), if (ok) "已发送" else "发送失败：$detail")
         }
         // ★ v1.248 渠道定时推送（cron 5 字段）
@@ -1559,8 +1561,33 @@ fun Application.moduleWeb(database: Database) {
                 ?: run { AdminApi.fail(call, "渠道不存在", 404); return@post }
             val text = com.qitong.gateway.platform.ChannelScheduler.render((sch["content"] as? String).orEmpty(), ch, sch)
             val (ok, detail) = com.qitong.gateway.platform.ChannelManager.send(ch, text)
+            database.addChannelLog(ch["id"] as Long, "sched", text, ok, detail)
             if (ok) database.markChannelScheduleRun(id, System.currentTimeMillis())
             AdminApi.ok(call, mapOf("ok" to ok, "detail" to detail), if (ok) "已立即推送：$detail" else "推送失败：$detail")
+        }
+        get("/api/channels/{id}/logs") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@get
+            val limit = call.queryParameters["limit"]?.toIntOrNull() ?: 50
+            AdminApi.ok(call, database.getChannelLogs(id, limit), "ok")
+        }
+        post("/api/channels/broadcast") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val text = body["text"]?.jsonPrimitive?.content ?: ""
+            if (text.isBlank()) { AdminApi.fail(call, "消息内容不能为空", 400); return@post }
+            val ids = body["ids"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull?.toLongOrNull() } ?: emptyList()
+            val targets = database.getChannels().filter { ids.isEmpty() || (it["id"] as Long) in ids }
+            if (targets.isEmpty()) { AdminApi.fail(call, "没有可发送的渠道", 400); return@post }
+            val results = targets.map { ch ->
+                val (ok, detail) = com.qitong.gateway.platform.ChannelManager.send(ch, text)
+                database.addChannelLog(ch["id"] as Long, "out", text, ok, detail)
+                mapOf("id" to ch["id"], "name" to ch["name"], "ok" to ok, "detail" to detail)
+            }
+            val okCount = results.count { it["ok"] == true }
+            AdminApi.ok(call, results, "群发完成：成功 $okCount / ${results.size}")
         }
         // 入站回调（无需登录，靠 token 鉴权；飞书 URL 校验 challenge 也走这里）
         get("/api/channels/{id}/inbound") {
@@ -1591,8 +1618,10 @@ fun Application.moduleWeb(database: Database) {
             val aiEnabled = (ch["aiEnabled"] as? Boolean) ?: true
             val reply = if (aiEnabled) com.qitong.gateway.platform.ChannelManager.reply(database, type, text, user, group)
                 else (runCatching { com.qitong.gateway.plugin.PluginManager.onMessage(text, "channel:$type", user, group, user) }.getOrNull() ?: "")
+            database.addChannelLog(id, "in", text, true, "user=$user")
             if (reply.isNotBlank() && (ch["webhookUrl"] as? String ?: "").isNotBlank()) {
-                runCatching { com.qitong.gateway.platform.ChannelManager.send(ch, reply) }
+                val (ok, detail) = runCatching { com.qitong.gateway.platform.ChannelManager.send(ch, reply) }.getOrElse { false to (it.message ?: "发送失败") }
+                database.addChannelLog(id, "out", reply, ok, detail)
             }
             AdminApi.ok(call, mapOf("reply" to reply), "已处理")
         }
@@ -2035,6 +2064,24 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, mapOf("url" to url, "plugins" to com.qitong.gateway.plugin.PluginManager.marketList(url)), "ok")
         }
 
+        // ★ v1.250 插件工具化：给模型/外部 Agent 用的工具清单与调用
+        get("/api/plugins/tools") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@get }
+            AdminApi.ok(call, com.qitong.gateway.plugin.PluginManager.toolSpecs().map { Json.parseToJsonElement(it.toString()) }, "ok")
+        }
+        post("/api/plugins/invoke") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val name = body["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (name.isBlank()) { AdminApi.fail(call, "缺少工具名", 400); return@post }
+            val argsObj = body["args"]?.jsonObject
+            val args = argsObj?.keys?.associateWith { argsObj[it]?.jsonPrimitive?.contentOrNull ?: "" } ?: emptyMap()
+            val r = com.qitong.gateway.plugin.PluginManager.invokeTool(name, args, "admin", u.id.toString())
+                ?: run { AdminApi.fail(call, "工具不存在或未开启 tool：$name", 404); return@post }
+            AdminApi.ok(call, mapOf("result" to r), "ok")
+        }
         post("/api/plugins/reload") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
@@ -3300,7 +3347,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.249"))
+                put("version", JsonPrimitive("1.251"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -4144,7 +4191,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.249"))
+                    put("version", JsonPrimitive("1.251"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

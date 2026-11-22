@@ -41,6 +41,10 @@ object PluginManager {
         val match: String = "contains",             // ★ v1.239 触发词匹配模式：contains / exact / prefix / regex
         val cooldown: Int = 0,                      // ★ v1.239 单用户冷却秒数（0=不限制）
         val priority: Int = 50,                     // ★ v1.239 优先级，越大越先匹配
+        val tool: Boolean = false,                  // ★ v1.250 是否作为 AI 可调用工具
+        val toolName: String = "",                  // 工具名（默认 plugin_<id>）
+        val toolDesc: String = "",                  // 给模型看的工具说明
+        val toolParams: String = "[]",              // 参数定义 JSON：[{name,required,desc}]
         val manifestPath: String = ""
     )
 
@@ -114,6 +118,10 @@ object PluginManager {
             match = o.optString("match", "contains").lowercase(),
             cooldown = o.optInt("cooldown", 0),
             priority = o.optInt("priority", 50),
+            tool = o.optBoolean("tool", false),
+            toolName = o.optString("toolName", "plugin_" + id).ifBlank { "plugin_" + id },
+            toolDesc = o.optString("toolDesc", o.optString("desc", "")),
+            toolParams = o.optJSONArray("toolParams")?.toString() ?: "[]",
             manifestPath = mf.absolutePath
         )
         plugins[id] = p
@@ -123,6 +131,27 @@ object PluginManager {
     fun reload(): String {
         val n = scanAll()
         return "🔄 插件已热重载：共 $n 个插件"
+    }
+
+    /** ★ v1.250 供模型使用的工具清单（JSON 数组，字段与沙盒 KNOWLEDGE_JSON 对齐） */
+    fun toolSpecs(): List<JSONObject> = plugins.values.filter { it.enabled && it.tool && it.toolName.isNotBlank() }.map { p ->
+        JSONObject()
+            .put("name", p.toolName)
+            .put("description", p.toolDesc.ifBlank { p.desc })
+            .put("permission", "user")
+            .put("risk", "read")
+            .put("params", runCatching { org.json.JSONArray(p.toolParams) }.getOrElse { org.json.JSONArray() })
+            .put("returns", "插件执行结果（文本/外部工作流回复）")
+    }
+
+    fun toolsJson(): String = org.json.JSONArray(toolSpecs()).toString()
+
+    /** ★ v1.250 执行插件工具：args 以文本形式传入，走插件原有 action（reply/webhook/ignore） */
+    fun invokeTool(name: String, args: Map<String, String>, channel: String = "sandbox", userId: String = "", groupId: String = "", nick: String = ""): String? {
+        val p = plugins.values.firstOrNull { it.enabled && it.tool && it.toolName == name } ?: return null
+        val t0 = System.currentTimeMillis()
+        val r = runCatching { invokePluginAction(p, t0) }.getOrNull() ?: return "❌ 插件 ${p.name} 执行失败"
+        return renderVars(r, p, channel, userId, groupId, nick, args.values.joinToString(" "))
     }
 
     /** 列出插件 */

@@ -55,6 +55,7 @@ object ChannelScheduler {
             val text = render((sch["content"] as? String).orEmpty(), ch, sch)
             if (text.isBlank()) { nextAt[id] = expr.next(now) ?: Long.MAX_VALUE; continue }
             val (ok, detail) = ChannelManager.send(ch, text)
+            db.addChannelLog(ch["id"] as Long, "sched", text, ok, detail)
             db.markChannelScheduleRun(id, now)
             nextAt[id] = expr.next(now) ?: Long.MAX_VALUE
             println("[ChannelScheduler] 推送 #$id「${sch["name"]}」→ ${ch["name"]}：ok=$ok $detail")

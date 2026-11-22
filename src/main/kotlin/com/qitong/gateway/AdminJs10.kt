@@ -941,7 +941,7 @@ function removePlugin(id){ if(!confirm('确认卸载插件 '+id+'？')) return; 
 loaders.channels = function(){
  var box = $('view-channels');
  box.innerHTML = '<div class="card"><h3>📡 消息渠道 <span style="font-size:12px;color:var(--muted)">飞书 / 钉钉 / Slack / Discord / 自定义 Webhook：既能往外推消息，也能接别人发进来的消息</span></h3>' +
-  '<div class="action-bar"><button class="btn" onclick="chOpenEdit(0)">+ 新建渠道</button><span id="chHint" style="font-size:12px;color:var(--muted)">加载中…</span></div>' +
+  '<div class="action-bar"><button class="btn" onclick="chOpenEdit(0)">+ 新建渠道</button> <button class="btn-ghost" onclick="chBroadcast()">📢 群发</button><span id="chHint" style="font-size:12px;color:var(--muted)">加载中…</span></div>' +
   '<div id="chList" style="margin-top:12px"><div style="color:var(--muted);padding:16px">加载中…</div></div></div>' +
   '<div class="card"><h3>📥 入站回调怎么用</h3><div style="font-size:12px;color:var(--muted);line-height:1.9">' +
   '① 新建渠道时填的「入站密钥」就是 token；<br>' +
@@ -963,6 +963,7 @@ loaders.channels = function(){
     '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="chTest('+c.id+')">测发送</button> ' +
     '<button class="btn-ghost btn-sm" onclick="chSend('+c.id+')">推消息</button> ' +
     '<button class="btn-ghost btn-sm" onclick="chSchedules('+c.id+',\''+esc(c.name)+'\')">定时</button> ' +
+    '<button class="btn-ghost btn-sm" onclick="chLogs('+c.id+',\''+esc(c.name)+'\')">日志</button> ' +
     '<button class="btn-ghost btn-sm" onclick="chOpenEdit('+c.id+',\''+esc(c.name)+'\',\''+esc(c.type)+'\',\''+esc(c.webhookUrl||'')+'\',\''+esc(c.secret||'')+'\','+(c.aiEnabled?'true':'false')+')">编辑</button> ' +
     '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="chDel('+c.id+')">删</button></td></tr>';
   }).join('');
@@ -1064,6 +1065,37 @@ window.kbReindex = function(id){
  if(!confirm('按当前 embedding 模型重建该知识库的全部向量？文档多时耗时较长，但之后检索更快。')) return;
  toast('正在重建向量…', true);
  api('/api/kb/reindex',{method:'POST',body:{kbId:id}}).then(function(r){ toast(r.msg||'', r.code===0); loadKbDocs(id); });
+};
+
+// ===== ★ v1.251 渠道日志 + 群发 =====
+window.chLogs = function(id, name){
+ api('/api/channels/'+id+'/logs?limit=60').then(function(r){
+  var list=r.data||[];
+  var rows=list.length?list.map(function(l){
+   var dir=l.direction==='in'?'<span class="badge blue">收</span>':(l.direction==='sched'?'<span class="badge purple">定时</span>':'<span class="badge green">发</span>');
+   var t=new Date(Number(l.createdAt)).toLocaleString();
+   return '<tr><td style="white-space:nowrap;font-size:11px">'+esc(t)+'<div>'+dir+'</div></td><td style="word-break:break-all;font-size:12px">'+esc(l.text)+'</td><td style="font-size:11px;color:'+(l.ok?'var(--muted)':'var(--red)')+'">'+(l.ok?'成功':'失败')+'<div>'+esc(l.detail||'')+'</div></td></tr>';
+  }).join(''):'<tr><td colspan="3" style="text-align:center;color:var(--muted)">还没有收发记录</td></tr>';
+  openModal('🧾 渠道日志 · '+esc(name),
+   '<div class="table-wrap" style="max-height:420px;overflow-y:auto"><table><thead><tr><th>时间</th><th>内容</th><th>结果</th></tr></thead><tbody>'+rows+'</tbody></table></div>' +
+   '<div style="font-size:11px;color:var(--muted);margin-top:8px">只保留最近 2000 条，收发、定时推送、失败原因都在这里。</div>', null, {hideFooter:true});
+ });
+};
+window.chBroadcast = function(){
+ api('/api/channels').then(function(r){
+  var list=r.data||[];
+  if(!list.length){ toast('先新建一个渠道', false); return; }
+  openModal('📢 群发消息',
+   '<div class="form-row"><label>选择渠道（不选=全部）</label><div style="display:flex;flex-wrap:wrap;gap:12px">'+
+    list.map(function(c){ return '<label style="font-size:13px"><input type="checkbox" class="chBc" value="'+c.id+'"> '+esc(c.name)+'</label>'; }).join('')+
+   '</div></div>'+
+   '<div class="form-row"><label>消息内容</label><textarea id="chBcText" class="input" rows="5" placeholder="要同时发到多个群的消息…"></textarea></div>',
+   function(){
+    var text=$('chBcText').value; if(!text.trim()){ toast('消息不能为空', false); return; }
+    var ids=[]; document.querySelectorAll('.chBc:checked').forEach(function(x){ ids.push(Number(x.value)); });
+    api('/api/channels/broadcast',{method:'POST',body:{ids:ids,text:text}}).then(function(rr){ toast(rr.msg||'', rr.code===0); if(rr.code===0) closeModal(); });
+   });
+ });
 };
 
 """
