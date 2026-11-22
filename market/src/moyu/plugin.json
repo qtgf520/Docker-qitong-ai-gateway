@@ -1,1 +1,19 @@
-{"name":"摸鱼提醒","version":"1.0.0","desc":"发「摸鱼」时温柔提醒休息，适合群聊活跃气氛","author":"綦桐AI网关","triggers":["摸鱼","歇会"],"action":"reply","content":"🐟 摸鱼一分钟，回血一整天。起来走两步、看看远处，回来继续冲！"}
+{
+  "name": "摸鱼提醒",
+  "version": "1.0.1",
+  "desc": "发「摸鱼/歇会」温柔提醒休息",
+  "author": "綦桐AI网关",
+  "commands": [
+    "摸鱼",
+    "歇会"
+  ],
+  "triggers": [
+    "摸鱼",
+    "歇会"
+  ],
+  "match": "exact",
+  "cooldown": 60,
+  "priority": 60,
+  "action": "reply",
+  "content": "🐟 {nick} 又摸鱼啦～ 起来喝口水、看看窗外，眼睛也要休息一下。"
+}

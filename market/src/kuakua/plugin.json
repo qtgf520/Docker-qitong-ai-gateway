@@ -1,1 +1,19 @@
-{"name":"夸夸机","version":"1.0.0","desc":"发「夸我/夸夸」立即收获彩虹屁","author":"綦桐AI网关","triggers":["夸我","夸夸"],"action":"reply","content":"🌟 你今天的努力，宇宙都看得见。继续发光，我负责给你打灯！"}
+{
+  "name": "夸夸机",
+  "version": "1.0.1",
+  "desc": "发「夸我/夸夸」立即收获彩虹屁",
+  "author": "綦桐AI网关",
+  "commands": [
+    "夸我",
+    "夸夸"
+  ],
+  "triggers": [
+    "夸我",
+    "夸夸"
+  ],
+  "match": "exact",
+  "cooldown": 10,
+  "priority": 60,
+  "action": "reply",
+  "content": "🌟 {nick} 今天状态绝了！眼里的光比显示器还亮，做事又稳又准，谁跟你合作谁有福气。"
+}

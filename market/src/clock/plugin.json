@@ -1,0 +1,20 @@
+{
+  "name": "时间助手",
+  "version": "1.0.0",
+  "desc": "问「时间/现在几点」直接报时分与日期",
+  "author": "綦桐AI网关",
+  "commands": [
+    "时间",
+    "现在几点",
+    "几点了"
+  ],
+  "triggers": [
+    "现在几点",
+    "几点了"
+  ],
+  "match": "exact",
+  "cooldown": 3,
+  "priority": 40,
+  "action": "reply",
+  "content": "🕐 现在是 {date} {time}（{channel} 频道），{nick} 别熬太晚。"
+}

@@ -32,7 +32,11 @@ object PluginManager {
         val enabled: Boolean = true,
         val triggers: List<String> = emptyList(),   // 触发关键词（命中即激活）
         val action: String = "reply",               // reply=固定回复 / ignore=忽略 / ai=走AI
-        val content: String = "",                   // reply 的固定内容
+        val content: String = "",                   // reply 的固定内容（支持 {user}/{nick}/{group}/{args}/{time}/{date}/{plugin}/{channel} 变量）
+        val commands: List<String> = emptyList(),   // ★ v1.239 指令集（等值/带参数匹配，如 签到、/签到、查天气）
+        val match: String = "contains",             // ★ v1.239 触发词匹配模式：contains / exact / prefix / regex
+        val cooldown: Int = 0,                      // ★ v1.239 单用户冷却秒数（0=不限制）
+        val priority: Int = 50,                     // ★ v1.239 优先级，越大越先匹配
         val manifestPath: String = ""
     )
 
@@ -99,6 +103,10 @@ object PluginManager {
             triggers = o.optJSONArray("triggers")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } } ?: emptyList(),
             action = o.optString("action", "reply"),
             content = o.optString("content", ""),
+            commands = o.optJSONArray("commands")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } } ?: emptyList(),
+            match = o.optString("match", "contains").lowercase(),
+            cooldown = o.optInt("cooldown", 0),
+            priority = o.optInt("priority", 50),
             manifestPath = mf.absolutePath
         )
         plugins[id] = p
@@ -145,12 +153,23 @@ object PluginManager {
      * @return 处理结果；null=无插件命中，继续走正常流程
      * ★ v1.218 运行时隔离：单个插件异常/超时仅跳过自身并记日志，绝不影响主进程与其他插件
      */
-    fun onMessage(text: String, channel: String): String? {
+    /** 冷却表：key = 插件id + 用户标识 → 上次触发时间戳毫秒 */
+    private val cooldownMap = ConcurrentHashMap<String, Long>()
+
+    fun onMessage(text: String, channel: String, userId: String = "", groupId: String = "", nick: String = ""): String? {
         if (text.isBlank()) return null
-        for (p in plugins.values) {
-            if (!p.enabled) continue
-            val hit = p.triggers.any { text.contains(it, ignoreCase = true) }
-            if (!hit) continue
+        // ★ v1.239 按优先级排序（大者先），命中即返回
+        val ordered = plugins.values.filter { it.enabled }.sortedByDescending { it.priority }
+        for (p in ordered) {
+            val hit = matchPlugin(p, text)
+            val args = if (hit is MatchResult.Hit) hit.args else ""
+            if (hit == null) continue
+            // 冷却检查（按 插件+用户，无用户标识时按频道）
+            val ck = p.id + "|" + (userId.ifBlank { channel })
+            if (p.cooldown > 0) {
+                val last = cooldownMap[ck] ?: 0L
+                if (System.currentTimeMillis() - last < p.cooldown * 1000L) continue
+            }
             // 独立错误边界：单插件异常/超时只跳过自身并记日志（含插件id+耗时），继续下一个
             val t0 = System.currentTimeMillis()
             val r = runCatching { invokePluginAction(p, t0) }
@@ -158,9 +177,66 @@ object PluginManager {
                     System.err.println("[PluginManager] 插件 ${p.id} 执行失败已跳过：异常=${e::class.simpleName} 耗时=${System.currentTimeMillis() - t0}ms 原因=${e.message}")
                 }
                 .getOrNull() ?: continue
-            return r
+            cooldownMap[ck] = System.currentTimeMillis()
+            return renderVars(r, p, channel, userId, groupId, nick, args)
         }
         return null
+    }
+
+    private sealed class MatchResult { data class Hit(val args: String) : MatchResult() }
+
+    /** ★ v1.239 触发判定：指令优先（等值或「指令+参数」），其次触发词按 match 模式 */
+    private fun matchPlugin(p: Plugin, text: String): MatchResult? {
+        val t = text.trim()
+        // 1) 指令：完全相等，或以「指令 + 空格/冒号」开头（可带参数）
+        for (c in p.commands) {
+            if (c.isBlank()) continue
+            val cmd = c.trim()
+            val plain = cmd.removePrefix("/")
+            val forms = listOf(cmd, plain, "/" + plain)
+            for (f in forms) {
+                if (t.equals(f, ignoreCase = true)) return MatchResult.Hit("")
+                if (t.startsWith(f + " ", ignoreCase = true)) return MatchResult.Hit(t.substring(f.length).trim())
+                if (t.startsWith(f + "：", ignoreCase = true) || t.startsWith(f + ":", ignoreCase = true))
+                    return MatchResult.Hit(t.substring(f.length).trim().trimStart('：', ':'))
+            }
+        }
+        // 2) 触发词
+        if (p.triggers.isEmpty()) return null
+        val hit = when (p.match) {
+            "exact" -> p.triggers.any { t.equals(it, ignoreCase = true) }
+            "prefix" -> p.triggers.any { t.startsWith(it, ignoreCase = true) }
+            "regex" -> p.triggers.any { runCatching { Regex(it, RegexOption.IGNORE_CASE).containsMatchIn(t) }.getOrDefault(false) }
+            else -> p.triggers.any { t.contains(it, ignoreCase = true) }
+        }
+        if (!hit) return null
+        val m = p.triggers.firstOrNull { tr ->
+            when (p.match) {
+                "exact" -> t.equals(tr, ignoreCase = true)
+                "prefix" -> t.startsWith(tr, ignoreCase = true)
+                "regex" -> runCatching { Regex(tr, RegexOption.IGNORE_CASE).containsMatchIn(t) }.getOrDefault(false)
+                else -> t.contains(tr, ignoreCase = true)
+            }
+        }
+        val args = if (m != null && p.match == "prefix" && t.length > m.length) t.substring(m.length).trim() else ""
+        return MatchResult.Hit(args)
+    }
+
+    /** ★ v1.239 回复模板变量替换：{user} {nick} {group} {args} {time} {date} {plugin} {channel} */
+    private fun renderVars(raw: String, p: Plugin, channel: String, userId: String, groupId: String, nick: String, args: String): String {
+        if (raw == "\u0000IGNORE\u0000") return raw
+        val now = java.time.LocalDateTime.now()
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+        val dft = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        return raw
+            .replace("{user}", userId.ifBlank { "同学" })
+            .replace("{nick}", nick.ifBlank { userId.ifBlank { "同学" } })
+            .replace("{group}", groupId)
+            .replace("{args}", args)
+            .replace("{time}", now.format(fmt))
+            .replace("{date}", now.format(dft))
+            .replace("{plugin}", p.name)
+            .replace("{channel}", channel)
     }
 
     /** ★ v1.218 单插件动作执行：独立线程 + 可中断真取消（daemon 线程池） + 超时上限 */

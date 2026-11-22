@@ -236,7 +236,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.238"))
+                put("version", JsonPrimitive("1.239"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1766,9 +1766,21 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, mapOf("plugins" to com.qitong.gateway.plugin.PluginManager.list().map { p ->
                 mapOf("id" to p.id, "name" to p.name, "version" to p.version, "desc" to p.desc,
                     "author" to p.author, "enabled" to p.enabled, "triggers" to p.triggers,
+                    "commands" to p.commands, "match" to p.match, "cooldown" to p.cooldown, "priority" to p.priority,
                     "action" to p.action, "content" to p.content)
             }), "ok")
         }
+        // ★ v1.239 插件调试：直接模拟一条消息走插件匹配，返回命中结果（不真的发消息）
+        post("/api/plugins/test") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val text = body["text"]?.jsonPrimitive?.content ?: ""
+            val channel = body["channel"]?.jsonPrimitive?.content ?: "qq"
+            val r = com.qitong.gateway.plugin.PluginManager.onMessage(text, channel, "test_user", "test_group", "测试同学")
+            AdminApi.ok(call, mapOf("hit" to (r != null), "reply" to (r ?: "")), if (r == null) "没有插件命中（会继续走 AI）" else "命中插件")
+        }
+
         post("/api/plugins/reload") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
@@ -3034,7 +3046,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.238"))
+                put("version", JsonPrimitive("1.239"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3878,7 +3890,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.238"))
+                    put("version", JsonPrimitive("1.239"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

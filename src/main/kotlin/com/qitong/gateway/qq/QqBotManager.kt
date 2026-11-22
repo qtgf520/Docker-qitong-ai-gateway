@@ -530,7 +530,7 @@ object QqBotManager {
 
         // ★ v1.218 插件 on_message 钩子：命中插件回复/忽略规则则不再走 AI
         runCatching {
-            val pHit = com.qitong.gateway.plugin.PluginManager.onMessage(text, "qq")
+            val pHit = com.qitong.gateway.plugin.PluginManager.onMessage(text, "qq", msg.memberOpenid, msg.groupOpenid)
             if (pHit != null) {
                 if (pHit == "\u0000IGNORE\u0000") {
                     db.touchQqGroup(msg.groupOpenid, bot.appid)
@@ -648,7 +648,7 @@ object QqBotManager {
         // ★ v1.232 统一过滤无法解析的占位/纯表情消息（图片/表情解析失败占位），不污染 AI 上下文与记忆
         if (t == "暂不能查看该消息内容" || t == "[图片]" || t == "[表情]" || t == "[语音]" || t == "[视频]" || t == "[文件]") return
         // ★ v1.236 插件钩子（对齐 AstrBot：插件在所有 IM 渠道生效，不再只在 TG）
-        runCatching { com.qitong.gateway.plugin.PluginManager.onMessage(t, "qq") }.getOrNull()?.let { r ->
+        runCatching { com.qitong.gateway.plugin.PluginManager.onMessage(t, "qq", userOpenid, groupOpenid) }.getOrNull()?.let { r ->
             if (r == "\u0000IGNORE\u0000") return
             send(r); return
         }

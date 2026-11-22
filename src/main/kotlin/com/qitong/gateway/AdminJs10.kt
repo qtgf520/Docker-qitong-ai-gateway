@@ -425,7 +425,7 @@ function loadMpKeywords(botId){
    return '<tr><td style="font-family:ui-monospace,monospace">'+esc(k.trigger)+'</td><td>'+mt+'</td><td>'+act+'</td><td style="font-size:12px">'+esc((k.content||'').take(30))+'</td><td>'+(k.enabled?'<span class="badge green">开</span>':'<span class="badge gray">关</span>')+'</td>' +
     '<td><button class="btn-ghost btn-sm" onclick="mpOpenKw('+k.id+',\''+esc(k.trigger)+'\',\''+esc(k.matchType)+'\',\''+esc(k.action)+'\',\''+esc(k.content).replace(/'/g,"\\'")+'\')">编辑</button> <button class="btn-ghost btn-sm" style="color:var(--red)" onclick="mpDelKw('+k.id+')">删</button></td></tr>';
   }).join('');
-  el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>触发词</th><th>匹配</th><th>动作</th><th>内容</th><th>状态</th><th>操作</th></tr></thead><tbody>' + (rows||'<tr><td colspan="6" style="text-align:center;color:var(--muted)">暂无关键词规则</td></tr>') + '</tbody></table></div>';
+  el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>触发词 / 指令</th><th>匹配</th><th>动作</th><th>内容</th><th>状态</th><th>操作</th></tr></thead><tbody>' + (rows||'<tr><td colspan="6" style="text-align:center;color:var(--muted)">暂无关键词规则</td></tr>') + '</tbody></table></div>';
  });
 }
 // 新增/编辑公众号
@@ -826,12 +826,12 @@ loaders.plugins = function(){
  api('/api/plugins').then(function(r){
   if(r.code!==0){ box.innerHTML='<div class="card"><h3>📦 插件管理</h3><div style="color:var(--red);padding:10px">加载失败</div></div>'; return; }
   var list=(r.data&&r.data.plugins)||[];
-  var html='<div class="action-bar"><button class="btn-ghost" onclick="reloadPlugins()">🔄 热重载</button> <button class="btn-ghost" onclick="installPluginByUrl()">🔗 从 URL 安装</button> <button class="btn-ghost" onclick="openPluginMarket()">🏪 插件市场</button><span style="font-size:12px;color:var(--muted)">把插件目录放进服务器 /app/plugins/ 后点热重载即可生效，无需重启！</span></div>';
+  var html='<div class="action-bar"><button class="btn-ghost" onclick="reloadPlugins()">🔄 热重载</button> <button class="btn-ghost" onclick="installPluginByUrl()">🔗 从 URL 安装</button> <button class="btn-ghost" onclick="openPluginMarket()">🏪 插件市场</button><span style="font-size:12px;color:var(--muted)">插件目录 /data/qitong/plugins（持久化，重启不丢）。改完点热重载即生效，无需重启。</span></div>';
   if(!list.length) html+='<div style="color:var(--muted);padding:18px">暂无插件。在服务器 /app/plugins/ 下建 插件名/plugin.json 即可（参考：{"name":"示例","version":"1.0.0","triggers":["关键词"],"action":"reply","content":"回复内容"}）</div>';
-  else html+='<div class="table-wrap"><table class="tb"><thead><tr><th>名称</th><th>版本</th><th>触发词</th><th>动作</th><th>状态</th><th>操作</th></tr></thead><tbody>'+list.map(function(p){
-   return '<tr><td><b>'+esc(p.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(p.id||'')+(p.desc?' · '+esc(p.desc):'')+'</div></td><td>'+esc(p.version)+'</td><td style="font-size:11px">'+esc((p.triggers||[]).join(', '))+ '</td><td>'+esc(p.action)+'</td><td>'+(p.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td><td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="togglePlugin(\''+esc(p.id)+'\','+(p.enabled?'false':'true')+')">'+(p.enabled?'停用':'启用')+'</button> <button class="btn-ghost btn-sm danger" onclick="removePlugin(\''+esc(p.id)+'\')">卸载</button></td></tr>';
+  else html+='<div class="table-wrap"><table class="tb"><thead><tr><th>名称</th><th>版本</th><th>触发词 / 指令</th><th>动作</th><th>状态</th><th>操作</th></tr></thead><tbody>'+list.map(function(p){
+   return '<tr><td><b>'+esc(p.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(p.id||'')+(p.desc?' · '+esc(p.desc):'')+'</div></td><td>'+esc(p.version)+'</td><td style="font-size:11px">'+esc(((p.commands||[]).concat(p.triggers||[])).filter(function(v,i,a){return a.indexOf(v)===i}).join(', '))+ '</td><td>'+esc(p.action)+'</td><td>'+(p.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td><td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="togglePlugin(\''+esc(p.id)+'\','+(p.enabled?'false':'true')+')">'+(p.enabled?'停用':'启用')+'</button> <button class="btn-ghost btn-sm danger" onclick="removePlugin(\''+esc(p.id)+'\')">卸载</button></td></tr>';
   }).join('')+'</tbody></table></div>';
-  box.innerHTML='<div class="card"><h3>📦 插件管理</h3><div style="color:var(--muted);padding:2px 0 8px;font-size:12px">插件系统：目录扫描 + manifest 热重载 + on_message 钩子（触发词命中即回复/忽略）。</div>'+html+'</div>';
+  box.innerHTML='<div class="card"><h3>📦 插件管理</h3><div style="color:var(--muted);padding:2px 0 8px;font-size:12px">插件系统：目录扫描 + manifest 热重载 + 指令/触发词（支持 contains·exact·prefix·regex）+ 冷却 + 变量模板 {nick} {args} {time} {date} {plugin}。</div>'+html+'</div>';
  });
 }
 function installPluginByUrl(){
