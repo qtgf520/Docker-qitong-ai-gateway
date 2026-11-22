@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.qitong.gateway"
-version = "1.245"
+version = "1.246"
 
 repositories {
     mavenCentral()
@@ -45,6 +45,9 @@ dependencies {
     // 邮箱通知（SMTP）
     implementation("com.sun.mail:jakarta.mail:2.0.1")
     implementation("jakarta.mail:jakarta.mail-api:2.0.1")
+
+    // PDF 文本抽取（知识库文件解析）
+    implementation("org.apache.pdfbox:pdfbox:3.0.3")
 
     // 日志
     implementation("ch.qos.logback:logback-classic:1.5.6")

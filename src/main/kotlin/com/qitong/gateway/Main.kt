@@ -236,7 +236,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.245"))
+                put("version", JsonPrimitive("1.246"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1375,8 +1375,35 @@ fun Application.moduleWeb(database: Database) {
             val docId = database.addKbDoc(kbId, docName, "$docName.txt", content.length.toLong())
             val chunks = com.qitong.gateway.kb.KBEngine.chunkText(content)
             database.addKbChunks(kbId, docId, chunks)
+            database.clearKbVectors(kbId)
             database.addOpLog(u.id, u.username, "知识库", "上传文档 $docName（${chunks.size} 分块）", call.request.local.remoteHost)
             AdminApi.ok(call, mapOf("docId" to docId, "chunks" to chunks.size), "已上传并分块 ${chunks.size} 段")
+        }
+        // ★ v1.246 上传文件到知识库（JSON + Base64，支持 PDF/DOCX/TXT/MD；前端选文件自动转 Base64）
+        post("/api/kb/upload") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val kbId = body["kbId"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            if (kbId <= 0) { AdminApi.fail(call, "缺少 kbId", 400); return@post }
+            val kb = database.getKbBaseById(kbId) ?: run { AdminApi.fail(call, "知识库不存在", 404); return@post }
+            if (u.role != "admin" && (kb["ownerId"] as? Long) != u.id) { AdminApi.fail(call, "无权限", 403); return@post }
+            val fileName = (body["filename"]?.jsonPrimitive?.content ?: "").trim().ifBlank { "文档.txt" }
+            val b64 = body["contentBase64"]?.jsonPrimitive?.content ?: ""
+            if (b64.isBlank()) { AdminApi.fail(call, "文件内容为空", 400); return@post }
+            if (b64.length > 40_000_000) { AdminApi.fail(call, "文件过大（上限约 25MB）", 413); return@post }
+            val bytes = runCatching { java.util.Base64.getDecoder().decode(b64.replace(Regex("\\s"), "")) }
+                .getOrElse { AdminApi.fail(call, "文件编码无效", 400); return@post }
+            if (bytes.size > 25 * 1024 * 1024) { AdminApi.fail(call, "文件过大（上限 25MB）", 413); return@post }
+            val text = runCatching { com.qitong.gateway.kb.DocumentParser.parse(fileName, bytes) }
+                .getOrElse { e -> AdminApi.fail(call, e.message ?: "解析失败", 400); return@post }
+            if (text.isBlank()) { AdminApi.fail(call, "文件解析后没有文字内容", 400); return@post }
+            val docName = (body["title"]?.jsonPrimitive?.content ?: "").trim().ifBlank { fileName.substringBeforeLast('.') }
+            val docId = database.addKbDoc(kbId, docName, fileName, text.length.toLong())
+            val chunks = com.qitong.gateway.kb.KBEngine.chunkText(text)
+            database.addKbChunks(kbId, docId, chunks)
+            database.clearKbVectors(kbId)
+            database.addOpLog(u.id, u.username, "知识库", "上传文件 $fileName（${chunks.size} 分块）", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("docId" to docId, "chunks" to chunks.size, "chars" to text.length, "title" to docName), "已解析 $fileName，分块 ${chunks.size} 段")
         }
         // 删除文档
         delete("/api/kb/docs/{id}") {
@@ -1384,6 +1411,7 @@ fun Application.moduleWeb(database: Database) {
             val docId = call.parameters["id"]?.toLongOrNull() ?: return@delete
             val kbId = call.queryParameters["kbId"]?.toLongOrNull() ?: 0L
             database.deleteKbDoc(docId, kbId)
+            database.clearKbVectors(kbId)
             AdminApi.ok(call, null, "文档已删除")
         }
         // 清空知识库文档
@@ -1393,6 +1421,7 @@ fun Application.moduleWeb(database: Database) {
             val kb = database.getKbBaseById(id) ?: run { AdminApi.fail(call, "知识库不存在", 404); return@post }
             if (u.role != "admin" && (kb["ownerId"] as? Long) != u.id) { AdminApi.fail(call, "无权限", 403); return@post }
             database.clearKbDocs(id)
+            database.clearKbVectors(id)
             AdminApi.ok(call, null, "知识库已清空")
         }
         // 知识库检索测试（管理页/调试用）
@@ -3099,7 +3128,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.245"))
+                put("version", JsonPrimitive("1.246"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3943,7 +3972,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.245"))
+                    put("version", JsonPrimitive("1.246"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

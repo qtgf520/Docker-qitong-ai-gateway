@@ -508,7 +508,7 @@ loaders.mpLogs = function(botId){
  });
 };
 
-// ===== ★ v1.194 知识库（RAG：多库管理 + 文档上传分块 + BM25 检索） =====
+// ===== ★ v1.194 知识库（RAG：多库管理 + 文档上传分块 + 语义检索） =====
 var kbCur = 0;
 loaders.kb = function(){
  var box = $('view-kb');
@@ -573,15 +573,38 @@ window.kbOpenEdit = function(id, name, desc, isPublic){
    });
   });
 };
+window.kbFilePicked = function(){
+ var f=$('kbDocFile') && $('kbDocFile').files && $('kbDocFile').files[0];
+ var h=$('kbFileHint'); if(!h) return;
+ if(!f){ h.textContent='选中文件后会自动解析全文并分块，无需手动粘贴。'; h.style.color='var(--muted)'; return; }
+ h.textContent='已选择 '+f.name+'（'+(f.size>1048576?(f.size/1048576).toFixed(1)+'MB':(f.size/1024).toFixed(0)+'KB')+'），提交后自动解析。';
+ h.style.color='var(--green)';
+};
 window.kbOpenDoc = function(){
  openModal('上传文档到知识库',
-  '<div class="form-row"><label>文档标题</label><input id="kbDocTitle" class="input" placeholder="如：API接入指南"></div>' +
-  '<div class="form-row"><label>文档内容（支持换行/段落，自动分块）</label><textarea id="kbDocContent" class="input" rows="10" placeholder="粘贴文档内容…"></textarea></div>' +
+  '<div class="form-row"><label>📎 选择文件（PDF / DOCX / TXT / MD，≤25MB）</label><input id="kbDocFile" type="file" accept=".pdf,.docx,.txt,.md,.markdown,.csv,.json" class="input" onchange="kbFilePicked()"></div>' +
+  '<div id="kbFileHint" style="font-size:11px;color:var(--muted)">选中文件后会自动解析全文并分块，无需手动粘贴。</div>' +
+  '<div class="form-row" style="margin-top:10px"><label>文档标题（留空用文件名）</label><input id="kbDocTitle" class="input" placeholder="如：API接入指南"></div>' +
+  '<div class="form-row"><label>或者直接粘贴文本</label><textarea id="kbDocContent" class="input" rows="8" placeholder="粘贴文档内容…（与上面文件二选一）"></textarea></div>' +
   '<div style="font-size:11px;color:var(--muted)">提交后自动按 500 字/块切分并入库，AI 提问时按相关性检索。</div>',
   function(){
    var title=$('kbDocTitle').value.trim();
    var content=$('kbDocContent').value;
-   if(!content.trim()){ toast('文档内容不能为空', false); return; }
+   var f=$('kbDocFile') && $('kbDocFile').files && $('kbDocFile').files[0];
+   if(f){
+    var fr=new FileReader();
+    fr.onload=function(){
+     var b64=String(fr.result||'').split(',')[1]||'';
+     toast('正在解析 '+f.name+' …', true);
+     api('/api/kb/upload', { method:'POST', body: { kbId: kbCur, title: title, filename: f.name, contentBase64: b64 } }).then(function(r){
+      toast(r.msg||'已上传', r.code===0);
+      if(r.code===0){ closeModal(); loadKbDocs(kbCur); }
+     });
+    };
+    fr.readAsDataURL(f);
+    return;
+   }
+   if(!content.trim()){ toast('请选择文件或粘贴文档内容', false); return; }
    if(!title) title = '文档' + Date.now()%100000;
    api('/api/kb/docs', { method:'POST', body: { kbId: kbCur, title: title, content: content } }).then(function(r){
     toast(r.msg||'已上传', r.code===0);

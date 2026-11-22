@@ -2619,6 +2619,7 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.246", "知识库文件上传：PDF / DOCX 直接解析入库", "①后台知识库上传支持直接选文件，不再只能粘贴文本：PDF 用 PDFBox 抽取文字（按位置排序，多栏不乱序），DOCX 直接解包 word/document.xml 还原段落与表格，TXT/MD/CSV/JSON 原样读取。②上传走 JSON+Base64（≤25MB），解析后自动清洗空行、截断超长文本，再走原有 500 字分块与向量化流程。③旧版 .doc 给出明确提示「请另存为 .docx」，扫描版 PDF 提示「请先 OCR」，错误信息直接回显给上传者。④文档新增/删除/清空、知识库清空时同步清理 kb_vec 向量缓存，避免旧向量污染检索结果。⑤前端弹窗改为「选文件 + 可选标题 + 可粘贴文本」三合一，选中文件即显示大小与解析提示。"),
 Triple("v1.245", "知识库语义检索（embedding + BM25 RRF 融合）", "①自动挑选 embedding 模型——配置了 kb_embedding_model 就用它，否则自动识别 modelId/显示名含 embed/bge/m3e/gte/text-embedding 的已启用模型，不改配置也能跑。②向量缓存表 kb_vec（kb_id+chunk_index+model 主键，vec 存逗号分隔向量），首次检索现算并落库，后续直接读缓存；文档/库清理时配套 clearKbVectors。③检索融合——BM25 与向量各取 top-2k，用 RRF（1/(60+rank)）合并排序，同义词/换说法也能召回，纯稀疏检索的关键词死板问题解决。④批量 16 条一次 /embeddings，连接 10s/读 30s，provider 不支持则自动退回 BM25 不影响原功能。"),
 Triple("v1.244", "插件 webhook 动作：一句话把消息转发给 Dify / Coze / n8n / 自建工作流", "插件 action 新增 webhook：命中后 POST {text,user,group,nick,channel,plugin} 到配置的 webhookUrl（可带 Bearer webhookToken），响应自动兼容 {answer}/{reply}/{content}/{text}/data.answer/纯文本，超时 8s 连接 30s 读；失败返回明确提示不吞消息。实测外部 mock 工作流返回『你好，这是外部工作流的回复』链路通。这样不用改代码就能把第三方 Agent（Dify/Coze/百炼应用/n8n）挂到 QQ/微信群里当插件用。"),
 Triple("v1.243", "插件市场扩到 12 个开箱插件 + 随机回复池 + 随机数变量 + 后台强制不走缓存", "①新增 8 个零依赖插件：今日运势、抽签、摇骰子（{random:1-6}）、早安问候、晚安问候、群规、冷笑话、功能菜单，市场从 4 个变 12 个。②插件 manifest 支持 replies 随机回复池，同一句触发每次不同答案，不再死板。③变量模板新增 {random:a-b} 随机整数，骰子/抽奖类插件不用写代码。④后台 / /admin /login /app 全部加 Cache-Control: no-store，改版后浏览器不会再拿旧 JS（这次『线上没更新』的体感根因之一）。"),
