@@ -826,7 +826,7 @@ loaders.plugins = function(){
  api('/api/plugins').then(function(r){
   if(r.code!==0){ box.innerHTML='<div class="card"><h3>📦 插件管理</h3><div style="color:var(--red);padding:10px">加载失败</div></div>'; return; }
   var list=(r.data&&r.data.plugins)||[];
-  var html='<div class="action-bar"><button class="btn-ghost" onclick="reloadPlugins()">🔄 热重载</button> <button class="btn-ghost" onclick="installPluginByUrl()">🔗 从 URL 安装</button> <button class="btn-ghost" onclick="openPluginMarket()">🏪 插件市场</button><span style="font-size:12px;color:var(--muted)">插件目录 /data/qitong/plugins（持久化，重启不丢）。改完点热重载即生效，无需重启。</span></div>';
+  var html='<div class="action-bar"><button class="btn-ghost" onclick="reloadPlugins()">🔄 热重载</button> <button class="btn-ghost" onclick="installPluginByUrl()">🔗 从 URL 安装</button> <button class="btn-ghost" onclick="openPluginMarket()">🏪 插件市场</button> <button class="btn-ghost" onclick="testPluginTrigger()">🧪 试触发</button><span style="font-size:12px;color:var(--muted)">插件目录 /data/qitong/plugins（持久化，重启不丢）。改完点热重载即生效，无需重启。</span></div>';
   if(!list.length) html+='<div style="color:var(--muted);padding:18px">暂无插件。在服务器 /app/plugins/ 下建 插件名/plugin.json 即可（参考：{"name":"示例","version":"1.0.0","triggers":["关键词"],"action":"reply","content":"回复内容"}）</div>';
   else html+='<div class="table-wrap"><table class="tb"><thead><tr><th>名称</th><th>版本</th><th>触发词 / 指令</th><th>动作</th><th>状态</th><th>操作</th></tr></thead><tbody>'+list.map(function(p){
    return '<tr><td><b>'+esc(p.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(p.id||'')+(p.desc?' · '+esc(p.desc):'')+'</div></td><td>'+esc(p.version)+'</td><td style="font-size:11px">'+esc(((p.commands||[]).concat(p.triggers||[])).filter(function(v,i,a){return a.indexOf(v)===i}).join(', '))+ '</td><td>'+esc(p.action)+'</td><td>'+(p.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'</td><td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="togglePlugin(\''+esc(p.id)+'\','+(p.enabled?'false':'true')+')">'+(p.enabled?'停用':'启用')+'</button> <button class="btn-ghost btn-sm danger" onclick="removePlugin(\''+esc(p.id)+'\')">卸载</button></td></tr>';
@@ -844,36 +844,63 @@ function installPluginByUrl(){
  });
 }
 function reloadPlugins(){ api('/api/plugins/reload',{method:'POST'}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.plugins(); }); }
-// ★ v1.218 在线插件市场：prompt 输入索引地址 → 拉取市场列表（install:false 预览）→ 交 renderMarketList 渲染
+// ★ v1.240 卡片式插件市场（结构化接口 /api/plugins/market/list）
 function openPluginMarket(){
- var url = prompt('请输入插件市场索引地址（JSON，含 name/version/desc/entry）：', 'https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/plugins.json');
- if(!url || !url.trim()) return;
- var u = url.trim();
- api('/api/plugins/market',{method:'POST',body:{url:u,install:false}}).then(function(r){
-  if(r.code!==0){ alert('❌ 拉取失败：'+(r.msg||'网络错误')); return; }
-  renderMarketList((r.msg||'').trim(), u);
+ var box=$('view-plugins'); if(!box) return;
+ var panel=$('pluginMarketPanel');
+ if(!panel){ panel=document.createElement('div'); panel.id='pluginMarketPanel'; box.appendChild(panel); }
+ panel.innerHTML='<div class="card"><h3>🏪 插件市场</h3><div style="color:var(--muted);padding:8px">加载中…</div></div>';
+ panel.scrollIntoView({behavior:'smooth',block:'start'});
+ api('/api/plugins/market/list').then(function(r){
+  if(r.code!==0){ panel.innerHTML='<div class="card"><h3>🏪 插件市场</h3><div style="color:var(--red);padding:8px">'+esc(r.msg||'拉取失败，检查网络')+'</div></div>'; return; }
+  var list=(r.data&&r.data.plugins)||[];
+  var updates=list.filter(function(p){return p.state==='update';}).length;
+  var news=list.filter(function(p){return p.state==='new';}).length;
+  var head='<div class="card"><h3>🏪 插件市场 <span style="font-size:12px;font-weight:400;color:var(--muted)">官方源 · jsdelivr 镜像</span></h3>'+
+   '<div class="action-bar"><button class="btn-ghost" onclick="loadPluginMarket()">🔄 刷新</button>'+
+   ((updates+news)>0?'<button class="btn-ghost" onclick="updateAllPlugins()">⬇️ 一键安装/更新 '+(updates+news)+' 个</button>':'')+
+   '<input id="pmSearch" class="input" style="max-width:180px" placeholder="搜索插件…" oninput="filterPluginMarket()"></div>';
+  var cards=list.map(function(p){
+   var st=p.state==='new'?'<span class="badge" style="color:var(--cyan)">可安装</span>':(p.state==='update'?'<span class="badge" style="color:#F5A524">可更新</span>':'<span class="badge green">已最新</span>');
+   var btn=p.state==='new'?'<button class="btn-ghost btn-sm" onclick="installMarketEntry(&#39;'+esc(p.entry)+'&#39;,&#39;'+esc(p.name)+'&#39;)">安装</button>':(p.state==='update'?'<button class="btn-ghost btn-sm" onclick="installMarketEntry(&#39;'+esc(p.entry)+'&#39;,&#39;'+esc(p.name)+'&#39;)">更新</button>':'');
+   return '<div class="pm-card" data-name="'+esc((p.name||'').toLowerCase())+'" style="border:1px solid var(--border);border-radius:10px;padding:12px;margin:8px 0;background:var(--surface)"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>'+esc(p.name)+'</b>'+st+'</div><div style="font-size:12px;color:var(--muted);margin:4px 0 8px">v'+esc(p.version)+(p.localVersion?'（本地 '+esc(p.localVersion)+'）':'')+' · '+esc(p.desc||'')+'</div><div style="text-align:right">'+btn+'</div></div>';
+  }).join('');
+  panel.innerHTML=head+'<div id="pmList">'+(cards||'<div style="color:var(--muted);padding:8px">市场为空</div>')+'</div></div>';
  });
 }
-// ★ v1.218 市场结果渲染：后端返回带 🆕/⬆️/✅ 标记的纯文本行，按行展示；✅已最新不给按钮，其余给安装按钮；解析失败仅显示原文
-function renderMarketList(text, url){
- if(!text){ alert('市场无可用插件'); return; }
- var rows = text.split('\n').filter(function(x){ return x.trim().length>0; });
- var html = '<div style="max-height:360px;overflow-y:auto;font-size:13px">' + rows.map(function(line){
-  var name = '';
-  try { var mm = line.match(/「([^」]+)」/); if(mm) name = mm[1]; } catch(e){}
-  var newest = line.charAt(0)==='✅';
-  var btn = (!newest && name) ? '<button class="btn-ghost btn-sm" style="float:right" onclick="installFromMarket(\''+esc(url)+'\',\''+esc(name)+'\')">安装</button>' : '';
-  return '<div style="border-bottom:1px solid var(--border);padding:6px 2px">'+esc(line)+' '+btn+'</div>';
- }).join('') + '</div>';
- openModal('🏪 插件市场', html, null, {hideFooter:true});
+window.loadPluginMarket=openPluginMarket;
+function filterPluginMarket(){
+ var q=(($('pmSearch')||{}).value||'').toLowerCase();
+ var cards=document.querySelectorAll('#pmList .pm-card');
+ for(var i=0;i<cards.length;i++){ cards[i].style.display=(cards[i].getAttribute('data-name')||'').indexOf(q)>=0?'':'none'; }
 }
-// ★ v1.218 从市场安装/升级单个插件（install:true）→ 完成后刷新列表
-function installFromMarket(url, name){
- if(!name){ alert('无法识别插件名，无法安装'); return; }
- if(!confirm('确认从市场安装/升级插件「'+name+'」？(url='+url+')')) return;
- api('/api/plugins/market',{method:'POST',body:{url:url,install:true}}).then(function(r){
-  toast(r.msg||'安装完成', r.code===0);
-  if(r.code===0) loaders.plugins();
+function installMarketEntry(entry,name){
+ if(!confirm('确认安装/更新插件「'+name+'」？')) return;
+ api('/api/plugins/install',{method:'POST',body:{url:entry}}).then(function(r){
+  toast(r.msg||'完成',r.code===0);
+  if(r.code===0){ loaders.plugins(); openPluginMarket(); }
+ });
+}
+function updateAllPlugins(){
+ if(!confirm('确认一键安装/更新全部插件？')) return;
+ api('/api/plugins/market/list').then(function(r){
+  var ups=((r.data&&r.data.plugins)||[]).filter(function(p){return p.state==='update'||p.state==='new';});
+  if(!ups.length){ toast('没有可安装/更新的插件',true); return; }
+  var i=0;
+  function next(){
+   if(i>=ups.length){ toast('全部完成',true); loaders.plugins(); openPluginMarket(); return; }
+   var p=ups[i++];
+   api('/api/plugins/install',{method:'POST',body:{url:p.entry}}).then(function(){ next(); });
+  }
+  next();
+ });
+}
+function testPluginTrigger(){
+ var t=prompt('输入一条消息，看看哪个插件会命中：','签到');
+ if(!t) return;
+ api('/api/plugins/test',{method:'POST',body:{text:t,channel:'qq'}}).then(function(r){
+  var d=(r.data||{});
+  openModal('🧪 插件调试', '<div style="font-size:13px">输入：<b>'+esc(t)+'</b><br>结果：<b>'+(d.hit?'✅ 命中插件':'— 未命中，会继续走 AI')+'</b><div style="margin-top:10px;padding:10px;border-radius:8px;background:var(--surface);white-space:pre-wrap">'+esc(d.reply||r.msg||'')+'</div><div style="margin-top:8px;font-size:12px;color:var(--muted)">调试不会真的发消息，只按当前插件规则跑一遍匹配。</div></div>', null, {hideFooter:true});
  });
 }
 function togglePlugin(id,en){ api('/api/plugins/toggle',{method:'POST',body:{id:id,enabled:en?'true':'false'}}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.plugins(); }); }

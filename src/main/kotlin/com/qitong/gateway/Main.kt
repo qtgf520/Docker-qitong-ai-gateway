@@ -236,7 +236,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.239"))
+                put("version", JsonPrimitive("1.240"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -1781,6 +1781,15 @@ fun Application.moduleWeb(database: Database) {
             AdminApi.ok(call, mapOf("hit" to (r != null), "reply" to (r ?: "")), if (r == null) "没有插件命中（会继续走 AI）" else "命中插件")
         }
 
+        // ★ v1.240 市场列表（结构化，供后台卡片式市场渲染）
+        get("/api/plugins/market/list") {
+            val u = call.requireAuth(database) ?: return@get
+            if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@get }
+            val url = call.request.queryParameters["url"]?.takeIf { it.isNotBlank() }
+                ?: "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/plugins.json"
+            AdminApi.ok(call, mapOf("url" to url, "plugins" to com.qitong.gateway.plugin.PluginManager.marketList(url)), "ok")
+        }
+
         post("/api/plugins/reload") {
             val u = call.requireAuth(database) ?: return@post
             if (u.role != "admin") { AdminApi.fail(call, "仅管理员", 403); return@post }
@@ -3046,7 +3055,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.239"))
+                put("version", JsonPrimitive("1.240"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -3890,7 +3899,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.239"))
+                    put("version", JsonPrimitive("1.240"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

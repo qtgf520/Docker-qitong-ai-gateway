@@ -266,6 +266,42 @@ object PluginManager {
      *  索引 JSON 格式：{"plugins":[{"name":"xxx","version":"1.2.0","desc":"...","entry":"https://.../xxx.zip"}]}
      *  entry 指向的 zip 需内含 plugin.json（与本地目录规范一致），落地后自动 scanAll 生效
      */
+    /** ★ v1.240 市场列表（结构化）：给后台卡片式市场用，返回每个插件的远端/本地版本与状态 */
+    fun marketList(url: String): List<Map<String, Any?>> {
+        val idx = fetchIndex(url) ?: return emptyList()
+        val out = ArrayList<Map<String, Any?>>()
+        for (i in 0 until idx.length()) {
+            val p = idx.optJSONObject(i) ?: continue
+            val name = p.optString("name", ""); val version = p.optString("version", "")
+            val desc = p.optString("desc", ""); val entry = p.optString("entry", "")
+            if (name.isBlank() || entry.isBlank()) continue
+            val local = plugins.values.firstOrNull { it.name == name || it.id == name }
+            val state = when { local == null -> "new"; local.version != version -> "update"; else -> "latest" }
+            out.add(mapOf("name" to name, "version" to version, "desc" to desc, "entry" to entry,
+                "localVersion" to (local?.version ?: ""), "state" to state))
+        }
+        return out
+    }
+
+    /** 拉取市场索引并归一化成 JSONArray */
+    private fun fetchIndex(url: String): org.json.JSONArray? {
+        val indexText = try {
+            val req = okhttp3.Request.Builder().url(url)
+                .addHeader("User-Agent", "QitongAI-Gateway/1.0")
+                .addHeader("Accept", "application/json").get().build()
+            com.qitong.gateway.network.WebToolClient.http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) null else resp.body?.string()
+            }
+        } catch (e: Exception) { null }
+        if (indexText.isNullOrBlank()) return null
+        return try {
+            val o = JSONObject(indexText)
+            if (o.has("plugins")) o.getJSONArray("plugins") else org.json.JSONArray("[$indexText]")
+        } catch (e: Exception) {
+            try { org.json.JSONArray(indexText) } catch (e2: Exception) { null }
+        }
+    }
+
     fun marketPull(url: String, install: Boolean = false): String {
         if (url.isBlank()) return "⚠️ 语法：market(url=插件仓库索引地址, install=true可选)"
         // 1) 拉取远端索引 JSON
