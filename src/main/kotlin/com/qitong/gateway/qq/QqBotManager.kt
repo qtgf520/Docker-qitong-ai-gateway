@@ -525,7 +525,8 @@ object QqBotManager {
         // ★ v1.219 正文去唤醒标记：先剥 <@xxx>，再剥机器人昵称前缀（「綦小桐 你目前功能有啥」→「你目前功能有啥」）
         val text = stripAt(msg.content).trim()
             .let { if (botName.isNotEmpty() && it.startsWith(botName)) it.removePrefix(botName).trim() else it }
-        if (text.isEmpty()) return
+        // ★ v1.232 过滤无法解析的占位/纯表情消息（图片/表情解析失败占位），避免污染 AI 上下文与记忆
+        if (text.isEmpty() || text == "暂不能查看该消息内容" || text == "[图片]" || text == "[表情]" || text == "[语音]" || text == "[视频]" || text == "[文件]") return
 
         // ★ v1.218 插件 on_message 钩子：命中插件回复/忽略规则则不再走 AI
         runCatching {
@@ -644,6 +645,8 @@ object QqBotManager {
     ) {
         val t0 = System.currentTimeMillis()
         val t = text.trim()
+        // ★ v1.232 统一过滤无法解析的占位/纯表情消息（图片/表情解析失败占位），不污染 AI 上下文与记忆
+        if (t == "暂不能查看该消息内容" || t == "[图片]" || t == "[表情]" || t == "[语音]" || t == "[视频]" || t == "[文件]") return
         // ★ v1.185 进度模式口令：说「隐藏步骤/别发步骤/只回结果」→ 关闭过程推送；「显示步骤/打开步骤」→ 打开
         if (t.contains("隐藏步骤", true) || t.contains("别发步骤", true) || t.contains("不要发步骤", true) ||
             t.contains("只回结果", true) || t.contains("不需要过程", true) || t.contains("别把步骤", true) ||
@@ -759,6 +762,9 @@ object QqBotManager {
                 val at2 = api.getAccessToken(bot)
                 // ★ v1.223 群回复不再自动@提问者（用户要求）；atMention 恒空
                 val atMention = ""
+                // ★ v1.232 修复「消息记录盲区」：AI 最终回复经 smartSend 直发（不经 dispatch send lambda），
+                //   这里补落库 out，后台消息记录中心才能看到机器人真正说了什么（此前 QQ out 全空=用户看到的回复无记录）
+                runCatching { db.addPlatformMessage("qq", bot.id, userOpenid, groupOpenid, "out", content, bot.aiModel) }
                 // ★ v71 QQ 大消息分段推送：超 1800 字符切多条，不丢信息（只有最终条用被动回复）
                 val pieces = splitText(content, 1800)
                 var anyOk = false
@@ -1417,7 +1423,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 // 空壳不发，但如果是纯聊天无工具场景返回了极短内容，也兜底给个状态（避免静默）
                 System.out.println("[QQBot] 拦截空壳回复（$reply）→ 不推给用户，过程结果已实时推送")
             }
-            db.addQqLog(bot.appid, groupOpenid, userOpenid, "ai", text, System.currentTimeMillis() - t0)
+            db.addQqLog(bot.appid, groupOpenid, userOpenid, "ai", reply, System.currentTimeMillis() - t0)
         } else {
             // ★ v57 兜底：模型无回复也给提示，绝不静默
             smartSend("⚠️ 抱歉，我这边处理失败了，请再试一次或换个说法。", true)
@@ -2105,6 +2111,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 var runToolCount = 0
                 // ★ v1.232 P0-C 跨轮累计被跳过的工具调用数（单轮超出预算部分）
                 var skippedCount = 0
+                // ★ v1.232 修复「看了个毛线」：跨轮累计真实工具结果摘要（closeBody 收敛失败时兜底展示，循环内 results 作用域不透出）
+                val toolResultsSummary = StringBuilder()
                 // ★ v1.188 看门狗：单任务总耗时超 90s 强制中断（配合工具 20s 短超时，Agent 永不卡死）
                 //   原循环最多 20 轮但轮内模型/工具都可能长时间阻塞；现在无论卡在哪，90s 必须收尾
                 val loopStartedAt = System.currentTimeMillis()
@@ -2299,10 +2307,14 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             executor.shutdown()
                         }
                     }
-                    // ★ v1.232 P0-C 单调用分支后也检测总预算（与并行分支同一收敛出口）
+// ★ v1.232 单调用分支后也检测总预算（与并行分支同一收敛出口）
                     if (runToolCount >= AgentLimits.MAX_TOOLS_PER_RUN) {
                         System.err.println("[QQBot] 工具总预算耗尽(${AgentLimits.MAX_TOOLS_PER_RUN})，已收敛")
                         break
+                    }
+                    // ★ v1.232 本轮真实工具结果累加到跨轮摘要（closeBody 收敛失败时兜底展示）
+                    if (results.toString().isNotBlank()) {
+                        toolResultsSummary.append(results.toString()).append("\n")
                     }
                     // 清洗调用标签，把结果回填给模型继续规划下一步（Agent 循环）
                     val cleanText = cleanFunctionTags(content)
@@ -2449,22 +2461,36 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         } finally {
                             if (activeCalls[userOpenid] === closeCall) activeCalls.remove(userOpenid)
                         }
-                        if (!closeContent.isNullOrBlank() && closeContent.length > 2) {
-                            val closeCleaned = cleanFunctionTags(closeContent)
-                            // ★ v1.191 真执行过工具才标完成；否则标"已结束（未执行真实工具）"——不再空话还标✅
-                            com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
-                                if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
-                            // ★ v1.167 修复串台：只写最终回复进 hist（原连续写 cleaned+closeCleaned 两个
-                            //   assistant，下一轮模型看到 assistant→assistant，把工具收尾当成上一条回答）
-                            synchronized(hist) {
-                                // 并发保护：若该会话已有新消息顶掉了本次 user，则放弃写回，避免张冠李戴
-                                if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
-                                    hist.add("assistant" to closeCleaned)
-                                    while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
-                                }
+                        // ★ v1.232 修复「看了个毛线」：closeBody 收敛失败/空时，兜底用真实工具结果摘要，
+                    //   绝不把原始模型输出（可能含 [[沙盒:...]] 调用标签/过程文本）当最终回复发出去
+                    if (!closeContent.isNullOrBlank() && closeContent.length > 2) {
+                        val closeCleaned = cleanFunctionTags(closeContent)
+                        // ★ v1.191 真执行过工具才标完成；否则标"已结束（未执行真实工具）"——不再空话还标✅
+                        com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
+                            if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
+                        // ★ v1.167 修复串台：只写最终回复进 hist（原连续写 cleaned+closeCleaned 两个
+                        //   assistant，下一轮模型看到 assistant→assistant，把工具收尾当成上一条回答）
+                        synchronized(hist) {
+                            // 并发保护：若该会话已有新消息顶掉了本次 user，则放弃写回，避免张冠李戴
+                            if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
+                                hist.add("assistant" to closeCleaned)
+                                while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
                             }
-                            return closeCleaned
                         }
+                        return closeCleaned
+                    }
+                    // 收敛拿不到模型总结 → 用真实工具结果摘要兜底（用户至少看到实际数据，不是标签/空话）
+                    if (executedCalls && toolResultsSummary.toString().isNotBlank()) {
+                        com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done", "✅ 任务完成（结果摘要）")
+                        val summary = cleanFunctionTags(toolResultsSummary.toString().trim()).take(1800)
+                        synchronized(hist) {
+                            if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
+                                hist.add("assistant" to summary)
+                                while (hist.size > HISTORY_MAX * 2) hist.removeAt(0)
+                            }
+                        }
+                        return summary
+                    }
                     } catch (_: Exception) {
                         // 收敛失败降级：返回清洗后的原始内容（不再追加 results）
                     }

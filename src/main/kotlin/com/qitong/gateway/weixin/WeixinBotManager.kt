@@ -225,6 +225,8 @@ object WeixinBotManager {
         val d = db ?: return
         val t = msg.content.trim()
         if (t.isBlank()) return
+        // ★ v1.232 过滤无法解析的占位消息（非文本/表情/图片解析失败），避免污染 AI 上下文与记忆
+        if (t == "暂不能查看该消息内容" || t == "[图片]" || t == "[表情]" || t == "[语音]" || t == "[视频]" || t == "[文件]") return
         val t0 = System.currentTimeMillis()
         val wxSettings = d.getPlatformSettings("weixin")
         // ★ v1.218 唤醒设置：忽略自己发送的消息（ignoreSelf）
@@ -669,6 +671,9 @@ object WeixinBotManager {
                 }
             }
         }
+        // ★ v1.232 防编造约束：记忆/人格仅供参考，不得当作实时事实对外断言；不确定必须明说或查证
+        //   实锤（2026-11-22）：闲聊被诱导"网关状态/生日"从记忆里编造数据自曝，用户极度不满
+        baseSys += "\n\n【记忆使用铁律】以上记忆与人格设定仅供参考。凡是涉及【实时状态/数据/时间/账户/外部信息】的表述，必须来自本轮真实工具调用返回，严禁凭记忆或想象编造具体数值、状态、结论。记不清/没查到就如实说「这个我记不准，要我帮你查一下吗」，绝不硬编。回忆个人话题（生日/爱好）时同样如此：记忆里有明确记录才说，没有就大方承认并主动提出帮查。"
         // ★ v1.194 知识库 RAG：微信用户提问按当前消息自动检索知识库（公开库+绑定账号自己的库），命中则注入
         runCatching {
             val kbBases = d.getKbBases(if (userId > 0) userId else 0L)
