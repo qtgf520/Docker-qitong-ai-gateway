@@ -1,0 +1,9 @@
+{
+  "name": "綦桐AI网关官方插件市场",
+  "updated": "2026-11-23",
+  "plugins": [
+    {"name":"签到助手","version":"1.0.1","desc":"群友发「签到/打卡」自动回复，零依赖","author":"綦桐AI网关","entry":"https://raw.githubusercontent.com/qtgf520/Docker-qitong-ai-gateway/master/market/qd.zip"},
+    {"name":"摸鱼提醒","version":"1.0.0","desc":"发「摸鱼」时温柔提醒休息","author":"綦桐AI网关","entry":"https://raw.githubusercontent.com/qtgf520/Docker-qitong-ai-gateway/master/market/moyu.zip"},
+    {"name":"夸夸机","version":"1.0.0","desc":"发「夸我/夸夸」立即收获彩虹屁","author":"綦桐AI网关","entry":"https://raw.githubusercontent.com/qtgf520/Docker-qitong-ai-gateway/master/market/kuakua.zip"}
+  ]
+}
