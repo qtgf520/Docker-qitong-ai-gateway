@@ -241,6 +241,12 @@ object WeixinBotManager {
         if (t.isBlank()) return
         // ★ v1.232 过滤无法解析的占位消息（非文本/表情/图片解析失败），避免污染 AI 上下文与记忆
         if (t == "暂不能查看该消息内容" || t == "[图片]" || t == "[表情]" || t == "[语音]" || t == "[视频]" || t == "[文件]") return
+        // ★ v1.236 插件钩子（对齐 AstrBot：插件在微信渠道同样生效）
+        runCatching { com.qitong.gateway.plugin.PluginManager.onMessage(t, "wx") }.getOrNull()?.let { r ->
+            if (r == "\u0000IGNORE\u0000") return
+            runCatching { api.sendMessage(bot.botToken, msg.from, r, msg.contextToken) }
+            return
+        }
         // ★ v1.235 入站幂等：同一 msgId 只处理一次（重连重投/并发长轮询 → 回两遍根因）
         if (!com.qitong.gateway.http.InboundGuard.first("wx", msg.msgId)) {
             System.err.println("[WeixinBot] 重复入站消息已忽略 msgId=${msg.msgId}")

@@ -318,5 +318,5 @@ object PluginManager {
 
     /** 插件目录名净化（防路径穿越） */
     private fun sanitizeName(name: String): String =
-        name.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(60).ifBlank { "plugin_${System.currentTimeMillis()}" }
+        name.replace(Regex("[^a-zA-Z0-9_\\-\\u4e00-\\u9fa5]"), "_").take(60).ifBlank { "plugin_${System.currentTimeMillis()}" }
 }

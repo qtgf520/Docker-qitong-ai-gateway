@@ -647,6 +647,11 @@ object QqBotManager {
         val t = text.trim()
         // ★ v1.232 统一过滤无法解析的占位/纯表情消息（图片/表情解析失败占位），不污染 AI 上下文与记忆
         if (t == "暂不能查看该消息内容" || t == "[图片]" || t == "[表情]" || t == "[语音]" || t == "[视频]" || t == "[文件]") return
+        // ★ v1.236 插件钩子（对齐 AstrBot：插件在所有 IM 渠道生效，不再只在 TG）
+        runCatching { com.qitong.gateway.plugin.PluginManager.onMessage(t, "qq") }.getOrNull()?.let { r ->
+            if (r == "\u0000IGNORE\u0000") return
+            send(r); return
+        }
         // ★ v1.235 入站幂等：同一条 msgId 只处理一次（长轮询重连/并发投递会重复推同一条 → 重复回复根因）
         if (!com.qitong.gateway.http.InboundGuard.first("qq", msgId)) {
             System.err.println("[QQBot] 重复入站消息已忽略 msgId=$msgId")
