@@ -46,7 +46,8 @@ object AuthManager {
     /** 登录（内部机器人绑定用，不走2FA）：成功返回会话token */
     fun login(database: Database, username: String, password: String): Result<String> {
         val user = database.getUserByUsername(username.trim()) ?: return Result.failure(Exception("用户名或密码错误"))
-        if (!BCrypt.checkpw(password, user.passwordHash)) return Result.failure(Exception("用户名或密码错误"))
+        val okPwd = runCatching { BCrypt.checkpw(password, user.passwordHash) }.getOrDefault(false)
+        if (!okPwd) return Result.failure(Exception("用户名或密码错误"))
         database.updateUserLogin(user.id)
         val token = generateToken()
         database.saveSession(token, user.id, SESSION_DAYS)
@@ -56,7 +57,9 @@ object AuthManager {
     /** 登录（后台用，支持2FA）：成功返回会话token；已开2FA且未传验证码 → needTotp=true（前端弹验证码）；传了验证码校验 */
     fun loginWithTotp(database: Database, username: String, password: String, totpCode: String? = null): LoginResult {
         val user = database.getUserByUsername(username.trim()) ?: return LoginResult(null, false, "用户名或密码错误")
-        if (!BCrypt.checkpw(password, user.passwordHash)) return LoginResult(null, false, "用户名或密码错误")
+        // ★ v1.237 旧格式/损坏哈希会抛异常导致 500，兜底当作密码错误
+        val okPwd = runCatching { BCrypt.checkpw(password, user.passwordHash) }.getOrDefault(false)
+        if (!okPwd) return LoginResult(null, false, "用户名或密码错误")
         // ★ v1.166 两步验证：已绑定 TOTP → 校验动态码
         if (user.totpSecret.isNotBlank()) {
             if (totpCode.isNullOrBlank()) return LoginResult(null, true, "请输入两步验证码")

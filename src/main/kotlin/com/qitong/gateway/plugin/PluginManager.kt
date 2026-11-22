@@ -38,9 +38,17 @@ object PluginManager {
 
     private val plugins = ConcurrentHashMap<String, Plugin>()
 
-    /** 插件根目录（容器内 /data/qitong/plugins，本地测试 ./plugins） */
+    /** 插件根目录：优先 PLUGIN_DIR；否则跟随 DB_PATH 同级的 plugins（容器内 /data/qitong/plugins，持久化卷）；最后退 ./plugins */
     @Volatile
-    var pluginRoot: String = System.getProperty("user.dir") + File.separator + "plugins"
+    var pluginRoot: String = run {
+        val envDir = System.getenv("PLUGIN_DIR")?.takeIf { it.isNotBlank() }
+        val dbParentDir = System.getenv("DB_PATH")?.takeIf { it.isNotBlank() }?.let { File(it).absoluteFile.parentFile }
+        when {
+            envDir != null -> envDir
+            dbParentDir != null -> File(dbParentDir, "plugins").path
+            else -> System.getProperty("user.dir") + File.separator + "plugins"
+        }
+    }
 
     /** ★ v1.218 插件单次调用超时上限（毫秒，默认 5000 可配；超时自动跳过该插件并记日志） */
     @Volatile
