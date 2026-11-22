@@ -1,6 +1,6 @@
 {
   "name": "时间助手",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "desc": "问「时间/现在几点」直接报时分与日期",
   "author": "綦桐AI网关",
   "commands": [
@@ -16,5 +16,9 @@
   "cooldown": 3,
   "priority": 40,
   "action": "reply",
-  "content": "🕐 现在是 {date} {time}（{channel} 频道），{nick} 别熬太晚。"
+  "content": "🕐 现在是 {date} {time}（{channel} 频道），{nick} 别熬太晚。",
+  "tool": true,
+  "toolName": "plugin_clock",
+  "toolDesc": "查询当前时间与日期",
+  "toolParams": []
 }

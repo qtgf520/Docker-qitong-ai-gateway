@@ -2,7 +2,7 @@
   "author": "綦桐AI网关",
   "action": "reply",
   "name": "抽签",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "desc": "一句话触发，{nick} 变量已适配",
   "commands": [
     "抽签"
@@ -18,5 +18,9 @@
     "🎋 上签：稳中求进，事缓则圆。",
     "🎋 中签：宜守不宜攻。",
     "🎋 下签：宜静养，少决策。"
-  ]
+  ],
+  "tool": true,
+  "toolName": "plugin_lots",
+  "toolDesc": "抽一支签看吉凶",
+  "toolParams": []
 }

@@ -2,7 +2,7 @@
   "author": "綦桐AI网关",
   "action": "reply",
   "name": "今日运势",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "desc": "一句话触发，{nick} 变量已适配",
   "commands": [
     "运势",
@@ -20,5 +20,15 @@
     "🔮 {nick} 今日运势：★★★★ 稳中有喜，别急。",
     "🔮 {nick} 今日运势：★★★ 平常心，按计划走。",
     "🔮 {nick} 今日运势：★★ 少说多看，别硬碰。"
+  ],
+  "tool": true,
+  "toolName": "plugin_fortune",
+  "toolDesc": "查询今日运势与宜忌",
+  "toolParams": [
+    {
+      "name": "星座",
+      "required": false,
+      "desc": "如 白羊座，可空"
+    }
   ]
 }

@@ -4,22 +4,22 @@
   "plugins": [
     {
       "name": "今日运势",
-      "version": "1.0.0",
-      "desc": "一句话触发，{nick} 变量已适配",
+      "version": "1.1.0",
+      "desc": "查运势；支持 AI 工具调用",
       "author": "綦桐AI网关",
       "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/fortune.zip"
     },
     {
       "name": "抽签",
-      "version": "1.0.0",
-      "desc": "一句话触发，{nick} 变量已适配",
+      "version": "1.1.0",
+      "desc": "抽签；支持 AI 工具调用",
       "author": "綦桐AI网关",
       "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/lots.zip"
     },
     {
       "name": "摇骰子",
-      "version": "1.0.0",
-      "desc": "一句话触发，{nick} 变量已适配",
+      "version": "1.1.0",
+      "desc": "摇骰子；支持 AI 工具调用",
       "author": "綦桐AI网关",
       "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/dice.zip"
     },
@@ -81,8 +81,8 @@
     },
     {
       "name": "时间助手",
-      "version": "1.0.0",
-      "desc": "问「时间/现在几点」直接报时分与日期",
+      "version": "1.1.0",
+      "desc": "问时间/几点；支持 AI 工具调用",
       "author": "綦桐AI网关",
       "entry": "https://cdn.jsdelivr.net/gh/qtgf520/Docker-qitong-ai-gateway@master/market/clock.zip"
     }
