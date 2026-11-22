@@ -1939,6 +1939,43 @@ fun updateUserLogin(id: Long) {
 
     fun deleteChannel(id: Long) { ensureChannelTable(); stmt("DELETE FROM channels WHERE id=?", id) }
 
+    fun ensureChannelScheduleTable() {
+        runCatching { stmt("CREATE TABLE IF NOT EXISTS channel_schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER NOT NULL, name TEXT NOT NULL, cron TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)") }
+    }
+
+    fun getChannelSchedules(channelId: Long = 0L): List<Map<String, Any?>> = runCatching {
+        ensureChannelScheduleTable()
+        val sql = if (channelId > 0) "SELECT * FROM channel_schedules WHERE channel_id=? ORDER BY id" else "SELECT * FROM channel_schedules ORDER BY id"
+        val rs = if (channelId > 0) query(sql, channelId) else query(sql)
+        rs.map { r ->
+            mapOf(
+                "id" to ((r["id"] as Number).toLong()),
+                "channelId" to ((r["channel_id"] as Number).toLong()),
+                "name" to (r["name"] as? String ?: ""),
+                "cron" to (r["cron"] as? String ?: ""),
+                "content" to (r["content"] as? String ?: ""),
+                "enabled" to ((r["enabled"] as? Number)?.toInt() == 1),
+                "lastRun" to ((r["last_run"] as? Number)?.toLong() ?: 0L)
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    fun saveChannelSchedule(id: Long, channelId: Long, name: String, cron: String, content: String, enabled: Boolean): Long {
+        ensureChannelScheduleTable()
+        return if (id > 0) {
+            stmt("UPDATE channel_schedules SET channel_id=?, name=?, cron=?, content=?, enabled=? WHERE id=?", channelId, name, cron, content, if (enabled) 1 else 0, id)
+            id
+        } else {
+            stmt("INSERT INTO channel_schedules (channel_id,name,cron,content,enabled,last_run,created_at) VALUES (?,?,?,?,?,?,?)", channelId, name, cron, content, if (enabled) 1 else 0, 0L, System.currentTimeMillis())
+            lastInsertId()
+        }
+    }
+
+    fun deleteChannelSchedule(id: Long) { ensureChannelScheduleTable(); stmt("DELETE FROM channel_schedules WHERE id=?", id) }
+
+    fun markChannelScheduleRun(id: Long, ts: Long) { ensureChannelScheduleTable(); stmt("UPDATE channel_schedules SET last_run=? WHERE id=?", ts, id) }
+
+
     fun deleteKbDoc(docId: Long, kbId: Long) {
         stmt("DELETE FROM kb_chunks WHERE doc_id=?", docId)
         stmt("DELETE FROM kb_docs WHERE id=?", docId)
@@ -2656,6 +2693,8 @@ fun updateUserLogin(id: Long) {
     }
     fun seedUpdateLogsIfEmpty() {
  val logs = listOf(
+Triple("v1.249", "知识库语义检索可视化配置：指定模型 + 一键重建向量", "①知识库详情新增语义检索状态条：直接显示当前用的是哪个 embedding 模型、是手动指定还是自动识别；没找到模型时明确提示仍走关键词检索。②「⚙️ 语义检索」弹窗可手动指定 embedding 模型（列出全部已启用模型，含自动识别选项），保存即写入 kb_embedding_model，无需重启。③「重建向量」一键按当前模型重算整个知识库的向量缓存，切换模型后不会出现旧缓存混用。④重建走批量 16 条 /embeddings，失败时回显「服务商不支持或返回为空」，不会默默清空向量。"),
+Triple("v1.248", "渠道定时推送：cron 到点自动发飞书/钉钉/Slack/Discord", "①消息渠道新增定时推送：标准 5 字段 cron（分 时 日 月 周），到点自动把内容推到渠道，支持每天早报、晚安问候、每周周报、每月账单提醒。②一条渠道可挂多条计划，各自独立开关与下次触发时间；计划名/内容支持 {date} {time} {channel} {name} 变量。③常驻调度协程每 20 秒检查一次，重启后从当前时刻重算下次触发，不补发历史消息；同一分钟只触发一次防重复。④后台「定时」弹窗可查看全部计划、下次触发时间，支持新建、立即推送验证、删除；cron 写错直接回显示例，不会静默失败。⑤已本地实测：计划创建、立即推送到 Webhook、列表返回 nextRun 均正常。"),
 Triple("v1.247", "多平台消息渠道：飞书 / 钉钉 / Slack / Discord / 自定义 Webhook", "①新增「消息渠道」模块，一套配置同时管出站推送与入站回调：飞书/钉钉走各自 text 结构，Slack/Discord 走 text/content，自定义 Webhook 原样传 text，出站统一点「测发送」验证连通。②入站地址 /api/channels/{id}/inbound?token=密钥，收到的消息先过插件（签到/指令直接回），没命中再交 AI 回复，回复自动推回该渠道，飞书/钉钉/Slack 的文本结构都能识别。③内置飞书事件订阅 URL 校验（GET/POST 带 challenge 自动回显），填回调地址即可通过校验。④后台渠道表展示类型、模式、入站地址一键复制，支持新建/编辑/删除/推送/测发送；密钥为空则不做 token 校验，方便内网自建。"),
 Triple("v1.246", "知识库文件上传：PDF / DOCX 直接解析入库", "①后台知识库上传支持直接选文件，不再只能粘贴文本：PDF 用 PDFBox 抽取文字（按位置排序，多栏不乱序），DOCX 直接解包 word/document.xml 还原段落与表格，TXT/MD/CSV/JSON 原样读取。②上传走 JSON+Base64（≤25MB），解析后自动清洗空行、截断超长文本，再走原有 500 字分块与向量化流程。③旧版 .doc 给出明确提示「请另存为 .docx」，扫描版 PDF 提示「请先 OCR」，错误信息直接回显给上传者。④文档新增/删除/清空、知识库清空时同步清理 kb_vec 向量缓存，避免旧向量污染检索结果。⑤前端弹窗改为「选文件 + 可选标题 + 可粘贴文本」三合一，选中文件即显示大小与解析提示。"),
 Triple("v1.245", "知识库语义检索（embedding + BM25 RRF 融合）", "①自动挑选 embedding 模型——配置了 kb_embedding_model 就用它，否则自动识别 modelId/显示名含 embed/bge/m3e/gte/text-embedding 的已启用模型，不改配置也能跑。②向量缓存表 kb_vec（kb_id+chunk_index+model 主键，vec 存逗号分隔向量），首次检索现算并落库，后续直接读缓存；文档/库清理时配套 clearKbVectors。③检索融合——BM25 与向量各取 top-2k，用 RRF（1/(60+rank)）合并排序，同义词/换说法也能召回，纯稀疏检索的关键词死板问题解决。④批量 16 条一次 /embeddings，连接 10s/读 30s，provider 不支持则自动退回 BM25 不影响原功能。"),

@@ -541,13 +541,22 @@ window.kbShow = function(id, name){
  var fb = $('kbDetailBody');
  fb.innerHTML = '<div class="action-bar">' +
   '<button class="btn" onclick="kbOpenDoc(0)">+ 上传文档</button> ' +
+  '<button class="btn-ghost" onclick="kbEmbedding()">⚙️ 语义检索</button> ' +
+  '<button class="btn-ghost" onclick="kbReindex('+id+')">重建向量</button> ' +
   '<button class="btn-ghost" style="color:var(--red)" onclick="kbClear('+id+')">清空全部</button> ' +
   '<span style="font-size:12px;color:var(--muted)">检索测试：</span><input id="kbTestQuery" class="input" style="width:220px;display:inline-block" placeholder="输入检索词…"> <button class="btn-ghost" onclick="kbTestSearch('+id+')">检索</button></div>' +
+  '<div id="kbEmbedStatus" style="margin:10px 0;font-size:12px;color:var(--muted)">语义检索状态加载中…</div>' +
   '<div id="kbSearchResult" style="margin:10px 0;font-size:12px;color:var(--muted)"></div>' +
   '<div class="card"><h3>📄 文档列表</h3><div class="table-wrap"><table><thead><tr><th>文档</th><th>大小</th><th>分块</th><th>状态</th><th>操作</th></tr></thead><tbody id="kbDocList"><tr><td colspan="5" style="text-align:center;color:var(--muted)">加载中…</td></tr></tbody></table></div></div>';
  loadKbDocs(id);
 };
 function loadKbDocs(id){
+ api('/api/kb/embedding').then(function(er){
+  var el=$('kbEmbedStatus'); if(!el) return;
+  var d=er.data||{};
+  if(d.activeModel){ el.innerHTML='🧠 语义检索：<span class="badge green">已启用</span> 当前模型 <b>'+esc(d.activeModel)+'</b>（'+(d.configured?'手动指定':'自动识别')+'）'; }
+  else{ el.innerHTML='🧠 语义检索：<span class="badge gray">未启用</span> 未找到 embedding 模型，检索仍走关键词（BM25）。点「⚙️ 语义检索」指定或去模型页启用一个 embedding 模型。'; }
+ });
  api('/api/kb/docs?kbId='+id).then(function(r){
   var list = r.data || [];
   var tb = $('kbDocList'); if(!tb) return;
@@ -953,6 +962,7 @@ loaders.channels = function(){
     '<td style="max-width:260px;word-break:break-all;font-size:11px;color:var(--muted)">'+esc(inbound)+' <button class="btn-ghost btn-sm" onclick="chCopy(\''+inbound+'\')">复制</button></td>' +
     '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="chTest('+c.id+')">测发送</button> ' +
     '<button class="btn-ghost btn-sm" onclick="chSend('+c.id+')">推消息</button> ' +
+    '<button class="btn-ghost btn-sm" onclick="chSchedules('+c.id+',\''+esc(c.name)+'\')">定时</button> ' +
     '<button class="btn-ghost btn-sm" onclick="chOpenEdit('+c.id+',\''+esc(c.name)+'\',\''+esc(c.type)+'\',\''+esc(c.webhookUrl||'')+'\',\''+esc(c.secret||'')+'\','+(c.aiEnabled?'true':'false')+')">编辑</button> ' +
     '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="chDel('+c.id+')">删</button></td></tr>';
   }).join('');
@@ -992,6 +1002,68 @@ window.chSend = function(id){
 window.chDel = function(id){
  if(!confirm('确认删除该渠道？')) return;
  api('/api/channels/'+id,{method:'DELETE'}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) loaders.channels(); });
+};
+
+// ===== ★ v1.248 渠道定时推送（cron 5 字段，内容支持 {date} {time} {channel} {name}） =====
+window.chSchedules = function(chId, chName){
+ api('/api/channels/'+chId+'/schedules').then(function(r){
+  var list = r.data || [];
+  var rows = list.length ? list.map(function(s){
+   var next = s.nextRun ? new Date(Number(s.nextRun)).toLocaleString() : '—';
+   return '<tr><td><b>'+esc(s.name)+'</b><div style="font-size:11px;color:var(--muted)">'+esc(s.cron)+'</div></td>' +
+    '<td style="max-width:260px;white-space:pre-wrap;font-size:12px">'+esc(s.content)+'</td>' +
+    '<td style="font-size:11px">'+(s.enabled?'<span class="badge green">启用</span>':'<span class="badge gray">停用</span>')+'<div style="color:var(--muted);margin-top:4px">下次：'+esc(next)+'</div></td>' +
+    '<td style="white-space:nowrap"><button class="btn-ghost btn-sm" onclick="chSchedRun('+s.id+','+chId+')">立即推</button> ' +
+    '<button class="btn-ghost btn-sm" style="color:var(--red)" onclick="chSchedDel('+s.id+','+chId+')">删</button></td></tr>';
+  }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--muted)">还没有定时推送，在下面新建一条：每天早报、晚安问候、周报提醒都可以</td></tr>';
+  openModal('⏰ 定时推送 · '+esc(chName),
+   '<div class="table-wrap" style="max-height:240px;overflow-y:auto"><table><thead><tr><th>计划</th><th>内容</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>' +
+   '<div style="border-top:1px solid var(--line);margin:14px 0 10px"></div>' +
+   '<div class="form-row"><label>计划名称</label><input id="schName" class="input" placeholder="如：每日早报"></div>' +
+   '<div class="form-row"><label>cron（分 时 日 月 周）</label><input id="schCron" class="input" placeholder="0 8 * * *" value="0 8 * * *"></div>' +
+   '<div class="form-row"><label>推送内容</label><textarea id="schContent" class="input" rows="4" placeholder="早上好！今天是 {date}，记得看看今天的待办～"></textarea></div>' +
+   '<div style="font-size:11px;color:var(--muted)">示例：0 8 * * *（每天 8:00）、0 22 * * 0（每周日 22:00）、30 9 1 * *（每月 1 号 9:30）。可用变量 {date} {time} {channel} {name}。</div>',
+   function(){
+    var nm=$('schName').value.trim() || '定时推送';
+    var cron=$('schCron').value.trim();
+    var content=$('schContent').value;
+    if(!cron || !content.trim()){ toast('cron 和推送内容都要填', false); return; }
+    api('/api/channels/'+chId+'/schedules',{method:'POST',body:{name:nm,cron:cron,content:content,enabled:true}}).then(function(rr){
+     toast(rr.msg||'', rr.code===0);
+     if(rr.code===0) chSchedules(chId, chName);
+    });
+   });
+ });
+};
+window.chSchedRun = function(id,chId){ api('/api/schedules/'+id+'/run',{method:'POST'}).then(function(r){ toast(r.msg||'', r.code===0); }); };
+window.chSchedDel = function(id,chId){ if(!confirm('确认删除这条定时推送？')) return; api('/api/schedules/'+id,{method:'DELETE'}).then(function(r){ toast(r.msg||'',r.code===0); if(r.code===0) chSchedules(chId,''); }); };
+
+// ===== ★ v1.249 知识库语义检索设置 =====
+window.kbEmbedding = function(){
+ api('/api/kb/embedding').then(function(r){
+  var d=r.data||{}; var models=d.models||[];
+  var opts='<option value="">自动识别（推荐）</option>'+models.map(function(m){
+   var sel=(d.configured===m.modelId?' selected':'');
+   return '<option value="'+esc(m.modelId)+'"'+sel+'>'+esc(m.displayName||m.modelId)+' ('+esc(m.modelId)+')</option>';
+  }).join('');
+  openModal('🧠 知识库语义检索',
+   '<div class="form-row"><label>Embedding 模型</label><select id="kbEmbModel" class="input">'+opts+'</select></div>' +
+   '<div style="font-size:12px;color:var(--muted);line-height:1.8">语义检索会让「换种说法」也能搜到内容：向量召回 + 关键词 BM25 用 RRF 融合。<br>' +
+   '不指定时自动挑 modelId/显示名含 embed / bge / m3e / gte / text-embedding 的已启用模型。<br>' +
+   '切换模型后建议点一次「重建向量」，否则旧模型缓存不会复用（会自动现算，速度稍慢）。</div>',
+   function(){
+    var m=$('kbEmbModel').value;
+    api('/api/kb/embedding',{method:'POST',body:{model:m}}).then(function(rr){
+     toast(rr.msg||'', rr.code===0);
+     if(rr.code===0) loadKbDocs(kbCur);
+    });
+   });
+ });
+};
+window.kbReindex = function(id){
+ if(!confirm('按当前 embedding 模型重建该知识库的全部向量？文档多时耗时较长，但之后检索更快。')) return;
+ toast('正在重建向量…', true);
+ api('/api/kb/reindex',{method:'POST',body:{kbId:id}}).then(function(r){ toast(r.msg||'', r.code===0); loadKbDocs(id); });
 };
 
 """

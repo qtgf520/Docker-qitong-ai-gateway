@@ -215,7 +215,7 @@ object KBEngine {
     }
 
     /** 调 provider 的 /embeddings；批量 16 条一次 */
-    private fun embedTexts(db: Database, model: AiModel, texts: List<String>): List<DoubleArray>? {
+    fun embedTexts(db: Database, model: AiModel, texts: List<String>): List<DoubleArray>? {
         if (texts.isEmpty()) return emptyList()
         val pv = db.getProviderById(model.providerId) ?: return null
         var base = pv.baseUrl.trim().trimEnd('/')
@@ -291,6 +291,20 @@ object KBEngine {
                 "chunkIndex" to ((c["chunkIndex"] as? Number)?.toInt() ?: 0),
                 "docTitle" to (c["docTitle"] as? String ?: ""), "score" to sc)
         }
+    }
+
+    /** ★ v1.249 重建某知识库的全部向量（清空后按当前 embedding 模型重算） */
+    fun reindex(db: Database, kbId: Long): Pair<Int, String> {
+        val model = resolveEmbeddingModel(db) ?: return 0 to "没有可用的 embedding 模型：请先在模型页启用一个 embedding 模型，或在下面手动指定"
+        val chunks = db.getKbChunks(kbId, limit = 5000)
+        if (chunks.isEmpty()) return 0 to "知识库还没有分块文档"
+        val texts = chunks.map { it["content"] as? String ?: "" }
+        val vecs = embedTexts(db, model, texts) ?: return 0 to "embedding 调用失败（服务商不支持 /embeddings 或返回为空）"
+        val map = HashMap<Long, DoubleArray>()
+        chunks.forEachIndexed { i, c -> map[((c["id"] as? Number)?.toLong() ?: 0L)] = vecs[i] }
+        db.clearKbVectors(kbId)
+        db.saveKbVectors(kbId, model.modelId, map)
+        return map.size to "已重建 ${map.size} 块向量（模型 ${model.modelId}，维度 ${vecs.first().size}）"
     }
 
     // ============ Agent 注入格式化 ============
