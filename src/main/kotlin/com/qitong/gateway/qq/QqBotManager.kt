@@ -1469,7 +1469,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     }
 
     /** v1.259 最终答复兜底：失败必须承认，承诺必须换成真实工具摘要 */
-    private fun finalizeText(text: String, executed: Boolean, failed: Boolean, error: String, summary: String): String {
+    private fun finalizeText(text: String, executed: Boolean, failed: Boolean, error: String, summary: String, lastResult: String = ""): String {
         val cleaned = cleanFunctionTags(text).trim()
         if (failed) {
             val admits = cleaned.contains("失败") || cleaned.contains("没成") || cleaned.contains("未成功") ||
@@ -1478,6 +1478,16 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 val err = cleanFunctionTags(error).trim().take(260)
                 return "⚠️ 这一步没成，我不糊弄你：\n${err.ifBlank { "工具返回失败" }}\n\n要我换个方式再试一次，直接说。"
             }
+        }
+        if (executed && lastResult.isNotBlank()) {
+            val real = cleanFunctionTags(lastResult).trim().take(1800)
+            // 最终答复里没有真实结果的关键内容（例如只问时间却一个数字都没有）→ 直接把真实结果作为答复
+            val key = real.replace(Regex("[\\p{Punct}\\s]"), "").take(10)
+            val hasKey = key.isNotBlank() && cleaned.replace(Regex("[\\p{Punct}\\s]"), "").contains(key)
+            val hasDigits = Regex("[0-9]").containsMatchIn(real)
+            val textDigits = Regex("[0-9]").containsMatchIn(cleaned)
+            val looksEmpty = cleaned.isBlank() || isPromiseOnly(cleaned) || cleaned.length < 18
+            if (looksEmpty || !hasKey || (hasDigits && !textDigits)) return real
         }
         if (executed && (cleaned.isBlank() || isPromiseOnly(cleaned))) {
             val real = cleanFunctionTags(summary).trim().take(1800)
@@ -2127,7 +2137,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     val cur = com.qitong.gateway.sandbox.StreamChatEngine.isHumanActionLine(line)
                     if (cur) {
                         val sp = line.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
-                        if (sp.isNotEmpty()) smartSend("💭 $sp", false)
+                        // ★ v1.261 过滤空承诺式思考：只说不干（我继续查/我看看/正经给你查）不上屏
+                        val emptyTalk = sp.length < 50 && (isPromiseOnly(sp) || continueIntent(sp))
+                        if (sp.isNotEmpty() && !emptyTalk) smartSend("💭 $sp", false)
                     }
                 },
                 onCancel = { stopSignals[userOpenid] == true }
@@ -2166,6 +2178,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 // v1.259 记录最后一次工具失败，禁止把失败说成完成
                 var lastToolFailed = false
                 var lastToolError = ""
+                var lastToolResult = ""
+                var lastToolName = ""
                 // ★ v1.232 P0-C 工具预算：本次运行累计实际执行工具数（达上限强制收敛，防无限循环耗尽资源）
                 var runToolCount = 0
                 // ★ v1.232 P0-C 跨轮累计被跳过的工具调用数（单轮超出预算部分）
@@ -2339,6 +2353,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         // ★ v1.166 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文本分段由 smartSend 自动拆
                         //   自主式：结果就是结果，必须完整给用户看到
                         val rShow = r.trim()
+                        lastToolName = fn; lastToolResult = rShow
                         if (isToolFailure(r)) {
                             lastToolFailed = true; lastToolError = rShow.take(300)
                             smartSend("❌ $fn 失败：\n$rShow", false)
@@ -2368,6 +2383,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                     runToolCount++ // ★ v1.232 P0-C 累计实际执行工具数
                                     // ★ v1.166 修复长文截断：并行工具结果也完整推送（不再 take(120)）
                                     val rShow = r.trim()
+                                    lastToolName = fn; lastToolResult = rShow
                                     if (isToolFailure(r)) {
                                         lastToolFailed = true; lastToolError = rShow.take(300)
                                         smartSend("❌ $fn 失败：\n$rShow", false)
@@ -2451,11 +2467,14 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     // ★ v1.166 自主式「没干完绝不听」：模型说「继续查/接着/下一步/再查」但没输出调用标签 →
                     //   引导一次让它输出真标签继续执行，而不是直接 break 停半路
                     val calls2 = com.qitong.gateway.sandbox.SandboxEngine.parseCalls(content, executedSigs)
+                    if (calls2.isEmpty() && executedCalls && lastToolResult.isNotBlank()) {
+                        // ★ v1.260 真结果已拿到：不再诱导模型道歉/继续，直接把真实结果交付
+                        content = finalizeText(content, true, lastToolFailed, lastToolError, toolResultsSummary.toString(), lastToolResult)
+                        break
+                    }
                     if (calls2.isEmpty() && noCallGuide < 2 && continueIntent(content)) {
                         noCallGuide++
-                        // ★ v1.218 去重：避免「好的，我继续查」与过渡话术重复刷屏
-                        val contMsg = "💭 好的，我继续查…"
-                        if (contMsg != lastSpokenText) { lastSpokenText = contMsg; smartSend(contMsg, false) }
+                        // ★ v1.260 不再发「好的，我继续查…」这种空过程消息
                         val guideBody2 = JSONObject()
                             .put("model", bot.aiModel)
                             .put("messages", JSONArray()
@@ -2509,7 +2528,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 //   原 loopGuard>0 会让「假调用引导」（没真执行工具）也触发收敛 → 模型被诱导"总结已推送结果"却没结果 → 编"我没真调工具"
                 if (executedCalls && content.isNotBlank()) {
                     // ★ v55 返回前必清洗 XML 标签（防畸形格式泄漏给用户）
-                    val cleaned = cleanFunctionTags(content)
+                    val cleaned = finalizeText(content, executedCalls, lastToolFailed, lastToolError, toolResultsSummary.toString(), lastToolResult)
                     // ★ v1.167 用户原文已在 askModel 入口幂等写入 hist，此处不再重复写（防 user→user 串台）
                     // ★ v1.133 自主式收敛：执行过工具（loopGuard>0）→ 最终强制模型生成简短收尾，绝不复述已推送的结果
                     try {
@@ -2524,7 +2543,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                     "现在请直接给出**完整、有价值的最终答复**，像一个真正聪明的助理那样：该分析就分析、该总结就总结、该给建议就给建议，" +
                                     "**把话说完整、说清楚、该长则长（一段写不下就分多段、用列表/条目输出）**，不要人为压缩成一句话。" +
                                     "**不要机械照抄**已推送的原始数字/数据，但可以用你自己的语言解读、总结、补充观点。\n" +
-                                    "⚠️ 严禁说「我刚才没调用工具」「没有工具结果」「我没真执行」这类否认话术——你确实执行了！直接基于执行结果给最终答复，禁止空话（如『已完成请查看』）。")))
+                                    "⚠️ 严禁说「我刚才没调用工具」「没有工具结果」「我没真执行」这类否认话术——你确实执行了！直接基于执行结果给最终答复，禁止空话（如『已完成请查看』）。\n" +
+                                    "⚠️ 禁止道歉、禁止说『我刚才没真干活/光背规则』，这没有意义。必须把工具返回的关键结果（时间/数字/状态/名单）写进最终答复；用户可能没看到过程消息。")))
                             .toString()
                         val closeReq = Request.Builder()
                             .url("http://127.0.0.1:$gatewayPort/v1/chat/completions")
@@ -2546,7 +2566,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         // ★ v1.232 修复「看了个毛线」：closeBody 收敛失败/空时，兜底用真实工具结果摘要，
                     //   绝不把原始模型输出（可能含 [[沙盒:...]] 调用标签/过程文本）当最终回复发出去
                     if (!closeContent.isNullOrBlank() && closeContent.length > 2) {
-                        val closeCleaned = finalizeText(closeContent, executedCalls, lastToolFailed, lastToolError, toolResultsSummary.toString())
+                        val closeCleaned = finalizeText(closeContent, executedCalls, lastToolFailed, lastToolError, toolResultsSummary.toString(), lastToolResult)
                         // ★ v1.191 真执行过工具才标完成；否则标"已结束（未执行真实工具）"——不再空话还标✅
                         com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                             if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
@@ -2564,7 +2584,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     // 收敛拿不到模型总结 → 用真实工具结果摘要兜底（用户至少看到实际数据，不是标签/空话）
                     if (executedCalls && toolResultsSummary.toString().isNotBlank()) {
                         com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done", "✅ 任务完成（结果摘要）")
-                        val summary = finalizeText("", executedCalls, lastToolFailed, lastToolError, toolResultsSummary.toString())
+                        val summary = finalizeText("", executedCalls, lastToolFailed, lastToolError, toolResultsSummary.toString(), lastToolResult)
                         synchronized(hist) {
                             if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
                                 hist.add("assistant" to summary)
