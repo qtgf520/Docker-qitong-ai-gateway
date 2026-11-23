@@ -226,13 +226,13 @@ object SandboxEngine {
             .put(func("gateway_toggle", "网关全局启停（管理员；action=start/stop/toggle）", "admin", "modify", listOf(param("action", false, "start/stop/toggle默认toggle")), "启停结果"))
             .put(func("gateway_user_toggle", "我的API开关（普通用户只控制自己的转发）", "user", "modify", emptyList(), "我的API状态"))
             .put(func("gateway_active_model", "查看/设置活跃模型（管理员全局，用户看自己）", "user", "read", listOf(param("modelKey", false, "模型Key，空=只看当前")), "当前活跃模型"))
-            .put(func("gateway_forced_pool", "管理强制故障池（管理员全局，用户自己的池；action=add/remove/move/clear，move 用 dir=up/down 调顺序，序号=切换优先）", "user", "modify", listOf(param("action", true, "add/remove/move/clear"), param("modelKey", true, "模型Key"), param("dir", false, "move用：up上移/down下移")), "池内容"))
+            .put(func("gateway_forced_pool", "管理强制故障池（管理员全局，用户自己的池；action=add/remove/move/clear，clear 必须 confirm=true，move 用 dir=up/down 调顺序）", "user", "modify", listOf(param("action", true, "add/remove/move/clear"), param("modelKey", false, "模型Key"), param("dir", false, "move用：up上移/down下移"), param("confirm", false, "clear必须true")), "池内容"))
             .put(func("gateway_auto_speedtest", "自动测速开关+间隔（管理员全局，用户自己的）", "user", "modify", listOf(param("enabled", true, "true/false"), param("intervalMin", false, "间隔分钟默认240")), "设置结果"))
             .put(func("speedtest_rank", "查看测速排行（只读；返回全部已启用模型的健康/TPS/首字延迟并排序）", "user", "read", emptyList(), "排行列表/最优链路"))
             .put(func("failover_status", "查看故障切换状态（只读；自动切换开关/当前活跃模型/强制池/健康候选/失败模型）", "user", "read", emptyList(), "切换状态"))
             .put(func("failover_switch", "手动切换活跃模型（修改，管理员全局/用户自己；modelKey=providerId::modelId）", "user", "modify", listOf(param("modelKey", true, "模型Key，如 1::deepseek-chat")), "切换结果"))
             .put(func("failover_toggle", "开关自动故障转移（修改，管理员）", "admin", "modify", listOf(param("enabled", true, "true/false")), "开关结果"))
-            .put(func("failover_clear", "清空强制故障池（修改）", "user", "modify", emptyList(), "清空结果"))
+            .put(func("failover_clear", "清空强制故障池（破坏性修改；只有用户明确确认才可调用，必须 confirm=true）", "user", "modify", listOf(param("confirm", true, "必须 true，表示用户已明确同意清空")), "清空结果"))
             .put(func("failover_add", "把模型加入强制故障池（修改；modelKeys=providerId::modelId,逗号分隔）", "user", "modify", listOf(param("modelKeys", true, "模型Key，多个逗号分隔")), "加入结果"))
             .put(func("notify_config", "查看通知配置（管理员）：钉钉/邮箱", "admin", "read", emptyList(), "通知配置项"))
             .put(func("notify_test", "发送测试通知（管理员）", "admin", "modify", listOf(param("message", false, "测试消息内容")), "发送结果"))
@@ -264,7 +264,7 @@ object SandboxEngine {
 【执行纪律 · v1.256（任务模式必须遵守）】
 A. 任务型请求（查/改/部署/排查/添加/切换/继续）第一轮就必须输出真实工具调用；禁止只描述计划、禁止反问「要不要/需不需要/可以吗」——有默认合理做法就直接做。
 B. 禁止 💭/🔧/✅ 等装饰前缀，禁止「我这就去/马上帮你/稍等我看看」这类空话；需要同步进度时只说一句正在执行的具体动作（≤40 字）。
-C. 强制池只有三个真实工具：gateway_forced_pool(action=add/remove/clear)、failover_add(modelKeys=)、failover_clear()。禁止臆造 failover_xxx 其它名字。工具失败最多重试 2 次并换替代方案；不要卖萌道歉、不要长篇解释失败。结果拿到就直接给结论。
+C. 强制池只有三个真实工具：gateway_forced_pool(action=add/remove，clear 必须 confirm=true)、failover_add(modelKeys=providerId::modelId,逗号分隔)、failover_clear(confirm=true)。禁止臆造 failover_xxx 其它名字。清空是破坏性操作：用户没有明确说“清空”时绝对不准调用 clear；用户明确确认后才可 confirm=true。工具返回失败就如实说失败，禁止把失败说成完成，禁止在没拿到结果前下结论。
 D. 用户说「继续/没干完/接着干」→ 直接继续调用工具推进，不要重新解释、不要总结已有内容。
 E. 同一工具同一参数不要重复调用；查询类拿到的数据直接用于下一步，避免原地打转。
 你拥有完整的个人人格、情绪感知能力，可正常陪用户闲聊、共情对话；但自动识别【功能性任务】，任务场景启用 Agent 自主工作模式。两种模式无缝切换，互不覆盖。

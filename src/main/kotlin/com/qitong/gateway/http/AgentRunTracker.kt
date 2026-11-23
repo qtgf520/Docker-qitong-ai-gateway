@@ -112,7 +112,7 @@ object AgentRunTracker {
     /** 上报模型回复摘要（回复到达即调用，面板从"等模型回复"变为"模型已回复：…"） */
     fun modelReply(id: String, replyText: String) {
         val r = runs[id] ?: return
-        r.toolResult = replyText.take(120)   // 复用结果列显示模型回复内容
+        // v1.259 真实工具结果不能被模型话术覆盖：结果列只存工具返回，模型回复只更新动作
         r.currentAction = "模型已回复：${replyText.take(50)}"
         r.updatedAt = System.currentTimeMillis()
         persist(r) // ★ v1.232 P0-B

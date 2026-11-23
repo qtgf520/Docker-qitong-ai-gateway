@@ -364,8 +364,23 @@ object V155Ext2 {
             if (en) "✅ 自动故障转移已开启" else "🛑 自动故障转移已关闭"
         }
         "failover_clear" -> {
-            if (isAdmin) db.setConfig("forced_pool_keys", "") else db.setUserConfig(userId, "forced_pool_keys", "")
-            "✅ 强制池已清空（当前走自动测速与故障转移）"
+            // v1.259 清空是破坏性操作：没有明确 confirm 一律不动池子，防止模型自作主张全清
+            val confirm = (args["confirm"] ?: "").trim().lowercase()
+            if (confirm != "true" && confirm != "yes" && confirm != "1") {
+                val cur = (if (isAdmin) db.getConfig("forced_pool_keys", "") else db.getUserConfig(userId, "forced_pool_keys", ""))
+                    .split(",").filter { it.isNotBlank() }
+                return "⚠️ 清空强制池会影响线上路由，需要用户明确确认。当前池 ${cur.size} 个，未改动。\n用户确认后，再用 failover_clear(confirm=true) 执行。"
+            }
+            val cur = (if (isAdmin) db.getConfig("forced_pool_keys", "") else db.getUserConfig(userId, "forced_pool_keys", ""))
+                .split(",").filter { it.isNotBlank() }
+            if (isAdmin) {
+                db.setConfig("forced_pool_backup", cur.joinToString(","))
+                db.setConfig("forced_pool_keys", "")
+            } else {
+                db.setUserConfig(userId, "forced_pool_backup", cur.joinToString(","))
+                db.setUserConfig(userId, "forced_pool_keys", "")
+            }
+            "✅ 强制池已清空（清空前备份 ${cur.size} 个，可恢复）"
         }
         "failover_add" -> {
             val raw = (args["modelKeys"] ?: args["modelKey"] ?: "").trim()
@@ -375,12 +390,20 @@ object V155Ext2 {
                 val pid = k.substringBefore("::").toLongOrNull(); val mid = k.substringAfter("::", "")
                 pid != null && mid.isNotBlank() && db.getModelByKey(pid, mid)?.isEnabled == true
             }
-            if (valid.isEmpty()) return "❌ 没有可用模型：$raw"
+            val bad = keys - valid.toSet()
+            if (valid.isEmpty()) {
+                val examples = db.getEnabledModels().take(3).joinToString(", ") { "${it.providerId}::${it.modelId}" }
+                return "❌ 没有可用模型：$raw\n有效 key 形如：${examples.ifBlank { "providerId::modelId" }}" +
+                    (if (bad.isNotEmpty()) "\n被拒绝：${bad.joinToString(", ")}" else "")
+            }
             val cur = (if (isAdmin) db.getConfig("forced_pool_keys", "") else db.getUserConfig(userId, "forced_pool_keys", ""))
                 .split(",").filter { it.isNotBlank() }.toMutableList()
             valid.forEach { if (!cur.contains(it)) cur.add(it) }
             if (isAdmin) db.setConfig("forced_pool_keys", cur.joinToString(",")) else db.setUserConfig(userId, "forced_pool_keys", cur.joinToString(","))
-            "✅ 已加入强制池 ${valid.size} 个：${valid.joinToString(", ")}"
+            buildString {
+                append("✅ 已加入强制池 ${valid.size} 个：${valid.joinToString(", ")}")
+                if (bad.isNotEmpty()) append("\n⚠️ 未加入（key 无效/模型未启用）：${bad.joinToString(", ")}")
+            }
         }
         "gateway_forced_pool" -> {
             val action = args["action"] ?: "add"
@@ -401,7 +424,14 @@ object V155Ext2 {
                         current.add(target, item)
                     }
                 }
-                "clear" -> current.clear()
+                "clear" -> {
+                    val confirm = (args["confirm"] ?: "").trim().lowercase()
+                    if (confirm != "true" && confirm != "yes" && confirm != "1") {
+                        return "⚠️ 清空强制池需要用户明确确认，当前 ${current.size} 个未改动。确认后用 action=clear, confirm=true 执行。"
+                    }
+                    db.setConfig("forced_pool_backup", current.joinToString(","))
+                    current.clear()
+                }
                 else -> return "⚠️ action 必须是 add/remove/move/clear"
             }
             db.setConfig(key, current.joinToString(","))

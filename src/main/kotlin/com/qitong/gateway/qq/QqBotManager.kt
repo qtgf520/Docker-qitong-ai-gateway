@@ -489,8 +489,7 @@ object QqBotManager {
         if (!msg.isAt || !atReplyOn) {
             val rawText = stripAt(msg.content).trim()
             if (rawText.isNotEmpty()) {
-                // 消息记录照常留存（不管参不参与）
-                runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "in", rawText, bot.aiModel) }
+                // v1.259 修复入站重复：这里不再先记一条，统一由下方主路径只记一次
                 // 唤醒前缀命中 → 直接参与（跳过冷却，因为这是"被叫"，不算主动插话）
                 if (isWakePrefix) {
                     // 直接往下走（不设冷却，唤醒必回）
@@ -500,12 +499,14 @@ object QqBotManager {
                     val lastJoinKey = "qq_group_join_${msg.groupOpenid}"
                     val lastJoinAt = groupJoinCooldown[lastJoinKey] ?: 0L
                     if (now0 - lastJoinAt < joinCooldownMs) {
+                        runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "in", rawText, bot.aiModel) }
                         db.touchQqGroup(msg.groupOpenid, bot.appid)
                         return
                     }
                     // 决策：不参与则直接返回（不留会话历史、不打扰）
                     if (!shouldJoinGroupChat(rawText, msg.groupOpenid)) {
-                        // 只登记活跃（心跳主动问候用），不触发 AI
+                        // v1.259 不参与也留档一次
+                        runCatching { db.addPlatformMessage("qq", bot.id, msg.memberOpenid, msg.groupOpenid, "in", rawText, bot.aiModel) }
                         db.touchQqGroup(msg.groupOpenid, bot.appid)
                         return
                     }
@@ -1459,6 +1460,32 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     /** ★ v1.166 判断模型是否表达「继续」意图（说继续查/接着弄/下一步 但没输出调用标签 → 引导继续执行，自主 Agent 式不半途而废）
  *  ★ v1.191 扩展：模型表达做事意图（抓取/查看/查找/搜索/读取/检查/确认/重新/试一下 等）但没输出工具标签，
  *    同样引导输出真标签继续干活，绝不"说了不做"就 break 放弃 */
+    /** v1.259 工具失败识别：结果以失败标记开头或含明确失败词，禁止当成功交付 */
+    private fun isToolFailure(r: String): Boolean {
+        val t = r.trim()
+        return t.startsWith("❌") || t.startsWith("⚠️") || t.startsWith("⛔") ||
+            t.contains("执行异常") || t.contains("没有可用模型") || t.contains("不存在或未启用") ||
+            t.contains("失败") || t.contains("未启用") || t.contains("参数错误") || t.contains("语法：")
+    }
+
+    /** v1.259 最终答复兜底：失败必须承认，承诺必须换成真实工具摘要 */
+    private fun finalizeText(text: String, executed: Boolean, failed: Boolean, error: String, summary: String): String {
+        val cleaned = cleanFunctionTags(text).trim()
+        if (failed) {
+            val admits = cleaned.contains("失败") || cleaned.contains("没成") || cleaned.contains("未成功") ||
+                cleaned.contains("没成功") || cleaned.contains("❌") || cleaned.contains("无法") || cleaned.contains("没有可用")
+            if (!admits) {
+                val err = cleanFunctionTags(error).trim().take(260)
+                return "⚠️ 这一步没成，我不糊弄你：\n${err.ifBlank { "工具返回失败" }}\n\n要我换个方式再试一次，直接说。"
+            }
+        }
+        if (executed && (cleaned.isBlank() || isPromiseOnly(cleaned))) {
+            val real = cleanFunctionTags(summary).trim().take(1800)
+            if (real.isNotBlank()) return real
+        }
+        return cleaned
+    }
+
     private fun continueIntent(text: String): Boolean = text.contains("继续", true) ||
         text.contains("接着", true) || text.contains("再查", true) || text.contains("下一步", true) ||
         text.contains("让我", true) || text.contains("我去", true) || text.contains("我来", true) ||
@@ -2136,6 +2163,9 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 //   原用 loopGuard>0 判断，假调用引导（模型说"正在调用"但没输出标签→引导）也会 loopGuard++ → 误触发收敛
                 //   → 模型被诱导"总结已推送的工具结果"但实际没执行 → 编出"我没真调任何工具"式空转话痨
                 var executedCalls = false
+                // v1.259 记录最后一次工具失败，禁止把失败说成完成
+                var lastToolFailed = false
+                var lastToolError = ""
                 // ★ v1.232 P0-C 工具预算：本次运行累计实际执行工具数（达上限强制收敛，防无限循环耗尽资源）
                 var runToolCount = 0
                 // ★ v1.232 P0-C 跨轮累计被跳过的工具调用数（单轮超出预算部分）
@@ -2309,7 +2339,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         // ★ v1.166 修复长文截断：工具结果完整推送（不再 take(120) 只推摘要），长文本分段由 smartSend 自动拆
                         //   自主式：结果就是结果，必须完整给用户看到
                         val rShow = r.trim()
-                        smartSend("✅ $fn 完成：\n$rShow", false)
+                        if (isToolFailure(r)) {
+                            lastToolFailed = true; lastToolError = rShow.take(300)
+                            smartSend("❌ $fn 失败：\n$rShow", false)
+                        } else {
+                            smartSend("✅ $fn 完成：\n$rShow", false)
+                        }
                         db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] $args", 0)
                     } else {
                         // 多调用并行（★ v1.130 实时推送：先讲要并行做哪几步）
@@ -2333,7 +2368,12 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                                     runToolCount++ // ★ v1.232 P0-C 累计实际执行工具数
                                     // ★ v1.166 修复长文截断：并行工具结果也完整推送（不再 take(120)）
                                     val rShow = r.trim()
-                                    smartSend("✅ $fn 完成：\n$rShow", false)
+                                    if (isToolFailure(r)) {
+                                        lastToolFailed = true; lastToolError = rShow.take(300)
+                                        smartSend("❌ $fn 失败：\n$rShow", false)
+                                    } else {
+                                        smartSend("✅ $fn 完成：\n$rShow", false)
+                                    }
                                     db.addQqLog(bot.appid, groupOpenid, userOpenid, "sandbox", "[$fn] 并行执行", 0)
                                 } catch (e: Exception) {
                                     results.append(if (results.isEmpty()) "" else "\n").append("【工具执行异常】\n${e.message}")
@@ -2506,7 +2546,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                         // ★ v1.232 修复「看了个毛线」：closeBody 收敛失败/空时，兜底用真实工具结果摘要，
                     //   绝不把原始模型输出（可能含 [[沙盒:...]] 调用标签/过程文本）当最终回复发出去
                     if (!closeContent.isNullOrBlank() && closeContent.length > 2) {
-                        val closeCleaned = cleanFunctionTags(closeContent)
+                        val closeCleaned = finalizeText(closeContent, executedCalls, lastToolFailed, lastToolError, toolResultsSummary.toString())
                         // ★ v1.191 真执行过工具才标完成；否则标"已结束（未执行真实工具）"——不再空话还标✅
                         com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done",
                             if (executedCalls) "✅ 任务完成" else "⏹ 已结束（本轮未执行真实工具）")
@@ -2524,7 +2564,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     // 收敛拿不到模型总结 → 用真实工具结果摘要兜底（用户至少看到实际数据，不是标签/空话）
                     if (executedCalls && toolResultsSummary.toString().isNotBlank()) {
                         com.qitong.gateway.http.AgentRunTracker.finish(agentRunId, "done", "✅ 任务完成（结果摘要）")
-                        val summary = cleanFunctionTags(toolResultsSummary.toString().trim()).take(1800)
+                        val summary = finalizeText("", executedCalls, lastToolFailed, lastToolError, toolResultsSummary.toString())
                         synchronized(hist) {
                             if (hist.lastOrNull()?.first == "user" && hist.lastOrNull()?.second == userText) {
                                 hist.add("assistant" to summary)
