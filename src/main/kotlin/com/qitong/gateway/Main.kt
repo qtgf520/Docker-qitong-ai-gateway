@@ -240,7 +240,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.254"))
+                put("version", JsonPrimitive("1.258"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -850,6 +850,76 @@ fun Application.moduleWeb(database: Database) {
             val u = call.requireAuth(database) ?: return@get
             val cache = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
             AdminApi.ok(call, cache, "ok")
+        }
+        // ★ v1.255 测速排行（查询接口）
+        get("/api/speedtest/rank") {
+            val u = call.requireAuth(database) ?: return@get
+            val health = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
+                .associateBy { "${it["providerId"]}::${it["modelId"]}" }
+            val rows = database.getEnabledModels().filter { u.role == "admin" || it.isPublic || it.ownerId == u.id }
+                .map { m ->
+                    val key = "${m.providerId}::${m.modelId}"
+                    val h = health[key]
+                    mapOf<String, Any?>(
+                        "modelKey" to key, "providerId" to m.providerId, "modelId" to m.modelId,
+                        "displayName" to m.displayName.ifBlank { m.modelId },
+                        "isHealthy" to (h?.get("isHealthy") as? Boolean ?: true),
+                        "ttftMs" to ((h?.get("ttftMs") as? Number)?.toLong() ?: -1L),
+                        "tps" to ((h?.get("tps") as? Number)?.toDouble() ?: 0.0),
+                        "totalMs" to ((h?.get("totalMs") as? Number)?.toLong() ?: -1L),
+                        "lastCheckTime" to ((h?.get("lastCheckTime") as? Number)?.toLong() ?: 0L),
+                        "measured" to (h != null)
+                    )
+                }.sortedWith(compareByDescending<Map<String, Any?>> { it["isHealthy"] == true }
+                    .thenByDescending { (it["tps"] as? Double) ?: 0.0 }
+                    .thenBy { if ((it["ttftMs"] as? Long ?: -1L) < 0) Long.MAX_VALUE else (it["ttftMs"] as Long) })
+            AdminApi.ok(call, mapOf("models" to rows, "best" to com.qitong.gateway.http.GatewayScheduler.bestSnapshot(), "count" to rows.size), "ok")
+        }
+        // ★ v1.255 故障切换状态
+        get("/api/failover/status") {
+            val u = call.requireAuth(database) ?: return@get
+            val active = if (u.role == "admin") database.getConfig("active_model_key", "")
+                else database.getUserConfig(u.id, "active_model_key", "")
+            val pool = (if (u.role == "admin") database.getConfig("forced_pool_keys", "")
+                else database.getUserConfig(u.id, "forced_pool_keys", "")).split(",").filter { it.isNotBlank() }
+            val health = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
+            val healthy = health.filter { it["isHealthy"] == true }.sortedBy { (it["ttftMs"] as? Number)?.toLong() ?: Long.MAX_VALUE }
+            val failing = health.filter { it["isHealthy"] != true }
+            AdminApi.ok(call, mapOf(
+                "autoFailover" to database.getConfig("auto_failover", "true").toBoolean(),
+                "activeModelKey" to active,
+                "forcedPool" to pool,
+                "best" to com.qitong.gateway.http.GatewayScheduler.bestSnapshot(),
+                "healthyCount" to healthy.size,
+                "failingCount" to failing.size,
+                "healthyCandidates" to healthy.take(10),
+                "failingModels" to failing.take(10),
+                "enabledModels" to database.getEnabledModels().size
+            ), "ok")
+        }
+        // ★ v1.255 故障切换开关
+        post("/api/failover/toggle") {
+            val u = call.requireAuth(database) ?: return@post
+            if (u.role != "admin") { AdminApi.fail(call, "无权限", 403); return@post }
+            val body = call.receive<JsonObject>()
+            val en = body["enabled"]?.let { it is JsonPrimitive && (it.content == "true" || it.content == "1") } ?: true
+            database.setConfig("auto_failover", en.toString())
+            database.addOpLog(u.id, u.username, "故障切换", "自动故障转移 ${if (en) "开启" else "关闭"}", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("autoFailover" to en), if (en) "自动故障转移已开启" else "自动故障转移已关闭")
+        }
+        // ★ v1.255 手动切换活跃模型
+        post("/api/failover/switch") {
+            val u = call.requireAuth(database) ?: return@post
+            val body = call.receive<JsonObject>()
+            val key = body["modelKey"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (key.isBlank()) { AdminApi.fail(call, "modelKey 不能为空", 400); return@post }
+            val pid = key.substringBefore("::").toLongOrNull()
+            val mid = key.substringAfter("::", "")
+            val model = if (pid != null && mid.isNotBlank()) database.getModelByKey(pid, mid) else null
+            if (model == null || !model.isEnabled) { AdminApi.fail(call, "模型不存在或未启用：$key", 400); return@post }
+            if (u.role == "admin") database.setConfig("active_model_key", key) else database.setUserConfig(u.id, "active_model_key", key)
+            database.addOpLog(u.id, u.username, "故障切换", "活跃模型手动切换为 $key", call.request.local.remoteHost)
+            AdminApi.ok(call, mapOf("activeModelKey" to key), "已切换到 ${model.displayName.ifBlank { model.modelId }}")
         }
         // 传输明细（每次调用一条：上传/下载/token，对齐原APP TokenUsage；admin=全部，普通用户=自己）
         get("/api/usage/recent") {
@@ -3366,7 +3436,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.254"))
+                put("version", JsonPrimitive("1.258"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -4210,7 +4280,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.254"))
+                    put("version", JsonPrimitive("1.258"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

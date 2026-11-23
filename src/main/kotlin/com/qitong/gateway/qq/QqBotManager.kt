@@ -658,6 +658,10 @@ object QqBotManager {
             System.err.println("[QQBot] 重复入站消息已忽略 msgId=$msgId")
             return
         }
+        if (!com.qitong.gateway.http.InboundGuard.firstContent("qq", userOpenid, text)) {
+            System.err.println("[QQBot] 5秒内重复内容已合并 user=$userOpenid text=${text.take(20)}")
+            return
+        }
         // ★ v1.185 进度模式口令：说「隐藏步骤/别发步骤/只回结果」→ 关闭过程推送；「显示步骤/打开步骤」→ 打开
         if (t.contains("隐藏步骤", true) || t.contains("别发步骤", true) || t.contains("不要发步骤", true) ||
             t.contains("只回结果", true) || t.contains("不需要过程", true) || t.contains("别把步骤", true) ||
@@ -754,7 +758,7 @@ object QqBotManager {
         //   verbose 全量推送（工具细节+思考都要有）。预算同理只约束工具细节，思考进度永不被吞。
         val progressBudget = db.getConfig("qq_progress_budget", "20").toIntOrNull() ?: 20
         // ★ v1.223 默认隐藏步骤：progress_mode 默认 quiet（只推思考，不推工具细节）；发「显示步骤」切 verbose
-        val quietProgress = db.getUserConfig(db.getQqBoundUser(userOpenid)?.id ?: 0L, "progress_mode", "quiet") == "quiet"
+        val quietProgress = db.getUserConfig(db.getQqBoundUser(userOpenid)?.id ?: 0L, "progress_mode", "verbose") == "quiet"
         var progressUsed = 0
         // ★ v1.206/★v1.218 判断是否为【机械工具执行细节】推送（quiet 只隐藏这部分，思考/计划/进度全推）：
         //   🔧正在执行/✅完成/⚡同时处理 —— 机械执行消息；"调用/确认一下/继续查" 是思考过渡话术，隐藏/显示都推
@@ -1889,6 +1893,15 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
     //   （「正在调用 fn()」「调用 fn()」等——v1.169 前格式9 误命中重灾区），三渠道行为完全一致
     private fun cleanFunctionTags(text: String): String = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(text)
 
+    /** ★ v1.257 判定「只说计划没交付」：短、含将来动作词、没有完成/数据标记 */
+    private fun looksLikePlanOnly(text: String): Boolean {
+        val s = text.trim()
+        if (s.isEmpty() || s.length > 260) return false
+        if (s.contains("✅") || s.contains("完成") || s.contains("已加") || s.contains("结果")) return false
+        val pats = listOf("我先", "我来看看", "先查", "接下来", "下一步", "我准备", "我先查", "我这就", "正在查", "先去查", "然后加", "再查")
+        return pats.any { s.contains(it) }
+    }
+
     /** 检测文本是否包含函数调用标签（v55：用于解析不到时判断是否需要清洗） */
     private fun containsFunctionTags(text: String): Boolean {
         val norm = text.replace('＜', '<').replace('＞', '>').replace('｜', '|')
@@ -2187,12 +2200,14 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                             content.contains("试试", true) || content.contains("马上", true) ||
                             content.contains("处理", true) || content.contains("重新", true)
                         if (acted) {
-                            val rawS = cleanFunctionTags(content).trim().replace(Regex("\\s+"), " ")
-                            val sp = rawS.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim().take(60)
+                            var rawS = cleanFunctionTags(content).trim().replace(Regex("\\s+"), " ")
+                            rawS = rawS.replace(Regex("^[💭💬🔧✅⏳ ]+"), "").trim()
+                            val sp = if (rawS.length <= 120) rawS else rawS.take(118).trimEnd() + "…"
                             if (sp.length >= 2 && sp != lastSpokenText &&
-                                !sp.contains("工具执行结果") && !sp.contains("调用结果")) {
+                                !sp.contains("工具执行结果") && !sp.contains("调用结果") &&
+                                com.qitong.gateway.http.ProcessGuard.allow(groupOpenid.ifBlank { userOpenid }, sp)) {
                                 lastSpokenText = sp
-                                smartSend("💭 $sp", false)
+                                smartSend("🧠 $sp", false)
                             }
                         }
                     }

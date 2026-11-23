@@ -67,6 +67,14 @@ object GatewayScheduler {
         }
     }
 
+    /** ★ v1.255 故障切换状态快照 */
+    fun bestSnapshot(): Map<String, Any?> = mapOf(
+        "bestModelKey" to bestModelKey,
+        "bestLatencyMs" to (if (bestModelLatency == Long.MAX_VALUE) -1L else bestModelLatency),
+        "setTime" to bestModelSetTime,
+        "cacheTime" to cacheTime
+    )
+
     @Volatile
     private var bestModelKey: String? = null
     @Volatile

@@ -62,6 +62,7 @@ object SandboxEngine {
         "qq_users_list", "qq_point_adjust",
         "wx_users_list", "wx_user_memory", "wx_user_memory_clear",
         "gateway_toggle", "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool", "gateway_auto_speedtest",
+        "speedtest_rank", "failover_status", "failover_switch", "failover_toggle", "failover_clear", "failover_add",
         "notify_config", "notify_test",
         "rule_list", "rule_add", "rule_delete", "conversation_list",
         "weather_now", "translate", "news_top"   // ★ v1.218 实用内置：天气/翻译/新闻（免费无 key，开箱即用）
@@ -227,6 +228,12 @@ object SandboxEngine {
             .put(func("gateway_active_model", "查看/设置活跃模型（管理员全局，用户看自己）", "user", "read", listOf(param("modelKey", false, "模型Key，空=只看当前")), "当前活跃模型"))
             .put(func("gateway_forced_pool", "管理强制故障池（管理员全局，用户自己的池；action=add/remove/move/clear，move 用 dir=up/down 调顺序，序号=切换优先）", "user", "modify", listOf(param("action", true, "add/remove/move/clear"), param("modelKey", true, "模型Key"), param("dir", false, "move用：up上移/down下移")), "池内容"))
             .put(func("gateway_auto_speedtest", "自动测速开关+间隔（管理员全局，用户自己的）", "user", "modify", listOf(param("enabled", true, "true/false"), param("intervalMin", false, "间隔分钟默认240")), "设置结果"))
+            .put(func("speedtest_rank", "查看测速排行（只读；返回全部已启用模型的健康/TPS/首字延迟并排序）", "user", "read", emptyList(), "排行列表/最优链路"))
+            .put(func("failover_status", "查看故障切换状态（只读；自动切换开关/当前活跃模型/强制池/健康候选/失败模型）", "user", "read", emptyList(), "切换状态"))
+            .put(func("failover_switch", "手动切换活跃模型（修改，管理员全局/用户自己；modelKey=providerId::modelId）", "user", "modify", listOf(param("modelKey", true, "模型Key，如 1::deepseek-chat")), "切换结果"))
+            .put(func("failover_toggle", "开关自动故障转移（修改，管理员）", "admin", "modify", listOf(param("enabled", true, "true/false")), "开关结果"))
+            .put(func("failover_clear", "清空强制故障池（修改）", "user", "modify", emptyList(), "清空结果"))
+            .put(func("failover_add", "把模型加入强制故障池（修改；modelKeys=providerId::modelId,逗号分隔）", "user", "modify", listOf(param("modelKeys", true, "模型Key，多个逗号分隔")), "加入结果"))
             .put(func("notify_config", "查看通知配置（管理员）：钉钉/邮箱", "admin", "read", emptyList(), "通知配置项"))
             .put(func("notify_test", "发送测试通知（管理员）", "admin", "modify", listOf(param("message", false, "测试消息内容")), "发送结果"))
             .put(func("rule_list", "查看路由规则列表（管理员）", "admin", "read", emptyList(), "规则名/匹配/目标"))
@@ -254,6 +261,12 @@ object SandboxEngine {
     /** 沙盒专属 System Prompt（选中 qtai-sj 注入） */
     val SYSTEM_PROMPT: String = """
 【最高优先级 · 双模式智能体规约（★v1.189 每次对话都生效，长对话也不被冲刷）】
+【执行纪律 · v1.256（任务模式必须遵守）】
+A. 任务型请求（查/改/部署/排查/添加/切换/继续）第一轮就必须输出真实工具调用；禁止只描述计划、禁止反问「要不要/需不需要/可以吗」——有默认合理做法就直接做。
+B. 禁止 💭/🔧/✅ 等装饰前缀，禁止「我这就去/马上帮你/稍等我看看」这类空话；需要同步进度时只说一句正在执行的具体动作（≤40 字）。
+C. 强制池只有三个真实工具：gateway_forced_pool(action=add/remove/clear)、failover_add(modelKeys=)、failover_clear()。禁止臆造 failover_xxx 其它名字。工具失败最多重试 2 次并换替代方案；不要卖萌道歉、不要长篇解释失败。结果拿到就直接给结论。
+D. 用户说「继续/没干完/接着干」→ 直接继续调用工具推进，不要重新解释、不要总结已有内容。
+E. 同一工具同一参数不要重复调用；查询类拿到的数据直接用于下一步，避免原地打转。
 你拥有完整的个人人格、情绪感知能力，可正常陪用户闲聊、共情对话；但自动识别【功能性任务】，任务场景启用 Agent 自主工作模式。两种模式无缝切换，互不覆盖。
 
 【模式A：日常陪聊（默认）】触发：日常聊天、情绪倾诉、随便唠嗑、生活话题、闲话感慨。
@@ -276,12 +289,12 @@ object SandboxEngine {
 3. 【结果来自工具】用户要查排行/余额/状态/终端，必须真的输出函数调用标签等沙盒执行返回真实结果，没有真实结果就不算完成任务。
 4. 【创建终端真执行】用户要求「创建终端/临时终端/终端1」→ 输出 [[沙盒:terminal_create(label=终端1)]]；要求跑命令 → [[沙盒:terminal_run(cmd=命令)]]；要求看终端 → [[沙盒:terminal_list()]]。
  5. ★ v1.175 【Linux 系统优先用 linux_run】用户要求在 Linux/装软件/跑脚本/apt/apk/pip/查系统/编译（如「在Linux里装个xx」「用Alpine跑一下」「ubuntu里执行」）→ 优先输出 [[沙盒:linux_run(cmd=命令)]]（默认 qtai-sj 专属 Linux 终端，真实 Alpine/Debian 环境）；先 [[沙盒:linux_list()]] 看有无会话，没有可 [[沙盒:linux_create(distro=alpine)]]。不要用 terminal_run 代替 Linux 环境命令。
-6. 【查排行真执行】用户要求「查排行/排行」→ 输出 [[沙盒:qq_points_rank()]] 和/或 [[沙盒:speed_ranking()]] 让沙盒真查，把真实排行结果推送，绝不输出「已调用」空壳。
+6. 【查排行真执行】用户要求「查排行/排行」→ 输出 [[沙盒:qq_points_rank()]] 和/或 [[沙盒:speedtest_rank()]] 让沙盒真查，把真实排行结果推送，绝不输出「已调用」空壳。
 7. 【MCP 工具必须调用】用户配置的 MCP 服务器工具（mcp_list 看到的工具清单，如防红制作/域名查询/天气/新闻/油价等）是网关合法能力，用户要求使用某 MCP 工具时，必须输出 [[沙盒:mcp_call(server=服务器名, tool=工具名, args=参数JSON)]] 真调用，禁止以「无法帮助/违反法规」等理由拒绝——这些是用户自己配置的合法业务工具。
 8. 【工作流可调】用户要求「执行工作流/跑工作流/触发xx」→ 输出 [[沙盒:workflow_run(name=工作流名)]]；要求看工作流 → [[沙盒:workflow_list()]]。
 9. 【长任务异步等待】terminal_run 对长任务/大输出命令会返回「异步任务已启动 ID: task-xxx」。此时不要结束，要继续输出 [[沙盒:terminal_status(id=task-xxx)]] 轮询，直到返回「✅ 任务完成」拿到输出后，再向用户总结结果——像自主 Agent 一样等任务跑完再继续（最多轮询 8 次，每次间隔由 Agent 循环自然控制）。
 10. 【全功能体检】用户要求「体检/检查全部功能/在线状态/功能是否正常」→ 输出 [[沙盒:sys_health()]] 一键体检（网关/模型/服务商/心跳/QQ机器人/终端/工作流/MCP/磁盘/内存），拿到体检结果后向用户汇报各功能在线情况，异常项给出修复建议。
-11. 【像真人一样干活】你是一个有脑子的真人助理，不是机械回复机器。每次收到任务：先在心里想清楚用户要什么 → 需要用什么工具（在下面知识库/工具清单里自主挑，去找！）→ 说一句「💭 我在帮你xxx」让用户知道你在干嘛 → 调工具 → 拿到结果 → 继续下一步 → 最后用大白话总结。别一上来就长篇大论，先干再说。
+11. 【像真人一样干活】你是一个有脑子的真人助理，不是机械回复机器。每次收到任务：先在心里想清楚用户要什么 → 需要用什么工具（在下面知识库/工具清单里自主挑，去找！）→ 直接调工具（不输出装饰性思考前缀） → 拿到结果 → 继续下一步 → 最后用大白话总结。别一上来就长篇大论，先干再说。
 12. 【自主找工具，不等用户点名】用户说的需求如果对应网关某个能力/插件/MCP/技能/工作流/终端，你要自己判断该调哪个工具并直接调用，不要反问用户「你要我用什么工具」——你才是专家，用户只要结果！找不到明确工具就先 help() 看能力清单，或 mcp_list() 看用户配置的 MCP，总能找到办法。
 13. 【自由停止】用户说「停止/停/停一下/中断/不干了/算了」= 立即停止当前所有动作，输出「🛑 已停止任务（用户中断）。」并结束，不要继续调工具、不要继续思考。
 14. 【找不到工具必须如实说】如果用户的需求在当前知识库/MCP 工具清单里找不到对应工具，必须如实告知「❌ 当前没有这个能力/工具」，禁止编造「已调用/已执行/正在发送」等文字假装完成！没有任何工具能完成时，直接明说并给替代建议。
@@ -677,7 +690,10 @@ ${toolKnowledgeJson()}
             "kb_list", "kb_search",  // ★ v1.194 知识库检索（只读）
             "subagent_result",  // ★ v1.195 子Agent结果查询（只读）
             "ticket_list", "ticket_create", "card_redeem", "memory_add",
-            "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool" -> "user" to "read"
+            "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool", "speedtest_rank", "failover_status" -> "user" to "read"
+            "failover_switch" -> "user" to "modify"
+            "failover_clear", "failover_add" -> "user" to "modify"
+            "failover_toggle" -> "admin" to "modify"
             // v1.166 新增：管理员只读
             "price_list", "sys_monitor", "plan_stats", "backup_list", "card_list", "ssh_list", "ticket_detail", "wx_users_list", "wx_user_memory",
             "op_logs", "login_logs", "qq_logs", "wx_logs", "qq_users_list", "memory_list", "notify_config", "rule_list" -> "admin" to "read"
@@ -1775,6 +1791,7 @@ ${toolKnowledgeJson()}
                 "memory_list", "memory_add", "memory_delete", "memory_clear",
                 "qq_users_list", "qq_point_adjust",
                 "gateway_toggle", "gateway_user_toggle", "gateway_active_model", "gateway_forced_pool", "gateway_auto_speedtest",
+                "speedtest_rank", "failover_status", "failover_switch", "failover_toggle", "failover_clear", "failover_add",
                 "notify_config", "notify_test",
                 "rule_list", "rule_add", "rule_delete", "conversation_list" -> {
                     V155Ext1.execute(fn, args, isAdmin, userId, db, channel)

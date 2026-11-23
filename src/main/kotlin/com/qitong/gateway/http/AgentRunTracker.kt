@@ -69,7 +69,7 @@ object AgentRunTracker {
         // 同一用户的旧运行标记为完成（防止残留"运行中"）
         runs.values.forEach { r ->
             if (r.channel == channel && r.userKey == userKey && r.status == "running") {
-                r.status = "done"; r.updatedAt = System.currentTimeMillis()
+                r.status = "done"; r.currentAction = r.currentAction + "（被新任务替换）"; r.updatedAt = System.currentTimeMillis(); persist(r)
             }
         }
         runs[id] = RunState(
@@ -142,7 +142,7 @@ object AgentRunTracker {
                     "round" to r.round, "currentAction" to r.currentAction,
                     "toolCall" to r.toolCall, "toolResult" to r.toolResult,
                     "messagePreview" to r.messagePreview,
-                    "elapsedSec" to ((now - r.startedAt) / 1000)
+                    "elapsedSec" to (if (r.status == "running") (now - r.startedAt) / 1000 else (r.updatedAt - r.startedAt) / 1000)
                 )
             }
         // ★ v1.232 P0-B：重启后内存空，从库里读 interrupted 历史（上次崩溃残留）补充展示
@@ -181,13 +181,13 @@ object AgentRunTracker {
         // ★ v1.175 卡顿可见：运行中但 90 秒没任何状态更新（模型/工具超时卡住）→ 标记超时结束，面板能看到"卡在哪"
         runs.entries.forEach { (_, r) ->
             if (r.status == "running" && now - r.updatedAt > 90 * 1000L) {
-                r.status = "done"
-                r.currentAction = r.currentAction + "（⏱ 超时结束：90秒无进展）"
+                r.status = "done"; r.updatedAt = now
+                r.currentAction = r.currentAction + "（⏱ 超时结束：90秒无进展）"; persist(r)
             }
         }
         // 运行中但超过 2 小时强制标记超时
         runs.entries.forEach { (_, r) ->
-            if (r.status == "running" && now - r.startedAt > 2 * 60 * 60 * 1000L) r.status = "done"
+            if (r.status == "running" && now - r.startedAt > 2 * 60 * 60 * 1000L) { r.status = "done"; r.updatedAt = now; persist(r) }
         }
     }
 }

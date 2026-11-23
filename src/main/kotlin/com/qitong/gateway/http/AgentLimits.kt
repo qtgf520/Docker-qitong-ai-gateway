@@ -9,10 +9,10 @@ package com.qitong.gateway.http
 object AgentLimits {
 
     /** QQ 渠道 Agent 多步循环最大轮数 */
-    const val MAX_ROUNDS_QQ = 20
+    const val MAX_ROUNDS_QQ = 30
 
     /** 微信渠道 Agent 多步循环最大轮数 */
-    const val MAX_ROUNDS_WX = 20
+    const val MAX_ROUNDS_WX = 30
 
     /** 内置聊天渠道 Agent 多步循环最大轮数 */
     const val MAX_ROUNDS_CHAT = 8
@@ -24,10 +24,10 @@ object AgentLimits {
     const val MAX_TOOLS_PER_RUN = 24
 
     /** 单次 Agent 运行总时长上限（毫秒）：替代"90s 一刀切" */
-    const val MAX_SECONDS_QQ = 300_000L
-    const val MAX_SECONDS_WX = 300_000L
+    const val MAX_SECONDS_QQ = 900_000L
+    const val MAX_SECONDS_WX = 900_000L
     const val MAX_SECONDS_CHAT = 600_000L
 
     /** 长任务心跳：超过该间隔就推一次"还在处理" */
-    const val HEARTBEAT_MS = 60_000L
+    const val HEARTBEAT_MS = 20_000L
 }

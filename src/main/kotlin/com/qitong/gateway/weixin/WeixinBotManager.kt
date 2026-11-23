@@ -252,6 +252,10 @@ object WeixinBotManager {
             System.err.println("[WeixinBot] 重复入站消息已忽略 msgId=${msg.msgId}")
             return
         }
+        if (!com.qitong.gateway.http.InboundGuard.firstContent("wx", msg.from, t)) {
+            System.err.println("[WeixinBot] 5秒内重复内容已合并 from=${msg.from}")
+            return
+        }
         val t0 = System.currentTimeMillis()
         val wxSettings = d.getPlatformSettings("weixin")
         // ★ v1.218 唤醒设置：忽略自己发送的消息（ignoreSelf）
@@ -851,12 +855,14 @@ object WeixinBotManager {
                             content.contains("试试", true) || content.contains("马上", true) ||
                             content.contains("处理", true) || content.contains("重新", true)
                         if (actedWx) {
-                            val rawWx = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
-                            val spWx = rawWx.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim().take(60)
+                            var rawWx = com.qitong.gateway.sandbox.SandboxEngine.cleanCallTags(content).trim().replace(Regex("\\s+"), " ")
+                            rawWx = rawWx.replace(Regex("^[💭💬🔧✅⏳ ]+"), "").trim()
+                            val spWx = if (rawWx.length <= 120) rawWx else rawWx.take(118).trimEnd() + "…"
                             if (spWx.length >= 2 && spWx != lastSpokenText &&
-                                !spWx.contains("工具执行结果") && !spWx.contains("调用结果")) {
+                                !spWx.contains("工具执行结果") && !spWx.contains("调用结果") &&
+                                com.qitong.gateway.http.ProcessGuard.allow(msg.from, spWx)) {
                                 lastSpokenText = spWx
-                                pSend("💭 $spWx")
+                                pSend("🧠 $spWx")
                             }
                         }
                     }

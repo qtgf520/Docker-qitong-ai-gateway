@@ -323,6 +323,65 @@ object V155Ext2 {
                 "✅ 活跃模型已切换为 ${key.substringAfter("::", key)}"
             }
         }
+        "speedtest_rank" -> {
+            val health = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
+                .associateBy { "${it["providerId"]}::${it["modelId"]}" }
+            val rows = db.getEnabledModels().filter { isAdmin || it.isPublic || it.ownerId == userId }.map { m ->
+                val h = health["${m.providerId}::${m.modelId}"]
+                Triple("${m.providerId}::${m.modelId}", h, m.displayName.ifBlank { m.modelId })
+            }.sortedWith(compareByDescending<Triple<String, Map<String, Any?>?, String>> { (it.second?.get("isHealthy") as? Boolean) ?: true }
+                .thenByDescending { ((it.second?.get("tps") as? Number)?.toDouble()) ?: 0.0 }
+                .thenBy { ((it.second?.get("ttftMs") as? Number)?.toLong()) ?: Long.MAX_VALUE })
+            if (rows.isEmpty()) "暂无已启用模型"
+            else "🏁 测速排行（${rows.size} 个）\n" + rows.take(15).joinToString("\n") { (k, h, name) ->
+                val ok = (h?.get("isHealthy") as? Boolean) ?: true
+                val tps = (h?.get("tps") as? Number)?.toDouble() ?: 0.0
+                val ttft = (h?.get("ttftMs") as? Number)?.toLong() ?: -1L
+                "%s %s  TPS %.1f  首字 %s  [%s]".format(if (ok) "✅" else "⚠️", name, tps, if (ttft >= 0) "${ttft}ms" else "未测", k)
+            }
+        }
+        "failover_status" -> {
+            val active = if (isAdmin) db.getConfig("active_model_key", "") else db.getUserConfig(userId, "active_model_key", "")
+            val pool = (if (isAdmin) db.getConfig("forced_pool_keys", "") else db.getUserConfig(userId, "forced_pool_keys", "")).split(",").filter { it.isNotBlank() }
+            val health = com.qitong.gateway.http.GatewayScheduler.healthCacheSnapshot()
+            val best = com.qitong.gateway.http.GatewayScheduler.bestSnapshot()
+            "🔀 故障切换\n自动切换：${if (db.getConfig("auto_failover", "true").toBoolean()) "开启" else "关闭"}\n当前活跃：${active.ifBlank { "qtai-sj 自动" }}\n强制池：${pool.joinToString(" → ").ifBlank { "空" }}\n最优链路：${best["bestModelKey"] ?: "未测"}\n健康 ${health.count { it["isHealthy"] == true }} / 失败 ${health.count { it["isHealthy"] != true }}"
+        }
+        "failover_switch" -> {
+            val key = args["modelKey"]?.trim().orEmpty()
+            if (key.isBlank()) return "⚠️ 语法：failover_switch(modelKey=providerId::modelId)"
+            val pid = key.substringBefore("::").toLongOrNull()
+            val mid = key.substringAfter("::", "")
+            val model = if (pid != null && mid.isNotBlank()) db.getModelByKey(pid, mid) else null
+            if (model == null || !model.isEnabled) return "❌ 模型不存在或未启用：$key"
+            if (isAdmin) db.setConfig("active_model_key", key) else db.setUserConfig(userId, "active_model_key", key)
+            "✅ 已切换到 ${model.displayName.ifBlank { model.modelId }}"
+        }
+        "failover_toggle" -> {
+            if (!isAdmin) return "⛔ 只有管理员能开关自动故障转移"
+            val en = args["enabled"]?.let { it == "true" || it == "1" } ?: true
+            db.setConfig("auto_failover", en.toString())
+            if (en) "✅ 自动故障转移已开启" else "🛑 自动故障转移已关闭"
+        }
+        "failover_clear" -> {
+            if (isAdmin) db.setConfig("forced_pool_keys", "") else db.setUserConfig(userId, "forced_pool_keys", "")
+            "✅ 强制池已清空（当前走自动测速与故障转移）"
+        }
+        "failover_add" -> {
+            val raw = (args["modelKeys"] ?: args["modelKey"] ?: "").trim()
+            if (raw.isBlank()) return "⚠️ 语法：failover_add(modelKeys=providerId::modelId,多个用逗号分隔)"
+            val keys = raw.split(",", "，").map { it.trim() }.filter { it.isNotBlank() }
+            val valid = keys.filter { k ->
+                val pid = k.substringBefore("::").toLongOrNull(); val mid = k.substringAfter("::", "")
+                pid != null && mid.isNotBlank() && db.getModelByKey(pid, mid)?.isEnabled == true
+            }
+            if (valid.isEmpty()) return "❌ 没有可用模型：$raw"
+            val cur = (if (isAdmin) db.getConfig("forced_pool_keys", "") else db.getUserConfig(userId, "forced_pool_keys", ""))
+                .split(",").filter { it.isNotBlank() }.toMutableList()
+            valid.forEach { if (!cur.contains(it)) cur.add(it) }
+            if (isAdmin) db.setConfig("forced_pool_keys", cur.joinToString(",")) else db.setUserConfig(userId, "forced_pool_keys", cur.joinToString(","))
+            "✅ 已加入强制池 ${valid.size} 个：${valid.joinToString(", ")}"
+        }
         "gateway_forced_pool" -> {
             val action = args["action"] ?: "add"
             val modelKey = args["modelKey"]?.trim().orEmpty()

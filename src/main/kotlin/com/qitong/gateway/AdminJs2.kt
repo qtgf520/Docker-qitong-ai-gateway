@@ -329,10 +329,39 @@ loaders.speedtest = function(){
     '<button class="btn-ghost" onclick="loadSpeedModels()">刷新列表</button>' +
     '<label style="color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-left:6px"><input type="checkbox" id="stAutoClose" '+(autoClose?'checked':'')+' onchange="localStorage.setItem(\'stAutoClose\', this.checked?\'1\':\'0\')">测速失败自动停用</label>' +
     '<label style="color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-left:6px"><input type="checkbox" id="stAutoEnable" '+(autoEnable?'checked':'')+' onchange="localStorage.setItem(\'stAutoEnable\', this.checked?\'1\':\'0\')">测速可用自动启用</label>' +
-    '<span style="color:var(--muted);font-size:13px">后台逐模型测速：离开页面也继续跑，回来看进度/结果</span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">加载模型列表...</div></div>';
+    '<span style="color:var(--muted);font-size:13px">后台逐模型测速：离开页面也继续跑，回来看进度/结果</span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">加载模型列表...</div></div>' +
+    '<div class="card" id="foCard" style="margin-top:16px"><h3>🔀 故障切换</h3><div style="color:var(--muted);padding:10px">加载中…</div></div>';
   // 先渲染待测列表，再检查是否有后台任务在跑 → 有则继续轮询
   loadSpeedModels();
   checkSpeedTask();
+  loadFailoverStatus();
+};
+window.loadFailoverStatus = function(){
+  var box = $('foCard'); if(!box) return;
+  api('/api/failover/status').then(function(r){
+    if(r.code !== 0){ box.innerHTML = '<h3>🔀 故障切换</h3><div style="color:var(--red);padding:10px">'+esc(r.msg||'加载失败')+'</div>'; return; }
+    var d = r.data || {};
+    var auto = !!d.autoFailover;
+    var best = (d.best && d.best.bestModelKey) ? d.best.bestModelKey : '未测速';
+    var cands = (d.healthyCandidates||[]).map(function(h){
+      var key = h.providerId + '::' + h.modelId;
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)">' +
+        '<span style="flex:1;font-size:13px">'+esc(key)+' <span class="badge green">正常</span>'+(h.ttftMs>=0?'<small style="color:var(--muted)"> 首字 '+h.ttftMs+'ms</small>':'')+'</span>' +
+        '<button class="btn-sm btn-ghost" onclick="foSwitch(\''+esc(key)+'\')">切到此模型</button></div>';
+    }).join('') || '<div style="color:var(--muted);font-size:13px;padding:8px 0">暂无健康候选，先跑一次测速</div>';
+    box.innerHTML = '<h3>🔀 故障切换 <span style="font-size:12px;color:var(--muted);font-weight:normal">自动切换 '+(auto?'已开启':'已关闭')+'</span></h3>' +
+      '<div class="action-bar"><label style="font-size:13px;display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="foAuto" '+(auto?'checked':'')+' onchange="foToggle(this.checked)">自动故障转移</label>' +
+      '<button class="btn-ghost btn-sm" onclick="loadFailoverStatus()">刷新状态</button></div>' +
+      '<div style="font-size:13px;line-height:2">当前活跃：<b>'+esc(d.activeModelKey||'qtai-sj 自动')+'</b><br>当前最优链路：<b>'+esc(best)+'</b><br>强制池：'+esc((d.forcedPool||[]).join(' → ')||'空')+'<br>健康 '+d.healthyCount+' 个 / 失败 '+d.failingCount+' 个 / 已启用 '+d.enabledModels+' 个</div>' +
+      '<div style="margin-top:10px;font-size:12px;color:var(--muted)">健康候选（点按钮手动切活跃）</div>' + cands;
+  });
+};
+window.foToggle = function(en){
+  api('/api/failover/toggle',{method:'POST',body:{enabled:!!en}}).then(function(r){ toast(r.msg, r.code===0); loadFailoverStatus(); });
+};
+window.foSwitch = function(key){
+  if(!confirm('确定把活跃模型切换到 '+key+' ？')) return;
+  api('/api/failover/switch',{method:'POST',body:{modelKey:key}}).then(function(r){ toast(r.msg, r.code===0); loadFailoverStatus(); });
 };
 // 检查后台测速任务（离开页面回来也能接续）
 function checkSpeedTask(){
