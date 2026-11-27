@@ -271,6 +271,54 @@ object GatewayScheduler {
         }
     }
 
+    // ============ ★ v1.265 失败分类与冷却（参考业界网关 channel cooldown 思路，自研实现） ============
+    /**
+     * 模型冷却表：key -> 冷却截止时间戳(ms)。冷却中的模型在故障转移时排到最后，避免反复撞墙。
+     * 不同错误不同冷却时长：429 配额限流=长冷却；5xx 上游故障=中冷却；超时=短冷却。
+     */
+    private val cooldownUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
+     * 按失败类型设置冷却。在 forwardToUpstream 判定失败时调用。
+     * @param httpCode 上游 HTTP 状态码（0/负数=网络异常或超时）
+     * @param elapsedMs 本次尝试耗时
+     */
+    fun markModelCooldown(modelId: String, providerId: Long, httpCode: Int) {
+        val key = routeKey(providerId, modelId)
+        val now = System.currentTimeMillis()
+        val cdMs = when {
+            httpCode == 429 -> 3 * 60_000L        // 配额限流：冷却 3 分钟（等配额窗口）
+            httpCode == 401 || httpCode == 403 -> 10 * 60_000L // 鉴权/权限错：冷却 10 分钟（需人工修配置）
+            httpCode in 500..599 -> 2 * 60_000L   // 上游 5xx：冷却 2 分钟
+            httpCode == 0 || httpCode < 0 -> 45_000L // 网络异常/超时：冷却 45 秒
+            else -> 0L                             // 其他（400 参数错等）：不冷却（换模型也没用，但可能是模型特有）
+        }
+        if (cdMs > 0) {
+            cooldownUntil[key] = now + cdMs
+            println("[Scheduler] 模型冷却 ${providerId}::$modelId code=$httpCode 时长=${cdMs / 1000}s")
+        }
+    }
+
+    /** 该模型当前是否在冷却中 */
+    fun isCoolingDown(modelId: String, providerId: Long): Boolean {
+        val key = routeKey(providerId, modelId)
+        val until = cooldownUntil[key] ?: return false
+        if (System.currentTimeMillis() >= until) { cooldownUntil.remove(key); return false }
+        return true
+    }
+
+    /** 清理已过期的冷却项（避免内存堆积） */
+    fun pruneCooldowns() {
+        val now = System.currentTimeMillis()
+        cooldownUntil.entries.removeIf { it.value <= now }
+    }
+
+    /** 冷却状态快照（前端展示「冷却中」用） */
+    fun cooldownSnapshot(): Map<String, Long> {
+        pruneCooldowns()
+        return cooldownUntil.toMap()
+    }
+
     fun getBestModel(): String? {
         if (bestModelKey != null && System.currentTimeMillis() - bestModelSetTime < BEST_MODEL_TTL) {
             return bestModelKey
@@ -366,6 +414,19 @@ object GatewayScheduler {
                     healthCache[key] = h.copy(
                         successCount = if (h.isHealthy) (existing?.successCount ?: 0) + 1 else 0
                     )
+                }
+                // ★ v1.265 测速历史落库（原表建了从不写 → 无法看趋势/均值；参考业界网关用量分析思路）
+                runCatching {
+                    database.addSpeedHistory(com.qitong.gateway.model.SpeedHistory(
+                        modelKey = key,
+                        modelName = model.modelId,
+                        providerId = model.providerId,
+                        ttftMs = h.ttftMs.toInt(),
+                        tps = h.tps,
+                        totalMs = h.totalMs.toInt(),
+                        success = h.isHealthy,
+                        measuredAt = System.currentTimeMillis()
+                    ))
                 }
                 if (h.isHealthy && h.latencyMs < bestModelLatency || bestModelKey == null) {
                     bestModelKey = key

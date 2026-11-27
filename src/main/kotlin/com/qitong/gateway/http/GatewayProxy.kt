@@ -29,9 +29,10 @@ import java.util.concurrent.TimeUnit
  * 完整支持：OpenAI / Claude / Gemini 格式 + 通用代理 + 流式SSE + 故障转移 + qtai-sj + 参数修正 + 用量统计
  */
 class GatewayProxy(private val database: Database) {
-
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
     private val DEFAULT_CT = "application/json".toMediaType()
+    // ★ v1.265 最近一次上游尝试的真实 HTTP 状态码（forwardToUpstream 写、故障转移读，用于失败分类冷却）
+    @Volatile private var lastUpstreamCode: Int = 0
 
     // ★ v92 响应缓存（非流式 chat 精确缓存：同 model + 同 messages 短时间命中直接返回；受 gateway_config.response_cache 开关控制）
     private fun cacheEnabled(): Boolean = database.getConfig("response_cache", "true").toBoolean()
@@ -724,8 +725,11 @@ class GatewayProxy(private val database: Database) {
         //   自动扩到全量已启用模型按测速排行兜底，绝不让 3 个死模型拖死整个 qtai-sj。
         val poolExtended = run {
             val poolKeys = attemptModels.map { it.providerId to it.modelId }.toSet()
-            // ★ v1.262 兜底池只取测速排行前 12 个（快切不死等），且排除首选已含的
-            val extra = models.filter { it.isEnabled && (it.providerId to it.modelId) !in poolKeys }
+            // ★ v1.265 兜底池：排除首选已含的 + 排除冷却中的（避免反复撞 429/故障模型），只取测速排行前 12
+            val extra = models.filter {
+                it.isEnabled && (it.providerId to it.modelId) !in poolKeys &&
+                    !GatewayScheduler.isCoolingDown(it.modelId, it.providerId)
+            }
                 .let { GatewayScheduler.getSortedModels(it) }
                 .take(12)
             (attemptModels + extra).distinctBy { it.providerId to it.modelId }
@@ -775,13 +779,19 @@ val targetModel = usedList[idx]
                     return
                 }
                 // 非流式失败时记录错误并切换到下一模型（间隔缩短到 150ms，切换更流畅）
-                println("[Gateway] 上游失败 ${targetModel.providerId}::${targetModel.modelId} code=$lastStatusCode err=${lastError ?: "空响应/非2xx"}")
+                // ★ v1.265 失败分类冷却：优先用真实上游状态码（429→3min / 5xx→2min / 401→10min），否则用兜底 502
+                val realCode = if (lastUpstreamCode > 0) lastUpstreamCode else lastStatusCode
+                GatewayScheduler.markModelCooldown(targetModel.modelId, targetModel.providerId, realCode)
+                println("[Gateway] 上游失败 ${targetModel.providerId}::${targetModel.modelId} code=$realCode err=${lastError ?: "空响应/非2xx"}")
+                lastUpstreamCode = 0
                 if (idx < usedList.size - 1) {
                     kotlinx.coroutines.delay(150)
                 }
             } catch (e: Exception) {
                 lastError = e.message
                 lastStatusCode = 502
+                // ★ v1.265 异常（网络/超时）也走冷却
+                GatewayScheduler.markModelCooldown(targetModel.modelId, targetModel.providerId, 0)
                 println("[Gateway] 上游异常 ${targetModel.providerId}::${targetModel.modelId} → ${e.message}")
                 GatewayScheduler.markModelFailed(targetModel.modelId, targetModel.providerId)
                 GatewayScheduler.recordModelResult(targetModel.modelId, targetModel.providerId, false)
@@ -913,6 +923,8 @@ val targetModel = usedList[idx]
 
         val isSuccess = response.isSuccessful
         recordTraffic(upload = uploadBytes)
+        // ★ v1.265 供故障转移读取真实上游状态码（用于失败分类冷却：429/5xx/401 区分）
+        lastUpstreamCode = response.code
         if (!isSuccess) {
             println("[Gateway] 上游返回非2xx: ${provider.id}::${targetModel.modelId} code=${response.code} body=${runCatching { response.peekBody(200).string() }.getOrNull()?.take(120)}")
         }
