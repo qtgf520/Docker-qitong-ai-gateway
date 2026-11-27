@@ -2127,6 +2127,8 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
         //   人话过渡语（"好的我来帮你看一下"）由 StreamChatEngine 边读边回调实时推；
         //   reasoning_content 仅后台参考不展示；纯闲聊（无行动词）不推任何💭
         return try {
+            // ★ v1.263 修复「同句💭重复推送」：lastSpokenText 提前声明到流式回调之前（原在回调后声明，作用域失效去重无效）
+            var lastSpokenText = ""
             // ★ v1.116 注册当前调用到 activeCalls（可被「停止」即时 cancel）
             //   流式引擎内部用独立 OkHttpClient；这里通过 onCancel 协同中断
             val streamResult = com.qitong.gateway.sandbox.StreamChatEngine.chatStream(
@@ -2137,9 +2139,15 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                     val cur = com.qitong.gateway.sandbox.StreamChatEngine.isHumanActionLine(line)
                     if (cur) {
                         val sp = line.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
+                        // ★ v1.263 清洗残缺标点开头碎片（对齐微信）
+                        val spc = sp.trimStart('，', '。', '、', '；', '：', ',', '.', '!', '?', '～', '~', ' ')
                         // ★ v1.261 过滤空承诺式思考：只说不干（我继续查/我看看/正经给你查）不上屏
-                        val emptyTalk = sp.length < 50 && (isPromiseOnly(sp) || continueIntent(sp))
-                        if (sp.isNotEmpty() && !emptyTalk) smartSend("💭 $sp", false)
+                        val emptyTalk = spc.length < 50 && (isPromiseOnly(spc) || continueIntent(spc))
+                        // ★ v1.263 去重：同一句话术只推一次
+                        if (spc.isNotEmpty() && !emptyTalk && spc != lastSpokenText && !spc.contains("工具执行结果")) {
+                            lastSpokenText = spc
+                            smartSend("💭 $spc", false)
+                        }
                     }
                 },
                 onCancel = { stopSignals[userOpenid] == true }
@@ -2165,8 +2173,7 @@ if (t.startsWith("终端 ", true) || t.startsWith("执行 ", true) || t.startsWi
                 // 只推一次「处理中」，中间步骤全部静默（最后结果由外层推）
                 var stepHintSent = false
                 var lastProgressAt = System.currentTimeMillis()
-                // ★ v1.218 模型过渡话术去重标记（"嗯嗯好的/我这就去/我正在…"每轮只推一次）
-                var lastSpokenText = ""
+                // ★ v1.218 模型过渡话术去重标记（v1.263 已提前到流式回调前声明，此处不再重复声明）
                 // ★ v1.133 假调用引导计数器（循环外，跨轮累积，最多引导 2 次）
                 var noCallGuide = 0
                 // ★ v1.169 修复「工具重复执行」：本次会话已执行调用签名集合——同一 fn+参数第二轮不再重复执行

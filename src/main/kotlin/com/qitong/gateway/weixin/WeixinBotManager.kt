@@ -759,6 +759,8 @@ object WeixinBotManager {
                 msgs.put(JSONObject().put("role", "user").put("content", userText))
                 while (hist.size > 20) hist.removeAt(0)
             }
+            // ★ v1.263 修复「同句💭重复推送」：lastSpokenText 提前声明到流式回调之前（原在回调后声明，作用域失效导致去重无效）
+            var lastSpokenText = ""
             // ★ v1.229 学 AstrBot：微信首调改流式（stream=true），AI 边想边说边推人话过渡语
             //   reasoning_content 仅后台参考不展示；纯闲聊（无行动词）不推任何💭
             val streamResult = com.qitong.gateway.sandbox.StreamChatEngine.chatStream(
@@ -769,7 +771,12 @@ object WeixinBotManager {
                     val cur2 = com.qitong.gateway.sandbox.StreamChatEngine.isHumanActionLine(line)
                     if (cur2) {
                         val sp2 = line.removePrefix("好的").removePrefix("嗯").removePrefix("好").trim()
-                        if (sp2.isNotEmpty()) pSend("💭 $sp2")
+                        // ★ v1.263 清洗残缺标点开头的碎片（原「💭 ，我先查一下」「💭 等，我看看」很丑）
+                        val sp2c = sp2.trimStart('，', '。', '、', '；', '：', ',', '.', '!', '?', '～', '~', ' ')
+                        if (sp2c.isNotEmpty() && sp2c != lastSpokenText && !sp2c.contains("工具执行结果")) {
+                            lastSpokenText = sp2c
+                            pSend("💭 $sp2c")
+                        }
                     }
                 },
                 onCancel = { stopSignals[msg.from] == true }
@@ -782,8 +789,7 @@ object WeixinBotManager {
              // ★ v78 收敛标记：本轮是否真执行过工具（结果已实时推送，最终回复不再复述）
             var executedCalls = false
             var lastProgressAt = System.currentTimeMillis()
-            // ★ v1.218 模型过渡话术去重标记（"嗯嗯好的/我这就去/我正在…"每轮只推一次）
-            var lastSpokenText = ""
+            // ★ v1.218 模型过渡话术去重标记（v1.263 已提前到流式回调前声明，此处不再重复声明）
             // ★ v74 qtai-sj 完整 Agent 循环：思考推送 → 解析函数 → 执行 → 结果回填 → 再调模型
             // ★ v1.116 多思考不停息：轮数 5→20，只要模型还在输出函数调用就不停；干不完继续干，除非用户说停
             if (sandboxOn && content.isNotBlank()) {
