@@ -483,6 +483,44 @@ fun Application.moduleGateway(database: Database) {
             val path = "/v1/" + (call.parameters.getAll("path")?.joinToString("/") ?: "")
             proxy.proxyRequest(call, path, call.remoteIp())
         }
+
+        // ★ v1.264 MCP 服务端（网关端口 18889 版）：让 MCP 客户端直连网关端口即可远控全站能力
+        post("/mcp") {
+            // ★ v1.264 用 receive<ByteArray>() 读原始字节（避开 ContentNegotiation 的 String 反序列化问题）
+            val bodyFinal = runCatching {
+                String(call.receive<ByteArray>(), Charsets.UTF_8)
+            }.getOrElse { runCatching { call.receiveText() }.getOrElse { "" } }
+            var userId = 0L
+            var isAdmin = false
+            runCatching {
+                val auth = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim().orEmpty()
+                if (auth.startsWith("sk-")) {
+                    val entry = database.getApiKeys().firstOrNull { it.key == auth && it.enabled }
+                    if (entry != null) {
+                        val ownerId = entry.ownerId
+                        userId = if (ownerId > 0) ownerId else database.getUserByUsername("admin")?.id ?: 0L
+                        isAdmin = database.getUserById(userId)?.role == "admin"
+                    }
+                }
+            }
+            if (userId == 0L) {
+                // ★ v1.264 修复：认证失败直接返回 JSON-RPC 错误（原把错误串当 body 传 handle 掩盖真因）
+                call.respondText(
+                    """{"jsonrpc":"2.0","id":null,"error":{"code":-32001,"message":"未认证：Authorization 头需携带网关 API Key（Bearer sk-xxx）"}}""",
+                    ContentType.Application.Json, HttpStatusCode.Unauthorized
+                )
+                return@post
+            }
+            val resp = com.qitong.gateway.http.McpServer.handle(database, bodyFinal, userId, isAdmin)
+            if (resp.isBlank()) { call.respondText("", ContentType.Application.Json, HttpStatusCode.NoContent); return@post }
+            call.respondText(resp, ContentType.Application.Json)
+        }
+        get("/mcp") {
+            call.respondText(
+                """{"name":"qitong-gateway-mcp","version":"1.264","transport":"http-jsonrpc","endpoint":"POST /mcp","auth":"Authorization: Bearer <网关API Key>","tools":"POST {jsonrpc:2.0,method:tools/list}"}""",
+                ContentType.Application.Json
+            )
+        }
     }
 }
 
@@ -2563,6 +2601,50 @@ fun Application.moduleWeb(database: Database) {
                 ?: run { AdminApi.fail(call, "技能不存在", 404); return@post }
             val result = com.qitong.gateway.http.WorkflowEngine.runStep(database, skill["action"] as? String ?: "reply", skill["content"] as? String ?: "")
             AdminApi.ok(call, mapOf("result" to result), "ok")
+        }
+
+        // ★ v1.264 MCP 服务端：把网关全站能力以标准 MCP 协议暴露，供 Claude Desktop/Cursor/其他 Agent 远程调用
+        //   端点：POST /mcp（JSON-RPC 2.0）；鉴权：Authorization: Bearer <网关API Key> 或管理员会话
+        post("/mcp") {
+            // ★ v1.264 用 receive<ByteArray>() 读原始字节（moduleWeb 装了 ContentNegotiation，receiveText 读不到 body）
+            val body = runCatching { String(call.receive<ByteArray>(), Charsets.UTF_8) }.getOrElse { "" }
+            // 鉴权：先尝试 API Key（sk-xxx），再尝试会话 Cookie/Header
+            var userId = 0L
+            var isAdmin = false
+            runCatching {
+                val auth = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim().orEmpty()
+                if (auth.startsWith("sk-")) {
+                    val entry = database.getApiKeys().firstOrNull { it.key == auth && it.enabled }
+                    if (entry != null) {
+                        val ownerId = entry.ownerId
+                        userId = if (ownerId > 0) ownerId else database.getUserByUsername("admin")?.id ?: 0L
+                        isAdmin = database.getUserById(userId)?.role == "admin"
+                    }
+                }
+            }
+            if (userId == 0L) {
+                val u = call.requireAuth(database)
+                if (u != null) { userId = u.id; isAdmin = u.role == "admin" }
+            }
+            if (userId == 0L) {
+                // ★ v1.264 修复：认证失败直接返回 JSON-RPC 错误（原代码把错误串当 body 传给 handle，导致报 missing method 掩盖真因）
+                call.respondText(
+                    """{"jsonrpc":"2.0","id":null,"error":{"code":-32001,"message":"未认证：请在 Authorization 头携带网关 API Key（Bearer sk-xxx）"}}""",
+                    ContentType.Application.Json, HttpStatusCode.Unauthorized
+                )
+                return@post
+            }
+            val resp = com.qitong.gateway.http.McpServer.handle(database, body, userId, isAdmin)
+            // 通知类请求无需响应体（返回 204）
+            if (resp.isBlank()) { call.respondText("", ContentType.Application.Json, HttpStatusCode.NoContent); return@post }
+            call.respondText(resp, ContentType.Application.Json)
+        }
+        // GET /mcp 用于探活/说明（部分客户端会先 GET）
+        get("/mcp") {
+            call.respondText(
+                """{"name":"qitong-gateway-mcp","version":"1.264","transport":"http-jsonrpc","endpoint":"POST /mcp","note":"需携带 Authorization: Bearer <网关API Key>"}""",
+                ContentType.Application.Json
+            )
         }
 
         // ===== MCP 服务器管理（独立界面：对接外部 MCP，编辑/删除/启停） =====
