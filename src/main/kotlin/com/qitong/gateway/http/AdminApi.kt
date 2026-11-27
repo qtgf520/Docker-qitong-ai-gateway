@@ -552,6 +552,10 @@ private fun providerToMap(p: Provider) = mapOf(
                 "providerName" to (p?.name ?: "P${m.providerId}"),
                 "enabled" to m.isEnabled,
                 "customAlias" to m.customAlias,
+                // ★ v1.262 模态能力（测速排行展示：文本/图片/语音/视频，任一满足即可测速）
+                "supportsVision" to m.supportsVision,
+                "supportsAudio" to m.supportsAudio,
+                "supportsVideo" to m.supportsVideo,
                 // 上次测速结果（无测速记录时 h 为 null）
                 "lastHealthy" to (h?.isHealthy ?: false),
                 "lastTtftMs" to (h?.ttftMs ?: -1L),

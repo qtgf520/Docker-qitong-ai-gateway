@@ -176,7 +176,8 @@ fun main(args: Array<String>) {
     val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
     if (database.getConfig("auto_failover", "true").toBoolean()) {
         scope.launch {
-            kotlinx.coroutines.delay(3000)
+            // ★ v1.262 延迟 30s 再测速：等服务完全就绪、避开启动瞬间业务高峰，防测速抢占上游配额
+            kotlinx.coroutines.delay(30000)
             try {
                 println("⚡ 启动自动测速...")
                 GatewayScheduler.refreshHealthCache(database)

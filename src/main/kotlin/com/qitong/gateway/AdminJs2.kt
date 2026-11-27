@@ -389,13 +389,29 @@ function loadSpeedModels(){
       } else {
         lastSt = '<span class="badge gray">未测过</span>';
       }
-      return '<tr id="stRow-'+esc(key)+'" data-key="'+esc(key)+'"><td>'+esc(m.displayName||m.modelId)+'</td><td>'+esc(m.modelId)+'</td><td><span class="badge blue">'+esc(m.providerName||('P'+m.providerId))+'</span></td><td>'+(m.enabled?'<span class="badge green">已启用</span>':'<span class="badge gray">停用</span>')+'</td><td>'+lastSt+'</td><td class="st-ttft">'+(last&&m.lastHealthy&&m.lastTtftMs>0?m.lastTtftMs+'ms':'—')+'</td><td class="st-tps">'+(last&&m.lastHealthy&&m.lastTps>0?m.lastTps.toFixed(2)+' tok/s':'—')+'</td><td class="st-total">'+(last&&m.lastHealthy&&m.lastTotalMs>0?m.lastTotalMs+'ms':'—')+'</td></tr>';
+      // ★ v1.262 模态标记：文本恒有；图片/语音/视频按能力显示 ✔ / —
+      var modText = '<span class="badge blue" title="文本能力">📝</span>';
+      var modImg = m.supportsVision ? '<span class="badge green" title="图片理解">🖼</span>' : '<span style="color:var(--muted)">—</span>';
+      var modAudio = m.supportsAudio ? '<span class="badge green" title="语音/音频">🎤</span>' : '<span style="color:var(--muted)">—</span>';
+      var modVideo = m.supportsVideo ? '<span class="badge green" title="视频理解">🎬</span>' : '<span style="color:var(--muted)">—</span>';
+      // ★ v1.262 启用/停用可直接点击（复用 toggleModel，成功后刷新列表）
+      var enBtn = '<button class="btn-ghost '+(m.enabled?'':'danger')+'" style="padding:2px 8px;font-size:12px" onclick="speedToggleModel('+m.id+')">'+(m.enabled?'已启用':'停用')+'</button>';
+      return '<tr id="stRow-'+esc(key)+'" data-key="'+esc(key)+'"><td>'+esc(m.displayName||m.modelId)+'</td><td>'+esc(m.modelId)+'</td><td><span class="badge blue">'+esc(m.providerName||('P'+m.providerId))+'</span></td><td>'+enBtn+'</td><td style="white-space:nowrap">'+modText+modImg+modAudio+modVideo+'</td><td>'+lastSt+'</td><td class="st-ttft">'+(last&&m.lastHealthy&&m.lastTtftMs>0?m.lastTtftMs+'ms':'—')+'</td><td class="st-tps">'+(last&&m.lastHealthy&&m.lastTps>0?m.lastTps.toFixed(2)+' tok/s':'—')+'</td><td class="st-total">'+(last&&m.lastHealthy&&m.lastTotalMs>0?m.lastTotalMs+'ms':'—')+'</td></tr>';
     }).join('');
-    $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>显示名</th><th>模型ID</th><th>服务商</th><th>状态</th><th>上次测速</th><th>TTFT</th><th>TPS</th><th>总耗时</th></tr></thead><tbody>' +
-      rows + '<tr><td colspan="8" style="text-align:center;color:var(--muted)">' + (models.length ? '' : '暂无模型，请先在模型页启用或添加') + '</td></tr>' +
+    $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>显示名</th><th>模型ID</th><th>服务商</th><th>启停</th><th>模态</th><th>上次测速</th><th>TTFT</th><th>TPS</th><th>总耗时</th></tr></thead><tbody>' +
+      rows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (models.length ? '' : '暂无模型，请先在模型页启用或添加') + '</td></tr>' +
       '</tbody></table></div>';
   });
 }
+// ★ v1.262 测速排行行内启停：调 /api/models/toggle，成功后刷新测速列表
+window.speedToggleModel = function(id){
+  var m = (state.models||[]).find(function(x){ return x.id===id; });
+  var target = m ? !m.isEnabled : true;
+  api('/api/models/toggle', { method:'POST', body:{ id:id, enabled:target } }).then(function(r){
+    if(r.code === 0){ toast(target?'已启用':'已停用', true); loadSpeedModels(); }
+    else toast(r.msg||'操作失败', false);
+  });
+};
 // 渲染进度条 + 轮询后台任务结果
 function pollSpeedProgress(){
   if(speedPollTimer) clearInterval(speedPollTimer);
@@ -423,8 +439,9 @@ function pollSpeedProgress(){
           var row = document.getElementById('stRow-' + esc(s.currentKey));
           if(row){
             var cells = row.querySelectorAll('td');
-            var st = cells[4];
-            if(st){ st.textContent = '测速中...'; st.style.color = 'var(--cyan)'; }
+            // ★ v1.262 表结构加两列后，状态列索引 = 5
+            var st = cells[5];
+            if(st){ st.innerHTML = '<span class="badge amber">测速中…</span>'; }
           }
         }
         // 已完成的渲染结果
@@ -454,10 +471,11 @@ function renderSpeedResults(s){
     if(!row) return;
     var cells = row.querySelectorAll('td');
     var ok = d.isHealthy;
-    var st = cells[4]; if(st){ st.textContent = ok ? '完成' : '失败'; st.style.color = ok ? 'var(--green)' : 'var(--red)'; }
-    if(cells[5]) cells[5].textContent = ok && d.ttftMs > 0 ? d.ttftMs + 'ms' : '—';
-    if(cells[6]) cells[6].textContent = ok && d.tps > 0 ? d.tps.toFixed(2) + ' tok/s' : '—';
-    if(cells[7]) cells[7].textContent = ok && d.totalMs > 0 ? d.totalMs + 'ms' : '—';
+    // ★ v1.262 表结构已加「启停/模态」两列：索引后移 → 5=上次测速 6=TTFT 7=TPS 8=总耗时
+    var st = cells[5]; if(st){ st.innerHTML = ok ? '<span class="badge green">完成</span>' : '<span class="badge red">失败</span>'; }
+    if(cells[6]) cells[6].textContent = ok && d.ttftMs > 0 ? d.ttftMs + 'ms' : '—';
+    if(cells[7]) cells[7].textContent = ok && d.tps > 0 ? d.tps.toFixed(2) + ' tok/s' : '—';
+    if(cells[8]) cells[8].textContent = ok && d.totalMs > 0 ? d.totalMs + 'ms' : '—';
   });
 }
 // 启动后台批量测速（前端只发一次，其余交给后端 + 轮询；★v1.230 带两个自动启停开关）

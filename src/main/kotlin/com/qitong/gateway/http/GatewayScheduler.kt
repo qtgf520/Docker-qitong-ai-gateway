@@ -358,6 +358,8 @@ object GatewayScheduler {
                     continue
                 }
 
+                // ★ v1.262 测速节流：每个模型之间间隔 300ms，避免全量测速瞬间打爆上游配额导致真实业务请求全 429
+                kotlinx.coroutines.delay(300)
                 val h = measureModel(model, provider)
                 synchronized(healthCache) {
                     val existing = healthCache[key]
@@ -373,7 +375,15 @@ object GatewayScheduler {
                 results.add(h)
             } catch (_: Exception) {
                 synchronized(healthCache) {
-                    healthCache[key] = ModelHealth(model.modelId, model.providerId, Long.MAX_VALUE, lastCheckTime = now, isHealthy = false)
+                    // ★ v1.262 防误伤：测速偶发失败（429/超时）不立刻判死，保留上次健康状态；
+                    //   只有连续失败（successCount 已归零且上次也不健康）才标记不可用，避免测速把可用模型下线导致业务全失败
+                    val existing = healthCache[key]
+                    val wasHealthy = existing?.isHealthy == true
+                    healthCache[key] = ModelHealth(
+                        model.modelId, model.providerId, Long.MAX_VALUE,
+                        lastCheckTime = now,
+                        isHealthy = if (wasHealthy) true else false   // 上次健康则保留健康，避免单次抖动误杀
+                    )
                 }
                 results.add(healthCache[key]!!)
             }

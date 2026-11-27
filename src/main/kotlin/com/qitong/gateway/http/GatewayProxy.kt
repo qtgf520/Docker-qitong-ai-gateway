@@ -290,11 +290,18 @@ class GatewayProxy(private val database: Database) {
         //   qtai-sj → 强制池整体按序（池空→当前模型+测速排行兜底）
         //   具体模型 → 请求模型置首 + 测速排行按序候选（故障切换自动切测速排行，不走强制池）
         if (isQtaiSj) {
-            if (forcedModels.isNotEmpty()) return forcedModels
-            // 池空：当前解析模型置首 + 测速排行兜底
+            // ★ v1.262 池内模型必须全是已启用的（forcedModels 已按 available=isEnabled 过滤）；
+            //   若池内全都停用导致空 → 自动回退"全部已启用模型按测速排行"，绝不返回空池导致全失败
+            if (forcedModels.isNotEmpty()) {
+                println("[Gateway] qtai-sj 走强制池 ${forcedModels.size} 个: ${forcedModels.joinToString(",") { "${it.providerId}::${it.modelId}" }}")
+                return forcedModels
+            }
+            // 池空/池内全停用：当前解析模型置首 + 测速排行兜底
             val primary = available.firstOrNull { m -> m.modelId == modelId && (providerId == null || m.providerId == providerId) }
             val others = available.filter { it.modelId != (primary?.modelId) || it.providerId != (primary?.providerId) }
-            return (listOfNotNull(primary) + GatewayScheduler.getSortedModels(others)).distinctBy { it.providerId to it.modelId }
+            val fallback = (listOfNotNull(primary) + GatewayScheduler.getSortedModels(others)).distinctBy { it.providerId to it.modelId }
+            println("[Gateway] qtai-sj 池空/全停用 → 回退兜底 ${fallback.size} 个")
+            return fallback
         }
 
         // 具体模型请求：请求模型置首（含 provider 过滤），其余按测速排行/权重/健康排序（★不走强制池，自动切测速排行）
@@ -442,9 +449,15 @@ class GatewayProxy(private val database: Database) {
                 val v = m.groupValues[2].toDoubleOrNull()
                 if (v != null && v != v.coerceIn(-2.0, 2.0)) "\\\"${m.groupValues[1]}\\\":${v.coerceIn(-2.0, 2.0)}" else m.value
             }
-            sb = sb.replace(Regex("\\\"max_tokens\\\"\\s*:\\s*(\\d+)")) { m ->
+            // ★ v1.262 修 400「max_tokens exceeds the limit of 65536」：不同上游上限不同（agnes 65536 / 通用 128000）
+            //   统一保守裁剪到 32768，兼顾长输出且不会撞任何主流上游的上限
+            sb = sb.replace(Regex("\"max_tokens\"\\s*:\\s*(\\d+)")) { m ->
                 val v = m.groupValues[1].toIntOrNull()
-                if (v != null && v != v.coerceIn(1, 128000)) "\\\"max_tokens\\\":${v.coerceIn(1, 128000)}" else m.value
+                if (v != null && v > 32768) "\"max_tokens\":32768" else m.value
+            }
+            sb = sb.replace(Regex("\"max_completion_tokens\"\\s*:\\s*(\\d+)")) { m ->
+                val v = m.groupValues[1].toIntOrNull()
+                if (v != null && v > 32768) "\"max_completion_tokens\":32768" else m.value
             }
             sb
         } catch (_: Exception) { bodyStr }
@@ -707,19 +720,37 @@ class GatewayProxy(private val database: Database) {
             }
         }
 
+        // ★ v1.262 关键修复「qtai-sj 返回200空白/全失败」根因：强制池内模型全挂（429配额打光/参数错）时，
+        //   自动扩到全量已启用模型按测速排行兜底，绝不让 3 个死模型拖死整个 qtai-sj。
+        val poolExtended = run {
+            val poolKeys = attemptModels.map { it.providerId to it.modelId }.toSet()
+            // ★ v1.262 兜底池只取测速排行前 12 个（快切不死等），且排除首选已含的
+            val extra = models.filter { it.isEnabled && (it.providerId to it.modelId) !in poolKeys }
+                .let { GatewayScheduler.getSortedModels(it) }
+                .take(12)
+            (attemptModels + extra).distinctBy { it.providerId to it.modelId }
+        }
         var lastError: String? = null
         var lastStatusCode = 502
         val attemptedModels = mutableListOf<String>()
 
-        // ★ 故障转移循环：按池顺序逐个尝试（所有模型都支持，不只qtai-sj） ★
-        for ((idx, targetModel) in attemptModels.withIndex()) {
+        // ★ v1.262 关键修复：先试首选池（强制池/请求模型），首选全挂则自动扩到全量兜底池，
+        //   彻底解决「qtai-sj 返回 200 但空白/全失败」（原池只有 3 个死模型，460+ 可用模型一个不试）
+        println("[Gateway] 故障转移开始 model=$modelId 首选=${attemptModels.size} 兜底池=${poolExtended.size}")
+        var usedList = attemptModels
+        var idx = 0
+        while (idx < usedList.size) {
+val targetModel = usedList[idx]
             val provider = database.getProviderById(targetModel.providerId)
-            if (provider == null || !provider.isEnabled) continue
-
+            if (provider == null || !provider.isEnabled) {
+                idx++; continue
+            }
             attemptedModels.add(targetModel.modelId)
             try {
                 // ★ v1.126 每次上游尝试加 320s 总超时（流式读超时 300s + 余量）：上游挂起直接判失败走下一模型，杜绝卡死
-                val success = kotlinx.coroutines.withTimeoutOrNull(320_000L) {
+                // ★ v1.262 非流式收紧到 25s：模型挂起时快速切换，避免用户等 100+ 秒看到空白/超时
+                val attemptTimeoutMs = if (stream) 320_000L else 25_000L
+                val success = kotlinx.coroutines.withTimeoutOrNull(attemptTimeoutMs) {
                     forwardToUpstream(call, provider, targetModel, bodyStr, body, modelId, stream, path, ownerUser, apiKeyLabel)
                 } ?: run {
                     lastError = "上游响应超时（${targetModel.modelId}）"
@@ -744,14 +775,23 @@ class GatewayProxy(private val database: Database) {
                     return
                 }
                 // 非流式失败时记录错误并切换到下一模型（间隔缩短到 150ms，切换更流畅）
-                if (idx < attemptModels.size - 1) {
+                println("[Gateway] 上游失败 ${targetModel.providerId}::${targetModel.modelId} code=$lastStatusCode err=${lastError ?: "空响应/非2xx"}")
+                if (idx < usedList.size - 1) {
                     kotlinx.coroutines.delay(150)
                 }
             } catch (e: Exception) {
                 lastError = e.message
                 lastStatusCode = 502
+                println("[Gateway] 上游异常 ${targetModel.providerId}::${targetModel.modelId} → ${e.message}")
                 GatewayScheduler.markModelFailed(targetModel.modelId, targetModel.providerId)
                 GatewayScheduler.recordModelResult(targetModel.modelId, targetModel.providerId, false)
+            }
+            idx++
+            // ★ v1.262 首选池试完仍无命中 → 自动扩到全量兜底池继续（彻底解决池小全挂就空白）
+            if (idx >= usedList.size && usedList === attemptModels && poolExtended.size > attemptModels.size) {
+                println("[Gateway] 首选池全失败 → 扩到兜底池 ${poolExtended.size} 个继续尝试")
+                usedList = poolExtended
+                idx = 0
             }
         }
 
@@ -873,6 +913,9 @@ class GatewayProxy(private val database: Database) {
 
         val isSuccess = response.isSuccessful
         recordTraffic(upload = uploadBytes)
+        if (!isSuccess) {
+            println("[Gateway] 上游返回非2xx: ${provider.id}::${targetModel.modelId} code=${response.code} body=${runCatching { response.peekBody(200).string() }.getOrNull()?.take(120)}")
+        }
 
         if (isSuccess) {
             GatewayScheduler.markModelSuccess(targetModel.modelId, targetModel.providerId, System.currentTimeMillis() - startMs)
