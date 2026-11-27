@@ -504,21 +504,50 @@ private fun providerToMap(p: Provider) = mapOf(
             ?: return mapOf("modelId" to modelId, "providerId" to providerId,
                 "isHealthy" to false, "ttftMs" to -1L, "tps" to 0.0, "totalMs" to -1L,
                 "displayName" to model.displayName, "msg" to "服务商不存在")
-        // 测速：★v1.231 停用模型也真测（只要求服务商启用），否则 autoEnable 永远没机会把停用模型启用
-        val h = if (provider.isEnabled) GatewayScheduler.measureModel(model, provider)
-            else GatewayScheduler.ModelHealth(model.modelId, model.providerId, Long.MAX_VALUE, -1, 0.0, -1, 0, System.currentTimeMillis(), false)
+        // ★ v1.266 测速重试：单次失败可能是偶发超时/上游抖动，重试 1 次再判死（大幅降低误杀）
+        var h = GatewayScheduler.ModelHealth(model.modelId, model.providerId, Long.MAX_VALUE, -1, 0.0, -1, 0, System.currentTimeMillis(), false)
+        if (provider.isEnabled) {
+            for (attempt in 1..2) {
+                val hr = GatewayScheduler.measureModel(model, provider)
+                if (hr.isHealthy) { h = hr; break }
+                h = hr
+                if (attempt < 2) kotlinx.coroutines.delay(400)  // 重试前稍等，避开瞬时抖动
+            }
+        }
         // 立即写入健康缓存（排行榜即时刷新）
         synchronized(GatewayScheduler.healthCache) {
             GatewayScheduler.healthCache[GatewayScheduler.routeKey(model.providerId, model.modelId)] = h
         }
-        // ★ v1.230 测速自动启停：两个独立开关（由测速排行页配置）
-        //   autoEnable=true（默认，兼容旧行为）：测速通过且当前停用 → 自动启用
-        //   autoClose=true：测速失败且当前启用 → 自动停用（防故障模型继续被路由）
+        // ★ v1.265 测速历史落库（每次测速都记，供趋势/排行均值参考）
+        runCatching {
+            database.addSpeedHistory(com.qitong.gateway.model.SpeedHistory(
+                modelKey = GatewayScheduler.routeKey(model.providerId, model.modelId),
+                modelName = model.modelId,
+                providerId = model.providerId,
+                ttftMs = h.ttftMs.toInt(),
+                tps = h.tps,
+                totalMs = h.totalMs.toInt(),
+                success = h.isHealthy,
+                measuredAt = System.currentTimeMillis()
+            ))
+        }
+        // ★ v1.230 测速自动启停，★v1.266 防误杀：连续 2 次测速失败才停用（单次失败不停，避免误杀可用模型）
         var finalEnabled = model.isEnabled
         if (h.isHealthy && !model.isEnabled && autoEnable) {
             database.updateModel(model.copy(isEnabled = true)); finalEnabled = true
+            runCatching { database.setConfig("model_fail_streak_$providerId::$modelId", "0") }
         } else if (!h.isHealthy && model.isEnabled && autoClose) {
-            database.updateModel(model.copy(isEnabled = false)); finalEnabled = false
+            // 读取连续失败次数，达到 2 次才停用
+            val streakKey = "model_fail_streak_$providerId::$modelId"
+            val streak = (database.getConfig(streakKey, "0").toIntOrNull() ?: 0) + 1
+            if (streak >= 2) {
+                database.updateModel(model.copy(isEnabled = false)); finalEnabled = false
+                runCatching { database.setConfig(streakKey, "0") }
+                println("[SpeedTest] ${providerId}::$modelId 连续${streak}次失败 → 自动停用")
+            } else {
+                runCatching { database.setConfig(streakKey, streak.toString()) }
+                println("[SpeedTest] ${providerId}::$modelId 失败第${streak}次（未达2次不停用，防误杀）")
+            }
         }
         return mapOf(
             "id" to model.id,

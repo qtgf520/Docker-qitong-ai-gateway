@@ -241,7 +241,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.265"))
+                put("version", JsonPrimitive("1.266"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -871,6 +871,11 @@ fun Application.moduleWeb(database: Database) {
                         val r = AdminApi.speedTestOneModel(database, providerId, modelId, autoClose, autoEnable)
                         SpeedTaskRunner.addResult(r)
                         kotlinx.coroutines.delay(150) // 轻微间隔，避免上游风暴
+                    }
+                    // ★ v1.266 测速完成全量同步：重建首页排行/故障转移候选池（原缺这步 → 测速结果不生效）
+                    runCatching {
+                        GatewayScheduler.buildPipelineSortedModels(database)
+                        println("[SpeedTest] 测速完成，已同步首页排行/故障转移候选池（${models.size} 个模型）")
                     }
                     SpeedTaskRunner.finish()
                 } catch (e: Exception) {
@@ -3519,7 +3524,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.265"))
+                put("version", JsonPrimitive("1.266"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -4363,7 +4368,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.265"))
+                    put("version", JsonPrimitive("1.266"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

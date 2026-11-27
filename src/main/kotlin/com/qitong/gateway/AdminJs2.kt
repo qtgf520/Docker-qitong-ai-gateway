@@ -326,6 +326,7 @@ loaders.speedtest = function(){
   var autoEnable = localStorage.getItem('stAutoEnable') !== '0'; // 默认开（兼容旧行为：通过自动启用）
   $('view-speedtest').innerHTML = '<div class="action-bar">' +
     '<button class="btn" onclick="runSpeedTest()">开始批量测速</button>' +
+    '<button class="btn" style="color:#fff;background:var(--green)" onclick="restoreUsableModels()" title="先跑全量测速，把测速通过的模型自动启用（修复误杀）">♻️ 一键恢复可用模型</button>' +
     '<button class="btn-ghost" onclick="loadSpeedModels()">刷新列表</button>' +
     '<label style="color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-left:6px"><input type="checkbox" id="stAutoClose" '+(autoClose?'checked':'')+' onchange="localStorage.setItem(\'stAutoClose\', this.checked?\'1\':\'0\')">测速失败自动停用</label>' +
     '<label style="color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-left:6px"><input type="checkbox" id="stAutoEnable" '+(autoEnable?'checked':'')+' onchange="localStorage.setItem(\'stAutoEnable\', this.checked?\'1\':\'0\')">测速可用自动启用</label>' +
@@ -478,6 +479,14 @@ function renderSpeedResults(s){
     if(cells[8]) cells[8].textContent = ok && d.totalMs > 0 ? d.totalMs + 'ms' : '—';
   });
 }
+// ★ v1.266 一键恢复可用模型：全量测速（自动启用通过 / 不自动停用），修复历史误杀
+window.restoreUsableModels = function(){
+  if(!confirm('将跑一次全量测速（全部模型，含已停用），测速通过的自动启用。预计耗时较长（几百模型约30-60分钟），后台运行可离开页面。继续？')) return;
+  api('/api/speedtest/start', { method:'POST', body:{ autoClose:false, autoEnable:true } }).then(function(r){
+    if(r.code === 0){ toast('已启动全量测速，测速通过的模型将自动启用', true); speedTestActive = true; pollSpeedProgress(); }
+    else toast(r.msg||'启动失败', false);
+  });
+};
 // 启动后台批量测速（前端只发一次，其余交给后端 + 轮询；★v1.230 带两个自动启停开关）
 window.runSpeedTest = function(){
   if(speedTestActive){ toast('测速进行中，请等待完成', false); return; }
