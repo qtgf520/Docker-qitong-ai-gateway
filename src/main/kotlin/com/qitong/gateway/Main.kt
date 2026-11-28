@@ -100,10 +100,21 @@ object SpeedTaskRunner {
     fun finish() = synchronized(lock) {
         state.running = false; state.finishedAt = System.currentTimeMillis()
     }
-
     fun fail(msg: String) = synchronized(lock) {
         state.running = false; state.error = msg; state.finishedAt = System.currentTimeMillis()
     }
+
+    // ★ v1.268 停止测速：置取消标记，测速循环检测到即 break（已跑完的结果保留）
+    @Volatile var cancelRequested: Boolean = false
+        private set
+    fun requestStop(): Boolean = synchronized(lock) {
+        if (!state.running) return false
+        cancelRequested = true
+        true
+    }
+    /** 测速循环每次迭代检查；true=应停止 */
+    fun shouldStop(): Boolean = cancelRequested
+    fun consumeCancelFlag() { cancelRequested = false }
 }
 
 /**
@@ -241,7 +252,7 @@ fun Application.moduleGateway(database: Database) {
             val healthJson = buildJsonObject {
                 put("status", JsonPrimitive("ok"))
                 put("service", JsonPrimitive("qitong-ai-gateway-docker"))
-                put("version", JsonPrimitive("1.267"))
+                put("version", JsonPrimitive("1.268"))
                 put("running", JsonPrimitive(true))
                 put("port", JsonPrimitive(System.getenv("GATEWAY_PORT")?.toIntOrNull() ?: 18889))
                 put("failover", JsonPrimitive(database.getConfig("auto_failover", "true").toBoolean()))
@@ -861,10 +872,13 @@ fun Application.moduleWeb(database: Database) {
             val autoClose = boolOf("autoClose", false)
             val autoEnable = boolOf("autoEnable", true)
             SpeedTaskRunner.start(models.size)
+            SpeedTaskRunner.consumeCancelFlag()  // ★ v1.268 新一轮开始先清取消标记
             // 后台协程逐个测速（不阻塞请求，前端轮询进度）
             kotlinx.coroutines.GlobalScope.launch {
                 try {
                     for ((i, m) in models.withIndex()) {
+                        // ★ v1.268 用户点「停止测速」→ 立即中断（已跑完的结果保留）
+                        if (SpeedTaskRunner.shouldStop()) { println("[SpeedTest] 用户手动停止，已测 ${SpeedTaskRunner.state.done}/${SpeedTaskRunner.state.total}"); break }
                         SpeedTaskRunner.markCurrent(i, "${m["providerId"]}::${m["modelId"]}", (m["displayName"] as? String) ?: "")
                         val providerId = (m["providerId"] as? Number)?.toLong() ?: -1
                         val modelId = m["modelId"] as? String ?: ""
@@ -888,6 +902,13 @@ fun Application.moduleWeb(database: Database) {
         get("/api/speedtest/progress") {
             val u = call.requireAuth(database) ?: return@get
             AdminApi.ok(call, SpeedTaskRunner.snapshot(), "ok")
+        }
+        // ★ v1.268 停止测速（已跑完的结果保留，测速循环检测标记后 break）
+        post("/api/speedtest/stop") {
+            val u = call.requireAuth(database) ?: return@post
+            val accepted = SpeedTaskRunner.requestStop()
+            if (accepted) AdminApi.ok(call, SpeedTaskRunner.snapshot(), "已发送停止信号，当前模型测完即停")
+            else AdminApi.ok(call, SpeedTaskRunner.snapshot(), "当前没有运行中的测速任务")
         }
         // 健康缓存（模型页每行显示测过状态）
         get("/api/speedtest/health") {
@@ -3524,7 +3545,7 @@ fun Application.moduleWeb(database: Database) {
             val user = call.requireAuth(database) ?: return@get
             val isAdmin = user.role == "admin"
             val data = buildJsonObject {
-                put("version", JsonPrimitive("1.267"))
+                put("version", JsonPrimitive("1.268"))
                 put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
                 put("username", JsonPrimitive(user.username))
                 // 服务商（admin全量，用户自己的+公用）
@@ -4368,7 +4389,7 @@ fun Application.moduleWeb(database: Database) {
                 put("code", JsonPrimitive(0)); put("msg", JsonPrimitive("ok"))
                 put("data", buildJsonObject {
                     put("status", JsonPrimitive("ok"))
-                    put("version", JsonPrimitive("1.267"))
+                    put("version", JsonPrimitive("1.268"))
                     put("isAdmin", JsonPrimitive(isAdmin))  // ★ v1.166 前端据此隐藏普通用户的启停按钮
                     // running：管理员=全局网关状态；普通用户=自己的API开关(api_enabled)
                     val userRunning = if (isAdmin) GatewayProxy.running

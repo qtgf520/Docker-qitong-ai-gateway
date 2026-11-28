@@ -324,18 +324,41 @@ loaders.speedtest = function(){
   // ★ v1.230 测速自动启停：两个独立复选框（失败自动停用 / 可用自动启用），选项持久化到 localStorage
   var autoClose = localStorage.getItem('stAutoClose') !== '0';
   var autoEnable = localStorage.getItem('stAutoEnable') !== '0'; // 默认开（兼容旧行为：通过自动启用）
-  $('view-speedtest').innerHTML = '<div class="action-bar">' +
-    '<button class="btn" onclick="runSpeedTest()">开始批量测速</button>' +
-    '<button class="btn" style="color:#fff;background:var(--green)" onclick="restoreUsableModels()" title="先跑全量测速，把测速通过的模型自动启用（修复误杀）">♻️ 一键恢复可用模型</button>' +
+  $('view-speedtest').innerHTML = '<div class="action-bar" style="flex-wrap:wrap;gap:8px">' +
+    '<button class="btn" id="stRunBtn" onclick="runSpeedTest()">▶ 开始批量测速</button>' +
+    '<button class="btn-ghost danger" id="stStopBtn" onclick="stopSpeedTest()" style="display:none">⏹ 停止测速</button>' +
+    '<button class="btn" style="color:#fff;background:var(--green)" onclick="restoreUsableModels()" title="全量测速，测速通过的自动启用（修复误杀）">♻️ 一键恢复可用模型</button>' +
     '<button class="btn-ghost" onclick="loadSpeedModels()">刷新列表</button>' +
-    '<label style="color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-left:6px"><input type="checkbox" id="stAutoClose" '+(autoClose?'checked':'')+' onchange="localStorage.setItem(\'stAutoClose\', this.checked?\'1\':\'0\')">测速失败自动停用</label>' +
-    '<label style="color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-left:6px"><input type="checkbox" id="stAutoEnable" '+(autoEnable?'checked':'')+' onchange="localStorage.setItem(\'stAutoEnable\', this.checked?\'1\':\'0\')">测速可用自动启用</label>' +
-    '<span style="color:var(--muted);font-size:13px">后台逐模型测速：离开页面也继续跑，回来看进度/结果</span></div><div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">加载模型列表...</div></div>' +
+    '<label style="color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-left:6px"><input type="checkbox" id="stAutoClose" '+(autoClose?'checked':'')+' onchange="localStorage.setItem(\'stAutoClose\', this.checked?\'1\':\'0\')">失败自动停用</label>' +
+    '<label style="color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:4px;margin-left:6px"><input type="checkbox" id="stAutoEnable" '+(autoEnable?'checked':'')+' onchange="localStorage.setItem(\'stAutoEnable\', this.checked?\'1\':\'0\')">可用自动启用</label>' +
+    '</div>' +
+    // ★ v1.268 实时状态条：测速中/完成/停止 一目了然（已测 X/Y · 正常 N · 失败 M）
+    '<div id="stStatusBar" class="card" style="padding:10px 14px;margin-bottom:10px;font-size:13px;color:var(--muted)">就绪（点「开始批量测速」跑全部已启用模型）</div>' +
+    '<div class="card" id="stCard"><div style="text-align:center;color:var(--muted);padding:30px">加载模型列表...</div></div>' +
     '<div class="card" id="foCard" style="margin-top:16px"><h3>🔀 故障切换</h3><div style="color:var(--muted);padding:10px">加载中…</div></div>';
   // 先渲染待测列表，再检查是否有后台任务在跑 → 有则继续轮询
   loadSpeedModels();
   checkSpeedTask();
   loadFailoverStatus();
+};
+// ★ v1.268 测速状态条更新
+window.stStatus = function(html){
+  var bar = $('stStatusBar'); if(bar) bar.innerHTML = html;
+  var runBtn = $('stRunBtn'), stopBtn = $('stStopBtn');
+  if(runBtn && stopBtn){
+    if(speedTestActive){ runBtn.style.display='none'; stopBtn.style.display=''; }
+    else { runBtn.style.display=''; stopBtn.style.display='none'; }
+  }
+};
+// ★ v1.268 停止测速
+window.stopSpeedTest = function(){
+  api('/api/speedtest/stop', { method:'POST', body:{} }).then(function(r){
+    speedTestActive = false;
+    if(speedPollTimer){ clearInterval(speedPollTimer); speedPollTimer=null; }
+    stStatus('<span style="color:var(--amber)">⏹ 已停止测速</span>（已跑完的模型结果已保存）');
+    toast(r.code===0?(r.msg||'已停止'):(r.msg||'停止失败'), r.code===0);
+    loadSpeedModels();
+  });
 };
 window.loadFailoverStatus = function(){
   var box = $('foCard'); if(!box) return;
@@ -390,24 +413,33 @@ function loadSpeedModels(){
       } else {
         lastSt = '<span class="badge gray">未测过</span>';
       }
-      // ★ v1.262 模态标记：文本恒有；图片/语音/视频按能力显示 ✔ / —
-      var modText = '<span class="badge blue" title="文本能力">📝</span>';
+      // ★ v1.262 模态标记；★v1.268 「任一模态满足即为可用模型」——文本恒有，所以任何模型都算"可启动"
+      var modText = '<span class="badge blue" title="文本能力（恒有）">📝</span>';
       var modImg = m.supportsVision ? '<span class="badge green" title="图片理解">🖼</span>' : '<span style="color:var(--muted)">—</span>';
       var modAudio = m.supportsAudio ? '<span class="badge green" title="语音/音频">🎤</span>' : '<span style="color:var(--muted)">—</span>';
       var modVideo = m.supportsVideo ? '<span class="badge green" title="视频理解">🎬</span>' : '<span style="color:var(--muted)">—</span>';
-      // ★ v1.262 启用/停用可直接点击（复用 toggleModel，成功后刷新列表）
-      var enBtn = '<button class="btn-ghost '+(m.enabled?'':'danger')+'" style="padding:2px 8px;font-size:12px" onclick="speedToggleModel('+m.id+')">'+(m.enabled?'已启用':'停用')+'</button>';
-      return '<tr id="stRow-'+esc(key)+'" data-key="'+esc(key)+'"><td>'+esc(m.displayName||m.modelId)+'</td><td>'+esc(m.modelId)+'</td><td><span class="badge blue">'+esc(m.providerName||('P'+m.providerId))+'</span></td><td>'+enBtn+'</td><td style="white-space:nowrap">'+modText+modImg+modAudio+modVideo+'</td><td>'+lastSt+'</td><td class="st-ttft">'+(last&&m.lastHealthy&&m.lastTtftMs>0?m.lastTtftMs+'ms':'—')+'</td><td class="st-tps">'+(last&&m.lastHealthy&&m.lastTps>0?m.lastTps.toFixed(2)+' tok/s':'—')+'</td><td class="st-total">'+(last&&m.lastHealthy&&m.lastTotalMs>0?m.lastTotalMs+'ms':'—')+'</td></tr>';
+      // ★ v1.268 通道能力汇总：文本/图片/语音/视频满足几个（≥1 即可正常启动）
+      var modCount = 1 + (m.supportsVision?1:0) + (m.supportsAudio?1:0) + (m.supportsVideo?1:0);
+      var modSummary = '<span class="badge '+(modCount>=3?'green':(modCount>=2?'cyan':'blue'))+'" title="具备 '+modCount+' 种模态能力，任一即可正常调用">'+modCount+'通道</span>';
+      // ★ v1.268 启用/停用可点击（双向都生效：传当前状态给 speedToggleModel）
+      var enBtn = '<button class="btn-ghost '+(m.enabled?'':'danger')+'" style="padding:2px 8px;font-size:12px" onclick="speedToggleModel('+m.id+','+(m.enabled?'true':'false')+')">'+(m.enabled?'✅ 已启用':'⛔ 已停用')+'</button>';
+      // ★ v1.268 状态列：结合模态能力 + 最近测速结果，判断"能不能用"
+      var usable = last && m.lastHealthy;
+      var stateCell;
+      if(!last) stateCell = '<span class="badge gray">未测速</span>';
+      else if(usable) stateCell = '<span class="badge green">✅ 可用·'+modCount+'通道</span>';
+      else stateCell = '<span class="badge red">❌ 测速失败</span>';
+      return '<tr id="stRow-'+esc(key)+'" data-key="'+esc(key)+'"><td>'+esc(m.displayName||m.modelId)+'</td><td>'+esc(m.modelId)+'</td><td><span class="badge blue">'+esc(m.providerName||('P'+m.providerId))+'</span></td><td>'+enBtn+'</td><td style="white-space:nowrap">'+modText+modImg+modAudio+modVideo+' '+modSummary+'</td><td>'+stateCell+'</td><td class="st-ttft">'+(last&&m.lastHealthy&&m.lastTtftMs>0?m.lastTtftMs+'ms':'—')+'</td><td class="st-tps">'+(last&&m.lastHealthy&&m.lastTps>0?m.lastTps.toFixed(2)+' tok/s':'—')+'</td><td class="st-total">'+(last&&m.lastHealthy&&m.lastTotalMs>0?m.lastTotalMs+'ms':'—')+'</td></tr>';
     }).join('');
-    $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>显示名</th><th>模型ID</th><th>服务商</th><th>启停</th><th>模态</th><th>上次测速</th><th>TTFT</th><th>TPS</th><th>总耗时</th></tr></thead><tbody>' +
+    $('stCard').innerHTML = '<div class="table-wrap"><table><thead><tr><th>显示名</th><th>模型ID</th><th>服务商</th><th>启停</th><th>模态通道</th><th>可用状态</th><th>TTFT</th><th>TPS</th><th>总耗时</th></tr></thead><tbody>' +
       rows + '<tr><td colspan="9" style="text-align:center;color:var(--muted)">' + (models.length ? '' : '暂无模型，请先在模型页启用或添加') + '</td></tr>' +
       '</tbody></table></div>';
   });
 }
-// ★ v1.262 测速排行行内启停：调 /api/models/toggle，成功后刷新测速列表
-window.speedToggleModel = function(id){
-  var m = (state.models||[]).find(function(x){ return x.id===id; });
-  var target = m ? !m.isEnabled : true;
+// ★ v1.262 测速排行行内启停；★v1.268 修复：原来从 state.models 找模型（测速页没加载该数据）→ m 恒 undefined → target 恒 true → 只能启用不能停用。
+//   现在直接用按钮上携带的 data-enabled 属性判断当前真实状态，双向都生效。
+window.speedToggleModel = function(id, curEnabled){
+  var target = !curEnabled;
   api('/api/models/toggle', { method:'POST', body:{ id:id, enabled:target } }).then(function(r){
     if(r.code === 0){ toast(target?'已启用':'已停用', true); loadSpeedModels(); }
     else toast(r.msg||'操作失败', false);
@@ -432,9 +464,15 @@ function pollSpeedProgress(){
       if(r.code === 0 && r.data){
         var s = r.data;
         var pct = s.progress || 0;
+        var doneN = s.done||0, totalN = s.total||0, passN = s.passed||0, failN = s.failed||0;
         var fill = $('stProgFill'); var txt = $('stProgText');
         if(fill) fill.style.width = pct + '%';
-        if(txt) txt.textContent = pct + '% (' + (s.done||0) + '/' + (s.total||0) + ')';
+        if(txt) txt.textContent = pct + '% (' + doneN + '/' + totalN + ')';
+        // ★ v1.268 状态条实时刷新（测速中/完成/停止 一眼可见）
+        speedTestActive = !!s.running;
+        if(s.running){
+          stStatus('<span style="color:var(--cyan)">🔵 测速中…</span> 进度 <b>'+pct+'%</b>（已测 <b>'+doneN+'/'+totalN+'</b> · 正常 <b style="color:var(--green)">'+passN+'</b> · 失败 <b style="color:var(--red)">'+failN+'</b>）'+(s.currentName?' · 正在测：'+esc(s.currentName):''));
+        }
         // 当前在测的模型高亮
         if(s.currentKey){
           var row = document.getElementById('stRow-' + esc(s.currentKey));
@@ -451,12 +489,14 @@ function pollSpeedProgress(){
           setTimeout(tick, 1200);
         } else {
           speedTestActive = false;
-          var btn = $('view-speedtest').querySelector('.action-bar .btn');
-          if(btn) btn.innerHTML = '开始批量测速';
           var wrap = $('stProgWrap');
           if(wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+          // ★ v1.268 完成状态条（含最终统计）+ 恢复按钮状态
+          if(s.error) stStatus('<span style="color:var(--red)">❌ 测速异常：'+esc(s.error)+'</span>（已测 '+doneN+'/'+totalN+'）');
+          else stStatus('<span style="color:var(--green)">✅ 测速完成</span> 共 <b>'+totalN+'</b> 个 · 正常 <b style="color:var(--green)">'+passN+'</b> · 失败 <b style="color:var(--red)">'+failN+'</b>（结果已同步首页排行/模型页/故障转移）');
           if(s.error) toast(s.error, false);
-          else toast('测速完成：' + (s.passed||0) + '/' + (s.total||0) + ' 正常', true);
+          else toast('测速完成：' + passN + '/' + totalN + ' 正常', true);
+          loadSpeedModels();  // 完成后刷新列表（启用状态/测速结果一次性同步）
         }
       }
     });
@@ -481,26 +521,27 @@ function renderSpeedResults(s){
 }
 // ★ v1.266 一键恢复可用模型：全量测速（自动启用通过 / 不自动停用），修复历史误杀
 window.restoreUsableModels = function(){
-  if(!confirm('将跑一次全量测速（全部模型，含已停用），测速通过的自动启用。预计耗时较长（几百模型约30-60分钟），后台运行可离开页面。继续？')) return;
+  if(speedTestActive){ toast('测速进行中，请等待完成或点停止', false); return; }
+  if(!confirm('将跑一次全量测速（全部已启用模型），测速通过的自动启用。预计耗时较长（几百模型约30-60分钟），后台运行可离开页面。继续？')) return;
+  stStatus('<span style="color:var(--cyan)">🚀 正在启动全量测速…</span>');
   api('/api/speedtest/start', { method:'POST', body:{ autoClose:false, autoEnable:true } }).then(function(r){
-    if(r.code === 0){ toast('已启动全量测速，测速通过的模型将自动启用', true); speedTestActive = true; pollSpeedProgress(); }
-    else toast(r.msg||'启动失败', false);
+    if(r.code === 0){ toast('已启动全量测速，测速通过的模型将自动启用', true); speedTestActive = true; stStatus('<span style="color:var(--cyan)">🔵 测速中…</span>'); pollSpeedProgress(); }
+    else { stStatus('<span style="color:var(--red)">❌ 启动失败：'+esc(r.msg||'未知错误')+'</span>'); toast(r.msg||'启动失败', false); }
   });
 };
 // 启动后台批量测速（前端只发一次，其余交给后端 + 轮询；★v1.230 带两个自动启停开关）
 window.runSpeedTest = function(){
-  if(speedTestActive){ toast('测速进行中，请等待完成', false); return; }
-  var btn = $('view-speedtest').querySelector('.action-bar .btn');
-  if(btn) btn.innerHTML = '启动中...';
+  if(speedTestActive){ toast('测速进行中，请等待完成或点停止', false); return; }
+  stStatus('<span style="color:var(--cyan)">🚀 正在启动测速…</span>');
   var autoClose = $('stAutoClose') ? $('stAutoClose').checked : false;
   var autoEnable = $('stAutoEnable') ? $('stAutoEnable').checked : true;
   api('/api/speedtest/start', { method:'POST', body: { autoClose: autoClose, autoEnable: autoEnable } }).then(function(r){
     if(r.code === 0){
       speedTestActive = true;
-      if(btn) btn.innerHTML = '测速中...';
+      stStatus('<span style="color:var(--cyan)">🔵 测速中…</span>');
       pollSpeedProgress();
     } else {
-      if(btn) btn.innerHTML = '开始批量测速';
+      stStatus('<span style="color:var(--red)">❌ 启动失败：'+esc(r.msg||'未知错误')+'</span>');
       toast(r.msg || '启动失败', false);
     }
   });
