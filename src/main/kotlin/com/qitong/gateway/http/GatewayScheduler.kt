@@ -54,15 +54,21 @@ object GatewayScheduler {
 
     /** 健康缓存快照（模型页显示测过状态） */
     fun healthCacheSnapshot(): List<Map<String, Any?>> = synchronized(healthCache) {
-        healthCache.values.map { h ->
+        healthCache.entries.map { (routeKey, h) ->
             mapOf(
+                // ★ v1.267 修复：前端一律用 x.key === key 匹配，快照必须带 key（原缺 → 排行榜全显示「待测速」）
+                "key" to routeKey,
                 "modelId" to h.modelId,
                 "providerId" to h.providerId,
                 "isHealthy" to h.isHealthy,
                 "ttftMs" to h.ttftMs,
                 "tps" to h.tps,
                 "totalMs" to h.totalMs,
-                "lastCheckTime" to h.lastCheckTime
+                "latencyMs" to h.latencyMs,
+                "lastCheckTime" to h.lastCheckTime,
+                "successCount" to h.successCount,
+                // ★ v1.267 冷却中标记（前端显示「冷却中」）
+                "coolingDown" to isCoolingDown(h.modelId, h.providerId)
             )
         }
     }
@@ -468,6 +474,30 @@ object GatewayScheduler {
         }
         pipelineSortedModelKeys = healthList
         return healthList
+    }
+
+    /**
+     * ★ v1.267 全量排行（首页排行榜用）：返回全部已启用模型 + 测速状态，
+     * 健康模型按延迟升序在前，未测/失败的在后 —— 让用户一眼看出"哪些能用、哪些不能用"。
+     * 原 buildPipelineSortedModels 只含健康模型，导致测速失败的模型在首页完全消失。
+     */
+    fun buildFullRankList(database: Database): List<String> {
+        val enabled = database.getEnabledModels()
+        val snapshot = synchronized(healthCache) { HashMap(healthCache) }
+        val healthy = mutableListOf<String>()
+        val untested = mutableListOf<String>()
+        val failed = mutableListOf<String>()
+        for (m in enabled) {
+            val k = routeKey(m.providerId, m.modelId)
+            val h = snapshot[k]
+            when {
+                h == null -> untested.add(k)
+                h.isHealthy -> healthy.add(k)
+                else -> failed.add(k)
+            }
+        }
+        val healthySorted = healthy.sortedBy { snapshot[it]?.latencyMs ?: Long.MAX_VALUE }
+        return healthySorted + untested + failed
     }
 
     private val DEFAULT_CT = "application/json".toMediaType()

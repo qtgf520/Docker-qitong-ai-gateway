@@ -159,6 +159,13 @@ api('/api/status').then(function(r){
   });
   // 模型排行榜（三指标 + 全部已启用模型 + 点灯=强制切换）
   var rankRows = '';
+  // ★ v1.267 状态徽章：正常/冷却中/失败/待测速 四态可辨（原只有「正常/待测速」，测过但失败的也显示待测速，看不出能不能用）
+  function statusBadge(h){
+    if(!h) return '<span class="badge gray" title="从未测速">待测速</span>';
+    if(h.coolingDown) return '<span class="badge amber" title="失败后冷却中，暂不参与故障转移">⏳ 冷却中</span>';
+    if(h.isHealthy) return '<span class="badge green" title="最近测速通过">✅ 可用</span>';
+    return '<span class="badge red" title="最近测速失败（见测速排行可重测）">❌ 失败</span>';
+  }
   var pool = st.forcedPool || [];
   var active = st.forcedActive || st.activeModel || ''; // 当前强制活跃
   var runtimeKey = st.runtimeActiveKey || '';           // 最近一次实际成功命中的模型 key
@@ -181,7 +188,7 @@ api('/api/status').then(function(r){
    var poolDot = '<span class="pool-dot ' + dotCls + '" title="' + dotTitle + '" onclick="forceSwitchModel(\'' + key.replace(/'/g, '') + '\')" style="cursor:pointer"></span>';
    var poolBtn = '<button class="btn-ghost ' + (inPool ? 'danger' : '') + '" style="padding:2px 8px;font-size:12px" onclick="toggleForcedModel(\'' + key.replace(/'/g, '') + '\')">' + (inPool ? '移出池' : '加入池') + '</button>';
    var activeBadge = isServed ? ' <span class="badge cyan">实际服务中</span>' : (isActive && !runtimeKey ? ' <span class="badge green">强制</span>' : '');
-   rankRows += '<tr><td>' + poolDot + '</td><td>' + (i+1) + '</td><td>' + esc(mid) + activeBadge + '</td><td>P' + esc(pid) + '</td><td>' + ttft + '</td><td>' + tps + '</td><td>' + lat + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td><td>' + poolBtn + '</td></tr>';
+   rankRows += '<tr><td>' + poolDot + '</td><td>' + (i+1) + '</td><td>' + esc(mid) + activeBadge + '</td><td>P' + esc(pid) + '</td><td>' + ttft + '</td><td>' + tps + '</td><td>' + lat + '</td><td>' + statusBadge(h) + '</td><td>' + poolBtn + '</td></tr>';
   });
   // 强制故障池（★ v1.166 表格化展示对齐测速排行榜：序号/模型/服务商/状态/操作列，每个模型独立一行，▲▼/灯/移出按钮分开独立）
   var poolHtml;
@@ -200,7 +207,7 @@ api('/api/status').then(function(r){
     var dotCls = isRt ? 'on' : (isTop ? 'on' : '');
     var dotTitle = isRt ? '当前实际命中，点击强制切到本模型' : (isTop ? '当前池首，点击强制切到本模型' : '点击强制切换到此模型');
     var poolDot = '<span class="pool-dot ' + dotCls + '" title="' + dotTitle + '" onclick="forceSwitchModel(\'' + k.replace(/'/g, '') + '\')" style="cursor:pointer;display:inline-block"></span>';
-    return '<tr><td>' + (idx+1) + '</td><td>' + poolDot + ' <b style="color:var(--text)">' + esc(mid) + '</b>' + (isRt ? ' <span class="badge cyan">实际</span>' : '') + (isTop ? ' <span class="badge green">池首</span>' : '') + '</td><td>P' + esc(pid) + '</td><td><span class="badge ' + (ok ? 'green' : 'gray') + '">' + (ok ? '正常' : '待测速') + '</span></td><td style="white-space:nowrap">' + upBtn + downBtn + ' <button class="btn-ghost danger" style="padding:1px 8px;font-size:11px" onclick="if(confirm(\'移出该模型？\'))toggleForcedModel(\'' + k.replace(/'/g, '') + '\')">移出</button></td></tr>';
+    return '<tr><td>' + (idx+1) + '</td><td>' + poolDot + ' <b style="color:var(--text)">' + esc(mid) + '</b>' + (isRt ? ' <span class="badge cyan">实际</span>' : '') + (isTop ? ' <span class="badge green">池首</span>' : '') + '</td><td>P' + esc(pid) + '</td><td>' + statusBadge(h) + '</td><td style="white-space:nowrap">' + upBtn + downBtn + ' <button class="btn-ghost danger" style="padding:1px 8px;font-size:11px" onclick="if(confirm(\'移出该模型？\'))toggleForcedModel(\'' + k.replace(/'/g, '') + '\')">移出</button></td></tr>';
    }).join('');
    poolHtml = '<div class="card"><h3>强制故障池 (' + pool.length + ') <span style="font-size:12px;color:var(--muted)">序号=切换优先，越靠前越先切</span></h3>' +
     '<div class="table-wrap"><table><thead><tr><th>#</th><th>模型</th><th>服务商</th><th>状态</th><th>操作（▲▼调序 / ●切灯 / 移出）</th></tr></thead><tbody>' +

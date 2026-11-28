@@ -699,7 +699,8 @@ private fun providerToMap(p: Provider) = mapOf(
         put("totalUpload", JsonPrimitive(GatewayProxy.totalUploadBytes))
         put("totalDownload", JsonPrimitive(GatewayProxy.totalDownloadBytes))
         put("uptime", JsonPrimitive((System.currentTimeMillis() - GatewayProxy.startTime) / 1000))
-        put("pipelineSorted", JsonArray(GatewayScheduler.pipelineSortedModelKeys.map { JsonPrimitive(it) }))
+        // ★ v1.267 首页排行榜改下发「全量已启用模型」（健康在前/未测其次/失败在后），让用户看到哪些能用哪些不能用
+        put("pipelineSorted", JsonArray(GatewayScheduler.buildFullRankList(database).map { JsonPrimitive(it) }))
         // ★ v1.111 性能监控（对齐运行时监控）：JVM 内存/线程/GC/总请求量/响应缓存命中
         runCatching {
             val rt = Runtime.getRuntime()
