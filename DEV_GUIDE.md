@@ -280,6 +280,8 @@ git push origin master
 | 47 | **Database.query/queryOne/stmt 是 private，跨类调用编译 13 错** | 给 QQ/微信加关键词记忆检索时直接 `db.query(...)`，Kotlin 编译拦截 private 访问，连带 isNotEmpty/forEach 一片报错 | 在 Database 类内加 public 包装方法（如 searchQqBrainMemories/searchWxBrainMemories），外部只调 public；编译报 private 访问先查 Database（v1.230） |
 | 48 | **JsonPrimitive 没有 isBoolean，布尔解析要用 content** | v1.230 写 `isBoolean` 编译报 Unresolved reference；v1.231 只认 isString 导致 JSON 布尔 true 被吞成 false，测速自动启停"开了等于没开" | 统一 `JsonPrimitive.content` 字符串判断：布尔 true 的 content="true"、字符串 "true" 同、数字 1 是 "1"，一个 content 通吃；凡是"开关开了没反应"先怀疑后端布尔解析（v1.231 核心根因） |
 | 49 | **autoEnable 没机会启用停用模型** | getSpeedTestModels 用 getEnabledModels() 只列已启用模型，停用模型不进测速队列；speedTestOneModel 对停用模型短路不真测 | "自动启用"类功能把停用模型也列入测速队列（getModels() 全量），测速只要求服务商启用就真测（v1.231） |
+| 50 | **测速「通道数」按能力声明虚算** | 公式 `1 + (vision?1:0) + …` 下文本测速失败也算 1 通道、全失败仍显示「N通道」，用户看不出能不能用；getSpeedTestModels 也按能力算，刷新后数据是假的 | 通道数只统计**真实测通**的通道；`ModelHealth` 加 `channelCount` 由 speedTestOneModel 实测写入，getSpeedTestModels 读 `h.channelCount`；自动启停也一律走「任一通道通」判定（v1.270） |
+| 51 | **git diff / grep 输出被 less 分页器接管卡死终端** | `git diff`、长 `grep -n` 结果进 less，后续所有命令阻塞超时（连 echo 都不返回） | 统一加 `\| cat` 或 `git --no-pager`；已卡住时发 `q` 再 `Ctrl+C` 退出，不要循环重试 |
 
 ---
 

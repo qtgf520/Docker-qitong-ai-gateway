@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.qitong.gateway"
-version = "1.268"
+version = "1.270"
 
 repositories {
     maven { url = uri("https://maven.aliyun.com/repository/public") }

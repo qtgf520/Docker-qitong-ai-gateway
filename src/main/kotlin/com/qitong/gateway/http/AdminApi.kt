@@ -504,63 +504,93 @@ private fun providerToMap(p: Provider) = mapOf(
             ?: return mapOf("modelId" to modelId, "providerId" to providerId,
                 "isHealthy" to false, "ttftMs" to -1L, "tps" to 0.0, "totalMs" to -1L,
                 "displayName" to model.displayName, "msg" to "服务商不存在")
-        // ★ v1.266 测速重试：单次失败可能是偶发超时/上游抖动，重试 1 次再判死（大幅降低误杀）
-        var h = GatewayScheduler.ModelHealth(model.modelId, model.providerId, Long.MAX_VALUE, -1, 0.0, -1, 0, System.currentTimeMillis(), false)
+        // ★ v1.269 多通道测速：文本必测；支持图片/语音/视频的模型额外测对应通道
+        //   只要任一通道通 = 模型可用（避免「文本偶发失败但图片正常」被误判死）
+        var textHealth = GatewayScheduler.ModelHealth(model.modelId, model.providerId, Long.MAX_VALUE, -1, 0.0, -1, 0, System.currentTimeMillis(), false)
+        var visionOk = false; var audioOk = false; var videoOk = false
+        val channelResults = mutableMapOf<String, Boolean>()
         if (provider.isEnabled) {
+            // 文本通道（重试 1 次）
             for (attempt in 1..2) {
                 val hr = GatewayScheduler.measureModel(model, provider)
-                if (hr.isHealthy) { h = hr; break }
-                h = hr
-                if (attempt < 2) kotlinx.coroutines.delay(400)  // 重试前稍等，避开瞬时抖动
+                if (hr.isHealthy) { textHealth = hr; break }
+                textHealth = hr
+                if (attempt < 2) kotlinx.coroutines.delay(400)
+            }
+            channelResults["text"] = textHealth.isHealthy
+            // ★ 多模态通道补测（仅当模型声明支持时）：用最小图片/音频探针验证通道是否真通
+            if (model.supportsVision) {
+                visionOk = runCatching { GatewayScheduler.probeModality(model, provider, "vision") }.getOrDefault(false)
+                channelResults["vision"] = visionOk
+            }
+            if (model.supportsAudio) {
+                audioOk = runCatching { GatewayScheduler.probeModality(model, provider, "audio") }.getOrDefault(false)
+                channelResults["audio"] = audioOk
+            }
+            if (model.supportsVideo) {
+                videoOk = runCatching { GatewayScheduler.probeModality(model, provider, "video") }.getOrDefault(false)
+                channelResults["video"] = videoOk
             }
         }
-        // 立即写入健康缓存（排行榜即时刷新）
+        // ★ v1.270 通道汇总修正：通道数 = 真实通过的通道个数（文本失败不再硬算 1 通道）
+        //   文本通道也算一个通道；任一通道通 = 模型可用
+        val anyChannelOk = textHealth.isHealthy || visionOk || audioOk || videoOk
+        val channelCount = (if (textHealth.isHealthy) 1 else 0) + (if (visionOk) 1 else 0) + (if (audioOk) 1 else 0) + (if (videoOk) 1 else 0)
+        println("[SpeedTest] ${providerId}::$modelId 通道结果 text=${textHealth.isHealthy} vision=$visionOk audio=$audioOk video=$videoOk → 可用=$anyChannelOk($channelCount 通道)")
+        // 健康缓存以「任一通道通」为准（这样故障转移/排行榜能反映真实可用性）
+        val h = textHealth.copy(isHealthy = anyChannelOk, channelCount = channelCount)
         synchronized(GatewayScheduler.healthCache) {
             GatewayScheduler.healthCache[GatewayScheduler.routeKey(model.providerId, model.modelId)] = h
         }
-        // ★ v1.265 测速历史落库（每次测速都记，供趋势/排行均值参考）
+        // 测速历史落库（含通道明细）
         runCatching {
             database.addSpeedHistory(com.qitong.gateway.model.SpeedHistory(
                 modelKey = GatewayScheduler.routeKey(model.providerId, model.modelId),
                 modelName = model.modelId,
                 providerId = model.providerId,
-                ttftMs = h.ttftMs.toInt(),
-                tps = h.tps,
-                totalMs = h.totalMs.toInt(),
-                success = h.isHealthy,
+                ttftMs = textHealth.ttftMs.toInt(),
+                tps = textHealth.tps,
+                totalMs = textHealth.totalMs.toInt(),
+                success = anyChannelOk,
                 measuredAt = System.currentTimeMillis()
             ))
         }
-        // ★ v1.230 测速自动启停，★v1.266 防误杀：连续 2 次测速失败才停用（单次失败不停，避免误杀可用模型）
+        // ★ v1.269 自动启停（基于通道判定）：
+        //   autoEnable：任一通道通 且 当前停用 → 自动启用（这是你要的"通道满足条件自动启用"）
+        //   autoClose ：全通道都不通 且 连续 2 次 → 才自动停用（防误杀）
         var finalEnabled = model.isEnabled
-        if (h.isHealthy && !model.isEnabled && autoEnable) {
+        if (anyChannelOk && !model.isEnabled && autoEnable) {
             database.updateModel(model.copy(isEnabled = true)); finalEnabled = true
             runCatching { database.setConfig("model_fail_streak_$providerId::$modelId", "0") }
-        } else if (!h.isHealthy && model.isEnabled && autoClose) {
-            // 读取连续失败次数，达到 2 次才停用
+            println("[SpeedTest] ${providerId}::$modelId 通道可用($channelCount 通道) → 自动启用")
+        } else if (!anyChannelOk && model.isEnabled && autoClose) {
             val streakKey = "model_fail_streak_$providerId::$modelId"
             val streak = (database.getConfig(streakKey, "0").toIntOrNull() ?: 0) + 1
             if (streak >= 2) {
                 database.updateModel(model.copy(isEnabled = false)); finalEnabled = false
                 runCatching { database.setConfig(streakKey, "0") }
-                println("[SpeedTest] ${providerId}::$modelId 连续${streak}次失败 → 自动停用")
+                println("[SpeedTest] ${providerId}::$modelId 全通道不可用×${streak} → 自动停用")
             } else {
                 runCatching { database.setConfig(streakKey, streak.toString()) }
-                println("[SpeedTest] ${providerId}::$modelId 失败第${streak}次（未达2次不停用，防误杀）")
+                println("[SpeedTest] ${providerId}::$modelId 全通道不可用第${streak}次（未达2次不停用）")
             }
+        } else if (anyChannelOk) {
+            runCatching { database.setConfig("model_fail_streak_$providerId::$modelId", "0") }
         }
         return mapOf(
             "id" to model.id,
             "modelId" to model.modelId,
             "providerId" to model.providerId,
             "displayName" to model.displayName,
-            "ttftMs" to h.ttftMs,
-            "tps" to h.tps,
-            "totalMs" to h.totalMs,
-            "latencyMs" to (if (h.isHealthy) h.totalMs else -1),
-            "isHealthy" to h.isHealthy,
+            "ttftMs" to textHealth.ttftMs,
+            "tps" to textHealth.tps,
+            "totalMs" to textHealth.totalMs,
+            "latencyMs" to (if (h.isHealthy) textHealth.totalMs else -1),
+            "isHealthy" to anyChannelOk,
+            "channelCount" to channelCount,
+            "channelDetail" to channelResults,
             "enabled" to finalEnabled,
-            "msg" to (if (h.isHealthy) "测速通过" else "测速失败")
+            "msg" to (if (anyChannelOk) "测速通过（${channelCount} 通道）" else "全部通道不可用")
         )
     }
 
@@ -590,7 +620,9 @@ private fun providerToMap(p: Provider) = mapOf(
                 "lastTtftMs" to (h?.ttftMs ?: -1L),
                 "lastTps" to (h?.tps ?: 0.0),
                 "lastTotalMs" to (h?.totalMs ?: -1L),
-                "lastCheckTime" to (h?.lastCheckTime ?: 0L)
+                "lastCheckTime" to (h?.lastCheckTime ?: 0L),
+                // ★ v1.270 上次测速真实通过的通道数（healthCache.channelCount，实测写入；0=未测或全失败）
+                "lastChannelCount" to (h?.channelCount ?: 0)
             )
         }
     }

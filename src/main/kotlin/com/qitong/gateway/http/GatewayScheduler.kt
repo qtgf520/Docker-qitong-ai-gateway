@@ -46,7 +46,9 @@ object GatewayScheduler {
         val tokenCount: Int = 0,
         val lastCheckTime: Long = 0,
         val isHealthy: Boolean = true,
-        val successCount: Int = 0
+        val successCount: Int = 0,
+        // ★ v1.270 本次测速实际通过的通道数（文本/图片/语音/视频，0=未测或全失败）
+        val channelCount: Int = 0
     )
 
     val healthCache = mutableMapOf<String, ModelHealth>()
@@ -237,6 +239,47 @@ object GatewayScheduler {
         })
     }.toString()
 
+    /**
+     * ★ v1.269 多模态通道探针：用最小请求验证该模型指定模态通道是否真能用。
+     * - vision：传 1 张 1x1 base64 PNG，看上游是否接受 image_url 内容块
+     * - audio/video：当前上游普遍要求真实文件，保守用「模型能力声明 + 文本通道正常」判定（避免造大请求打爆配额）
+     */
+    suspend fun probeModality(model: AiModel, provider: Provider, modality: String): Boolean = withContext(Dispatchers.IO) {
+        if (modality != "vision") {
+            // 音频/视频：无标准轻量探针，按「模型声明支持 + 服务商启用」视为通道可用（不额外烧配额）
+            return@withContext model.supportsAudio || model.supportsVideo
+        }
+        val path = provider.chatPath?.let { if (it.startsWith("/")) it else "/$it" } ?: "/v1/chat/completions"
+        val url = provider.resolvedBaseUrl.trimEnd('/') + path
+        // 1x1 透明 PNG（最小图片探针）
+        val tinyPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        val body = JSONObject().apply {
+            put("model", model.modelId)
+            put("stream", false)
+            put("max_tokens", 8)
+            put("messages", org.json.JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", org.json.JSONArray().apply {
+                        put(JSONObject().apply { put("type", "text"); put("text", "hi") })
+                        put(JSONObject().apply {
+                            put("type", "image_url")
+                            put("image_url", JSONObject().put("url", "data:image/png;base64,$tinyPng"))
+                        })
+                    })
+                })
+            })
+        }.toString()
+        val req = okhttp3.Request.Builder()
+            .url(url)
+            .post(body.toRequestBody(JSON_TYPE))
+            .apply { if (!provider.apiKey.isNullOrBlank()) header("Authorization", "Bearer ${provider.apiKey}") }
+            .build()
+        runCatching {
+            sharedClient.newCall(req).execute().use { r -> r.isSuccessful }
+        }.getOrDefault(false)
+    }
+
     // ============ 健康缓存更新 ============
 
     fun markModelSuccess(modelId: String, providerId: Long, latencyMs: Long) {
@@ -414,7 +457,18 @@ object GatewayScheduler {
 
                 // ★ v1.262 测速节流：每个模型之间间隔 300ms，避免全量测速瞬间打爆上游配额导致真实业务请求全 429
                 kotlinx.coroutines.delay(300)
-                val h = measureModel(model, provider)
+                var h = measureModel(model, provider)
+                // ★ v1.270 通道判定：文本失败时补测多模态通道（文本/图片/语音/视频任一通即可用）
+                var chCount = if (h.isHealthy) 1 else 0
+                if (!h.isHealthy && (model.supportsVision || model.supportsAudio || model.supportsVideo)) {
+                    if (model.supportsVision && runCatching { probeModality(model, provider, "vision") }.getOrDefault(false)) chCount++
+                    if (model.supportsAudio && runCatching { probeModality(model, provider, "audio") }.getOrDefault(false)) chCount++
+                    if (model.supportsVideo && runCatching { probeModality(model, provider, "video") }.getOrDefault(false)) chCount++
+                    if (chCount > 0) h = h.copy(isHealthy = true)
+                } else if (h.isHealthy) {
+                    chCount = 1
+                }
+                h = h.copy(channelCount = chCount)
                 synchronized(healthCache) {
                     val existing = healthCache[key]
                     healthCache[key] = h.copy(

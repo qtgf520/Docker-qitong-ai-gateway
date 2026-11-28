@@ -418,16 +418,18 @@ function loadSpeedModels(){
       var modImg = m.supportsVision ? '<span class="badge green" title="图片理解">🖼</span>' : '<span style="color:var(--muted)">—</span>';
       var modAudio = m.supportsAudio ? '<span class="badge green" title="语音/音频">🎤</span>' : '<span style="color:var(--muted)">—</span>';
       var modVideo = m.supportsVideo ? '<span class="badge green" title="视频理解">🎬</span>' : '<span style="color:var(--muted)">—</span>';
-      // ★ v1.268 通道能力汇总：文本/图片/语音/视频满足几个（≥1 即可正常启动）
-      var modCount = 1 + (m.supportsVision?1:0) + (m.supportsAudio?1:0) + (m.supportsVideo?1:0);
-      var modSummary = '<span class="badge '+(modCount>=3?'green':(modCount>=2?'cyan':'blue'))+'" title="具备 '+modCount+' 种模态能力，任一即可正常调用">'+modCount+'通道</span>';
+      // ★ v1.270 通道数只认「真实测速通过」的结果（不再按能力声明虚算，避免测速失败还显示 N通道）
+      var cc = (last && m.lastHealthy) ? (m.lastChannelCount||1) : 0;
+      var modSummary = cc>0
+        ? '<span class="badge '+(cc>=3?'green':(cc>=2?'cyan':'blue'))+'" title="最近一次测速实际通过 '+cc+' 个通道（文本/图片/语音/视频任一即可正常调用）">✅'+cc+'通道</span>'
+        : '<span style="color:var(--muted)" title="尚未测速或全通道失败">—通道</span>';
       // ★ v1.268 启用/停用可点击（双向都生效：传当前状态给 speedToggleModel）
       var enBtn = '<button class="btn-ghost '+(m.enabled?'':'danger')+'" style="padding:2px 8px;font-size:12px" onclick="speedToggleModel('+m.id+','+(m.enabled?'true':'false')+')">'+(m.enabled?'✅ 已启用':'⛔ 已停用')+'</button>';
       // ★ v1.268 状态列：结合模态能力 + 最近测速结果，判断"能不能用"
       var usable = last && m.lastHealthy;
       var stateCell;
       if(!last) stateCell = '<span class="badge gray">未测速</span>';
-      else if(usable) stateCell = '<span class="badge green">✅ 可用·'+modCount+'通道</span>';
+      else if(usable) stateCell = '<span class="badge green">✅ 可用·'+cc+'通道</span>';
       else stateCell = '<span class="badge red">❌ 测速失败</span>';
       return '<tr id="stRow-'+esc(key)+'" data-key="'+esc(key)+'"><td>'+esc(m.displayName||m.modelId)+'</td><td>'+esc(m.modelId)+'</td><td><span class="badge blue">'+esc(m.providerName||('P'+m.providerId))+'</span></td><td>'+enBtn+'</td><td style="white-space:nowrap">'+modText+modImg+modAudio+modVideo+' '+modSummary+'</td><td>'+stateCell+'</td><td class="st-ttft">'+(last&&m.lastHealthy&&m.lastTtftMs>0?m.lastTtftMs+'ms':'—')+'</td><td class="st-tps">'+(last&&m.lastHealthy&&m.lastTps>0?m.lastTps.toFixed(2)+' tok/s':'—')+'</td><td class="st-total">'+(last&&m.lastHealthy&&m.lastTotalMs>0?m.lastTotalMs+'ms':'—')+'</td></tr>';
     }).join('');
